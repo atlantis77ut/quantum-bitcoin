@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LIBOQS_VERSION: "0.15.0"
+  LIBOQS_COMMIT: "97f6b86b1b6d109cfd43cf276ae39c2e776aed80" # 0.15.0 etiketinin commit'i
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: liboqs önbelleği
+        id: oqs-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/liboqs-install
+          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}
+
+      - name: liboqs derle
+        if: steps.oqs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+          git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs /tmp/liboqs
+          test "$(git -C /tmp/liboqs rev-parse HEAD)" = "$LIBOQS_COMMIT"
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build -GNinja \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install
+          ninja -C /tmp/liboqs/build install
+
+      - name: liboqs kur
+        run: |
+          sudo cp -r /tmp/liboqs-install/. /usr/local/
+          sudo ldconfig
+
+      - name: Bağımlılıklar
+        run: go mod download && go mod verify
+
+      - name: Biçim
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Derleme, vet, test
+        run: |
+          export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
+          go build ./...
+          go vet ./...
+          go test -race -count=1 ./...

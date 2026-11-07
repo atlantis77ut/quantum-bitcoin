@@ -1,0 +1,311 @@
+package core
+
+import (
+	"errors"
+	"math"
+	"testing"
+)
+
+func TestValidTransfer(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 2) // 100 QBTC
+
+	b, err := bc.AddBlock([]Transaction{signedTx(t, alice, bob.Address, 30, 1)}, alice.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Transactions) != 2 {
+		t.Fatalf("blokta %d işlem, beklenen 2", len(b.Transactions))
+	}
+	if got := mustBalance(t, bc, alice.Address); got != 100-30+50 {
+		t.Fatalf("alice bakiyesi %d", got)
+	}
+	if got := mustBalance(t, bc, bob.Address); got != 30 {
+		t.Fatalf("bob bakiyesi %d", got)
+	}
+	if n, _ := bc.GetNonce(alice.Address); n != 1 {
+		t.Fatalf("alice nonce %d", n)
+	}
+}
+
+// Açık 1: başkasının parasını harcama / imza sahteciliği.
+func TestRejectsForgedTransactions(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob, mallory := newKey(t), newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+
+	tampered := signedTx(t, alice, bob.Address, 1, 1)
+	tampered.Amount = 50 // imzadan sonra tutar değiştirildi
+
+	stolen := signedTx(t, mallory, mallory.Address+"", 1, 1)
+	stolen.Sender = alice.Address // mallory kendi anahtarıyla alice adına imzalıyor
+	stolen.Receiver = bob.Address
+
+	unsigned := Transaction{Sender: alice.Address, Receiver: bob.Address, Amount: 10, Nonce: 1, PublicKey: alice.PublicKey}
+
+	redirected := signedTx(t, alice, bob.Address, 10, 1)
+	redirected.Receiver = mallory.Address // alıcı imzadan sonra değiştirildi
+
+	for name, tx := range map[string]Transaction{
+		"tutar değiştirilmiş": tampered,
+		"başkasının adresi":   stolen,
+		"imzasız":             unsigned,
+		"alıcı değiştirilmiş": redirected,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := tx.VerifyStateless(); err == nil {
+				t.Fatal("sahte işlem doğrulandı")
+			}
+			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address), tx})
+			if err := bc.AcceptBlock(b); err == nil {
+				t.Fatal("sahte işlem içeren blok kabul edildi")
+			}
+		})
+	}
+	if got := mustBalance(t, bc, alice.Address); got != 50 {
+		t.Fatalf("alice bakiyesi değişti: %d", got)
+	}
+}
+
+// Açık 2: P2P'den sahte coinbase ile para basma, PoW ve zorluk atlatma.
+func TestRejectsInvalidBlocks(t *testing.T) {
+	bc := newTestChain(t)
+	mallory := newKey(t)
+
+	bigCoinbase := coinbaseTo(mallory.Address)
+	bigCoinbase.Amount = 1_000_000
+
+	extraCoinbase := coinbaseTo(mallory.Address)
+
+	cases := map[string]func() *Block{
+		"şişirilmiş coinbase": func() *Block { return craftBlock(t, bc, []Transaction{bigCoinbase}) },
+		"ikinci coinbase": func() *Block {
+			return craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address), extraCoinbase})
+		},
+		"coinbase yok": func() *Block { return craftBlock(t, bc, nil) },
+		"hash içerikle uyuşmuyor": func() *Block {
+			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
+			b.Transactions[0].Amount = 500
+			return b
+		},
+		"PoW yok": func() *Block {
+			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
+			for b.Nonce = 0; ; b.Nonce++ {
+				b.Hash = b.CalculateHash()
+				if !MeetsTarget(b.Hash, testDifficulty) {
+					return b
+				}
+			}
+		},
+		"zorluk düşürülmüş": func() *Block {
+			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
+			b.MineBlock(0)
+			return b
+		},
+		"zaman geçmişte": func() *Block {
+			prev, _ := bc.GetLatestBlock()
+			b := &Block{Index: prev.Index + 1, Timestamp: prev.Timestamp - 100,
+				Transactions: []Transaction{coinbaseTo(mallory.Address)}, PrevHash: prev.Hash}
+			b.MineBlock(testDifficulty)
+			return b
+		},
+		"zaman çok ileride": func() *Block {
+			prev, _ := bc.GetLatestBlock()
+			b := &Block{Index: prev.Index + 1, Timestamp: bc.now() + MaxFutureDrift + 1000,
+				Transactions: []Transaction{coinbaseTo(mallory.Address)}, PrevHash: prev.Hash}
+			b.MineBlock(testDifficulty)
+			return b
+		},
+		"yanlış önceki hash": func() *Block {
+			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
+			b.PrevHash = "00" + b.PrevHash[2:]
+			b.MineBlock(testDifficulty)
+			return b
+		},
+	}
+	before, _ := bc.GetLatestBlock()
+	for name, mk := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := bc.AcceptBlock(mk()); err == nil {
+				t.Fatal("geçersiz blok kabul edildi")
+			}
+		})
+	}
+	after, _ := bc.GetLatestBlock()
+	if after.Hash != before.Hash || mustBalance(t, bc, mallory.Address) != 0 {
+		t.Fatal("reddedilen bloklar durumu değiştirdi")
+	}
+}
+
+// Açık 3: negatif / sıfır tutar.
+func TestRejectsNonPositiveAmounts(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+
+	for _, amt := range []int64{0, -1, math.MinInt64} {
+		tx := signedTx(t, alice, bob.Address, amt, 1)
+		if err := tx.VerifyStateless(); !errors.Is(err, ErrNonPositiveAmount) {
+			t.Fatalf("tutar %d: hata %v", amt, err)
+		}
+		b := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), tx})
+		if err := bc.AcceptBlock(b); err == nil {
+			t.Fatalf("tutar %d kabul edildi", amt)
+		}
+	}
+	if mustBalance(t, bc, alice.Address) != 50 || mustBalance(t, bc, bob.Address) != 0 {
+		t.Fatal("bakiyeler değişti")
+	}
+}
+
+// Açık 4: aynı blokta çift harcama.
+func TestRejectsDoubleSpendInSameBlock(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob, carol := newKey(t), newKey(t), newKey(t)
+	fund(t, bc, alice, 1) // 50
+
+	tx1 := signedTx(t, alice, bob.Address, 40, 1)
+	tx2 := signedTx(t, alice, carol.Address, 40, 2)
+
+	// Ağdan gelen blok: tamamı reddedilmeli.
+	b := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), tx1, tx2})
+	if err := bc.AcceptBlock(b); !errors.Is(err, ErrInsufficientBal) {
+		t.Fatalf("çift harcamalı blok: hata %v", err)
+	}
+
+	// Yerel madencilik: ikinci işlem ayıklanmalı.
+	mined, err := bc.AddBlock([]Transaction{tx1, tx2}, bob.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mined.Transactions) != 2 {
+		t.Fatalf("blokta %d işlem, beklenen coinbase + 1", len(mined.Transactions))
+	}
+	if mustBalance(t, bc, alice.Address) != 10 || mustBalance(t, bc, carol.Address) != 0 {
+		t.Fatal("bakiyeler yanlış")
+	}
+}
+
+// Açık 5: tekrar oynatma (replay).
+func TestRejectsReplay(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 2)
+
+	tx := signedTx(t, alice, bob.Address, 10, 1)
+	if _, err := bc.AddBlock([]Transaction{tx}, bob.Address); err != nil {
+		t.Fatal(err)
+	}
+	b := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), tx})
+	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadNonce) {
+		t.Fatalf("replay: hata %v", err)
+	}
+	skip := signedTx(t, alice, bob.Address, 10, 5)
+	b = craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), skip})
+	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadNonce) {
+		t.Fatalf("atlanan nonce: hata %v", err)
+	}
+	if got := mustBalance(t, bc, bob.Address); got != 50+10 {
+		t.Fatalf("bob bakiyesi %d", got)
+	}
+}
+
+func TestRejectsTooManyTransactions(t *testing.T) {
+	bc := newTestChain(t)
+	m := newKey(t)
+	txs := make([]Transaction, MaxTxPerBlock+2)
+	txs[0] = coinbaseTo(m.Address)
+	b := craftBlock(t, bc, txs)
+	if err := bc.AcceptBlock(b); !errors.Is(err, ErrTooManyTx) {
+		t.Fatalf("hata %v", err)
+	}
+}
+
+// Açık 6: durum yazımı kalıcı ve tutarlı; yeniden açılışta korunur.
+func TestStatePersistsAcrossReopen(t *testing.T) {
+	dir := t.TempDir()
+	bc, err := NewBlockchain(dir, testDifficulty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+	if _, err := bc.AddBlock([]Transaction{signedTx(t, alice, bob.Address, 20, 1)}, alice.Address); err != nil {
+		t.Fatal(err)
+	}
+	tip, _ := bc.GetLatestBlock()
+	bc.Close()
+
+	bc2, err := NewBlockchain(dir, testDifficulty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bc2.Close()
+	tip2, err := bc2.GetLatestBlock()
+	if err != nil || tip2.Hash != tip.Hash {
+		t.Fatalf("uç blok korunmadı: %v", err)
+	}
+	if mustBalance(t, bc2, alice.Address) != 80 || mustBalance(t, bc2, bob.Address) != 20 {
+		t.Fatal("bakiyeler korunmadı")
+	}
+	if n, _ := bc2.GetNonce(alice.Address); n != 1 {
+		t.Fatalf("nonce korunmadı: %d", n)
+	}
+}
+
+// Reddedilen blok önbelleği: geçersiz blok tekrar gönderildiğinde pahalı doğrulama yapılmaz,
+// ama doğrulanmamış bir özetle dürüst bir blok zehirlenemez.
+func TestRejectCache(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+
+	bad := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), signedTx(t, alice, bob.Address, 999, 1)})
+	if err := bc.AcceptBlock(bad); !errors.Is(err, ErrInsufficientBal) {
+		t.Fatalf("ilk ret: %v", err)
+	}
+	if err := bc.AcceptBlock(bad); !errors.Is(err, ErrKnownInvalid) {
+		t.Fatalf("tekrar gönderim önbellekten reddedilmeli: %v", err)
+	}
+
+	good := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address)})
+	poison := *good
+	poison.Transactions = []Transaction{coinbaseTo(alice.Address)} // aynı özet, farklı içerik
+	poison.Difficulty = 0
+	if err := bc.AcceptBlock(&poison); err == nil {
+		t.Fatal("zehirli blok kabul edildi")
+	}
+	poison.Difficulty = good.Difficulty
+	if err := bc.AcceptBlock(&poison); err == nil {
+		t.Fatal("zehirli blok kabul edildi")
+	}
+	if err := bc.AcceptBlock(good); err != nil {
+		t.Fatalf("dürüst blok zehirlenmiş önbellek yüzünden reddedildi: %v", err)
+	}
+}
+
+func TestStateViewOverflow(t *testing.T) {
+	bc := newTestChain(t)
+	v := newStateView(bc)
+	v.balances["r"] = math.MaxInt64 - 5
+	v.balances["s"] = 100
+	tx := &Transaction{Sender: "s", Receiver: "r", Amount: 10, Nonce: 1}
+	if err := v.apply(tx); !errors.Is(err, ErrOverflow) {
+		t.Fatalf("hata %v", err)
+	}
+	if v.balances["s"] != 100 {
+		t.Fatal("başarısız apply durumu değiştirdi")
+	}
+	if err := v.credit("r", 10); !errors.Is(err, ErrOverflow) {
+		t.Fatalf("credit taşması: %v", err)
+	}
+}
+
+func TestBlockHashFieldSeparation(t *testing.T) {
+	a := &Block{Index: 1, Timestamp: 23, PrevHash: "x"}
+	b := &Block{Index: 12, Timestamp: 3, PrevHash: "x"}
+	if a.CalculateHash() == b.CalculateHash() {
+		t.Fatal("farklı başlıklar aynı özeti üretti")
+	}
+}

@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-type Transaction struct {
-	Sender    string `json:"sender"`
-	Receiver  string `json:"receiver"`
-	Amount    int64  `json:"amount"`
-	Timestamp int64  `json:"timestamp"`
-	Signature []byte `json:"signature"`
-	IsCoinbase bool   `json:"is_coinbase"` // Sistemin ödül olarak bastığı para mı?
-}
+// Uzlaşma (consensus) parametreleri. Değiştirmeden önce kullanıcıya sorulmalı.
+const (
+	BlockReward    int64 = 50              // Whitepaper blok ödülü
+	CoinbaseSender       = "SYSTEM_REWARD" // Ödül işlemlerinin göndereni
+	MaxTxPerBlock        = 1000            // Coinbase hariç blok başına en fazla işlem (DoS sınırı)
+	MaxFutureDrift       = 2 * 60 * 60     // Saniye: blok zamanı yerel saatten en fazla bu kadar ileride olabilir
+	MedianTimeSpan       = 11              // Blok zamanı son N bloğun medyanından büyük olmalı
+)
 
 type Block struct {
 	Index        int64         `json:"index"`
@@ -27,26 +27,36 @@ type Block struct {
 	Difficulty   int           `json:"difficulty"`
 }
 
+// CalculateHash blok başlığının çift SHA-256 özetini döndürür. Alanlar "|" ile
+// ayrılır; böylece (Index=1, Timestamp=23) ile (Index=12, Timestamp=3) aynı veriyi üretmez.
 func (b *Block) CalculateHash() string {
-	data, _ := json.Marshal(b.Transactions)
-	record := fmt.Sprintf("%d%d%s%s%d%d", b.Index, b.Timestamp, string(data), b.PrevHash, b.Nonce, b.Difficulty)
-	
+	data, err := json.Marshal(b.Transactions)
+	if err != nil {
+		// Bu tiplerle Marshal hata vermez; yine de boş özet hiçbir doğrulamadan geçmez.
+		return ""
+	}
+	record := fmt.Sprintf("%d|%d|%s|%s|%d|%d", b.Index, b.Timestamp, data, b.PrevHash, b.Nonce, b.Difficulty)
+
 	firstHash := sha256.Sum256([]byte(record))
 	secondHash := sha256.Sum256(firstHash[:])
-	
+
 	return fmt.Sprintf("%x", secondHash)
+}
+
+// MeetsTarget özetin zorluk hedefini karşılayıp karşılamadığını kontrol eder.
+func MeetsTarget(hash string, difficulty int) bool {
+	return len(hash) == 64 && strings.HasPrefix(hash, strings.Repeat("0", difficulty))
 }
 
 func (b *Block) MineBlock(difficulty int) {
 	b.Difficulty = difficulty
-	target := strings.Repeat("0", difficulty)
 
 	fmt.Printf("[...] Blok #%d kazılıyor (Zorluk: %d)... \n", b.Index, difficulty)
 	startTime := time.Now()
 
 	for {
 		b.Hash = b.CalculateHash()
-		if strings.HasPrefix(b.Hash, target) {
+		if MeetsTarget(b.Hash, difficulty) {
 			break
 		}
 		b.Nonce++
@@ -56,7 +66,9 @@ func (b *Block) MineBlock(difficulty int) {
 	fmt.Printf("[✓] Blok Kazıldı! Nonce: %d | Süre: %s | Hash: %s\n", b.Nonce, elapsed, b.Hash)
 }
 
-// NewGenesisBlock ilk bloğu oluşturur
+// NewGenesisBlock ilk bloğu oluşturur.
+// DİKKAT: Zaman damgası time.Now() olduğu için her düğüm farklı bir genesis üretir;
+// ağdaki düğümler ortak zincire ancak sabit bir genesis ile anlaşabilir (kullanıcı kararı bekliyor).
 func NewGenesisBlock() *Block {
 	genesisTx := Transaction{
 		Sender:     "SYSTEM",
@@ -65,7 +77,7 @@ func NewGenesisBlock() *Block {
 		Timestamp:  time.Now().Unix(),
 		IsCoinbase: true,
 	}
-	
+
 	block := &Block{
 		Index:        0,
 		Timestamp:    time.Now().Unix(),
