@@ -57,9 +57,16 @@ func TestBalanceEndpoint(t *testing.T) {
 	req := httptest.NewRequest("GET", "/balance?address="+kp.Address, nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	var body struct{ Balance int64 }
+	var body struct {
+		Balance     int64
+		BalanceQBTC string `json:"balance_qbtc"`
+		Decimals    int
+	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || body.Balance != core.BlockReward {
 		t.Fatalf("bakiye %d, hata %v", body.Balance, err)
+	}
+	if body.BalanceQBTC != "50.00000000" || body.Decimals != 8 {
+		t.Fatalf("biçimli bakiye %q, basamak %d", body.BalanceQBTC, body.Decimals)
 	}
 }
 

@@ -12,17 +12,17 @@ func TestValidTransfer(t *testing.T) {
 	alice, bob := newKey(t), newKey(t)
 	fund(t, bc, alice, 2) // 100 QBTC
 
-	b, err := bc.AddBlock([]Transaction{signedTx(t, alice, bob.Address, 30, 1)}, alice.Address)
+	b, err := bc.AddBlock([]Transaction{signedTx(t, alice, bob.Address, 30*Coin, 1)}, alice.Address)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(b.Transactions) != 2 {
 		t.Fatalf("blokta %d işlem, beklenen 2", len(b.Transactions))
 	}
-	if got := mustBalance(t, bc, alice.Address); got != 100-30+50 {
+	if got := mustBalance(t, bc, alice.Address); got != (100-30+50)*Coin {
 		t.Fatalf("alice bakiyesi %d", got)
 	}
-	if got := mustBalance(t, bc, bob.Address); got != 30 {
+	if got := mustBalance(t, bc, bob.Address); got != 30*Coin {
 		t.Fatalf("bob bakiyesi %d", got)
 	}
 	if n, _ := bc.GetNonce(alice.Address); n != 1 {
@@ -64,7 +64,7 @@ func TestRejectsForgedTransactions(t *testing.T) {
 			}
 		})
 	}
-	if got := mustBalance(t, bc, alice.Address); got != 50 {
+	if got := mustBalance(t, bc, alice.Address); got != BlockReward {
 		t.Fatalf("alice bakiyesi değişti: %d", got)
 	}
 }
@@ -75,7 +75,7 @@ func TestRejectsInvalidBlocks(t *testing.T) {
 	mallory := newKey(t)
 
 	bigCoinbase := coinbaseTo(mallory.Address)
-	bigCoinbase.Amount = 1_000_000
+	bigCoinbase.Amount = BlockReward + 1 // fazla talep (para basma)
 
 	extraCoinbase := coinbaseTo(mallory.Address)
 
@@ -195,7 +195,7 @@ func TestRejectsNonPositiveAmounts(t *testing.T) {
 			t.Fatalf("tutar %d kabul edildi", amt)
 		}
 	}
-	if mustBalance(t, bc, alice.Address) != 50 || mustBalance(t, bc, bob.Address) != 0 {
+	if mustBalance(t, bc, alice.Address) != BlockReward || mustBalance(t, bc, bob.Address) != 0 {
 		t.Fatal("bakiyeler değişti")
 	}
 }
@@ -206,8 +206,8 @@ func TestRejectsDoubleSpendInSameBlock(t *testing.T) {
 	alice, bob, carol := newKey(t), newKey(t), newKey(t)
 	fund(t, bc, alice, 1) // 50
 
-	tx1 := signedTx(t, alice, bob.Address, 40, 1)
-	tx2 := signedTx(t, alice, carol.Address, 40, 2)
+	tx1 := signedTx(t, alice, bob.Address, 40*Coin, 1)
+	tx2 := signedTx(t, alice, carol.Address, 40*Coin, 2)
 
 	// Ağdan gelen blok: tamamı reddedilmeli.
 	b := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), tx1, tx2})
@@ -223,7 +223,7 @@ func TestRejectsDoubleSpendInSameBlock(t *testing.T) {
 	if len(mined.Transactions) != 2 {
 		t.Fatalf("blokta %d işlem, beklenen coinbase + 1", len(mined.Transactions))
 	}
-	if mustBalance(t, bc, alice.Address) != 10 || mustBalance(t, bc, carol.Address) != 0 {
+	if mustBalance(t, bc, alice.Address) != 10*Coin || mustBalance(t, bc, carol.Address) != 0 {
 		t.Fatal("bakiyeler yanlış")
 	}
 }
@@ -234,7 +234,7 @@ func TestRejectsReplay(t *testing.T) {
 	alice, bob := newKey(t), newKey(t)
 	fund(t, bc, alice, 2)
 
-	tx := signedTx(t, alice, bob.Address, 10, 1)
+	tx := signedTx(t, alice, bob.Address, 10*Coin, 1)
 	if _, err := bc.AddBlock([]Transaction{tx}, bob.Address); err != nil {
 		t.Fatal(err)
 	}
@@ -242,12 +242,12 @@ func TestRejectsReplay(t *testing.T) {
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadNonce) {
 		t.Fatalf("replay: hata %v", err)
 	}
-	skip := signedTx(t, alice, bob.Address, 10, 5)
+	skip := signedTx(t, alice, bob.Address, 10*Coin, 5)
 	b = craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), skip})
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadNonce) {
 		t.Fatalf("atlanan nonce: hata %v", err)
 	}
-	if got := mustBalance(t, bc, bob.Address); got != 50+10 {
+	if got := mustBalance(t, bc, bob.Address); got != BlockReward+10*Coin {
 		t.Fatalf("bob bakiyesi %d", got)
 	}
 }
@@ -272,7 +272,7 @@ func TestStatePersistsAcrossReopen(t *testing.T) {
 	}
 	alice, bob := newKey(t), newKey(t)
 	fund(t, bc, alice, 1)
-	if _, err := bc.AddBlock([]Transaction{signedTx(t, alice, bob.Address, 20, 1)}, alice.Address); err != nil {
+	if _, err := bc.AddBlock([]Transaction{signedTx(t, alice, bob.Address, 20*Coin, 1)}, alice.Address); err != nil {
 		t.Fatal(err)
 	}
 	tip, _ := bc.GetLatestBlock()
@@ -287,7 +287,7 @@ func TestStatePersistsAcrossReopen(t *testing.T) {
 	if err != nil || tip2.Hash != tip.Hash {
 		t.Fatalf("uç blok korunmadı: %v", err)
 	}
-	if mustBalance(t, bc2, alice.Address) != 80 || mustBalance(t, bc2, bob.Address) != 20 {
+	if mustBalance(t, bc2, alice.Address) != 80*Coin || mustBalance(t, bc2, bob.Address) != 20*Coin {
 		t.Fatal("bakiyeler korunmadı")
 	}
 	if n, _ := bc2.GetNonce(alice.Address); n != 1 {
@@ -302,7 +302,7 @@ func TestRejectCache(t *testing.T) {
 	alice, bob := newKey(t), newKey(t)
 	fund(t, bc, alice, 1)
 
-	bad := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), signedTx(t, alice, bob.Address, 999, 1)})
+	bad := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), signedTx(t, alice, bob.Address, 999*Coin, 1)})
 	if err := bc.AcceptBlock(bad); !errors.Is(err, ErrInsufficientBal) {
 		t.Fatalf("ilk ret: %v", err)
 	}

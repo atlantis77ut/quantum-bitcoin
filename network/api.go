@@ -114,10 +114,12 @@ func (api *APIServer) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
 		return
 	}
+	// balance taban birim cinsindendir (1 QBTC = 10^decimals); balance_qbtc gösterim içindir.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"address": address,
-		"balance": balance,
-		"unit":    "QBTC",
+		"address":      address,
+		"balance":      balance,
+		"balance_qbtc": core.FormatAmount(balance),
+		"decimals":     core.AmountDecimals,
 	})
 }
 

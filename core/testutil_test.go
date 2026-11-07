@@ -30,7 +30,7 @@ func newKey(t *testing.T) *crypto.KeyPair {
 	return kp
 }
 
-// fund madenciye n blok kazdırarak 50*n QBTC verir.
+// fund madenciye n blok kazdırarak n*BlockReward verir.
 func fund(t *testing.T, bc *Blockchain, kp *crypto.KeyPair, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
@@ -42,7 +42,12 @@ func fund(t *testing.T, bc *Blockchain, kp *crypto.KeyPair, n int) {
 
 func signedTx(t *testing.T, from *crypto.KeyPair, to string, amount int64, nonce uint64) Transaction {
 	t.Helper()
-	tx := Transaction{Receiver: to, Amount: amount, Timestamp: 1, Nonce: nonce}
+	return signedTxFee(t, from, to, amount, 0, nonce)
+}
+
+func signedTxFee(t *testing.T, from *crypto.KeyPair, to string, amount, fee int64, nonce uint64) Transaction {
+	t.Helper()
+	tx := Transaction{Receiver: to, Amount: amount, Fee: fee, Timestamp: 1, Nonce: nonce}
 	if err := tx.Sign(from); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +74,15 @@ func craftBlock(t *testing.T, bc *Blockchain, txs []Transaction) *Block {
 
 func coinbaseTo(addr string) Transaction {
 	return Transaction{Sender: CoinbaseSender, Receiver: addr, Amount: BlockReward, IsCoinbase: true}
+}
+
+// coinbaseWithFees ödül + verilen işlemlerin ücretleri kadar coinbase üretir.
+func coinbaseWithFees(addr string, txs ...Transaction) Transaction {
+	cb := coinbaseTo(addr)
+	for _, tx := range txs {
+		cb.Amount += tx.Fee
+	}
+	return cb
 }
 
 func mustBalance(t *testing.T, bc *Blockchain, addr string) int64 {
