@@ -2,6 +2,7 @@
 qbtc_db_*
 qbtc_production_db
 qbtc_mainnet_db
+qbtc_*_db
 
 # Derlenmiş çalıştırılabilir dosyalar (Binary)
 quantum-bitcoin

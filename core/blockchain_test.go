@@ -56,7 +56,7 @@ func TestRejectsForgedTransactions(t *testing.T) {
 		"alıcı değiştirilmiş": redirected,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := tx.VerifyStateless(); err == nil {
+			if err := tx.VerifyStateless(testParams); err == nil {
 				t.Fatal("sahte işlem doğrulandı")
 			}
 			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address), tx})
@@ -205,7 +205,7 @@ func TestRejectsNonPositiveAmounts(t *testing.T) {
 
 	for _, amt := range []int64{0, -1, math.MinInt64} {
 		tx := signedTx(t, alice, bob.Address, amt, 1)
-		if err := tx.VerifyStateless(); !errors.Is(err, ErrNonPositiveAmount) {
+		if err := tx.VerifyStateless(testParams); !errors.Is(err, ErrNonPositiveAmount) {
 			t.Fatalf("tutar %d: hata %v", amt, err)
 		}
 		b := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), tx})
@@ -284,7 +284,7 @@ func TestRejectsTooManyTransactions(t *testing.T) {
 // Açık 6: durum yazımı kalıcı ve tutarlı; yeniden açılışta korunur.
 func TestStatePersistsAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
-	bc, err := NewBlockchain(dir, testDifficulty)
+	bc, err := NewBlockchain(dir, testParams)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestStatePersistsAcrossReopen(t *testing.T) {
 	tip, _ := bc.GetLatestBlock()
 	bc.Close()
 
-	bc2, err := NewBlockchain(dir, testDifficulty)
+	bc2, err := NewBlockchain(dir, testParams)
 	if err != nil {
 		t.Fatal(err)
 	}

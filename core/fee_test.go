@@ -1,13 +1,9 @@
 package core
 
 import (
-	"bytes"
-	"encoding/binary"
 	"errors"
 	"math"
 	"testing"
-
-	"quantum-bitcoin/crypto"
 )
 
 // Ücret madenciye gider; göndericiden tutar + ücret düşülür; toplam arz korunur.
@@ -63,7 +59,7 @@ func TestRejectsNegativeFee(t *testing.T) {
 
 	for _, fee := range []int64{-1, math.MinInt64} {
 		tx := signedTxFee(t, alice, bob.Address, Coin, fee, 1)
-		if err := tx.VerifyStateless(); !errors.Is(err, ErrNegativeFee) {
+		if err := tx.VerifyStateless(testParams); !errors.Is(err, ErrNegativeFee) {
 			t.Fatalf("ücret %d: hata %v", fee, err)
 		}
 		b := craftBlock(t, bc, []Transaction{coinbaseWithFees(miner.Address, tx), tx})
@@ -175,47 +171,8 @@ func TestFeeIsSigned(t *testing.T) {
 	alice, bob := newKey(t), newKey(t)
 	tx := signedTxFee(t, alice, bob.Address, Coin, 10, 1)
 	tx.Fee = 0 // imzadan sonra ücret düşürüldü
-	if err := tx.VerifyStateless(); !errors.Is(err, ErrBadSignature) {
+	if err := tx.VerifyStateless(testParams); !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("hata %v", err)
-	}
-}
-
-// Güncel bayt düzeniyle ama eski "QBTC-TX-v1" etiketiyle atılmış imza geçersizdir.
-// Etiket v1'e geri alınırsa bu test kırmızıya döner (alan etiketi yükseltmesini sabitler).
-func TestRejectsV1Signature(t *testing.T) {
-	alice, bob := newKey(t), newKey(t)
-	tx := Transaction{Sender: alice.Address, Receiver: bob.Address, Amount: Coin, Fee: 7, Timestamp: 1, Nonce: 1,
-		PublicKey: append([]byte(nil), alice.PublicKey...)}
-
-	var buf bytes.Buffer
-	field := func(b []byte) {
-		var l [4]byte
-		binary.BigEndian.PutUint32(l[:], uint32(len(b)))
-		buf.Write(l[:])
-		buf.Write(b)
-	}
-	u64 := func(x uint64) []byte {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], x)
-		return n[:]
-	}
-	field([]byte("QBTC-TX-v1|" + ChainID))
-	field([]byte(tx.Sender))
-	field([]byte(tx.Receiver))
-	field(u64(uint64(tx.Amount)))
-	field(u64(uint64(tx.Fee)))
-	field(u64(uint64(tx.Timestamp)))
-	field(u64(tx.Nonce))
-	field(tx.PublicKey)
-	field([]byte{0})
-
-	sig, err := crypto.Sign(alice.SecretKey, buf.Bytes())
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx.Signature = sig
-	if err := tx.VerifyStateless(); !errors.Is(err, ErrBadSignature) {
-		t.Fatalf("v1 imzası kabul edildi: %v", err)
 	}
 }
 

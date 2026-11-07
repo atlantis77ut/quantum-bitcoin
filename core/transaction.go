@@ -11,15 +11,15 @@ import (
 	"quantum-bitcoin/crypto"
 )
 
-// ChainID imzaları tek bir ağa bağlar: testnet'te imzalanan işlem mainnet'te geçersizdir.
-// Sabit genesis kararından sonra genesis özeti de buraya eklenmeli.
-const ChainID = "qbtc-mainnet"
-
-// txDomain imza verisini başka protokollerin ve ağların mesajlarından ayırır.
-// v2: Fee alanı eklendi; v1 imzaları geçersizdir.
-const txDomain = "QBTC-TX-v2|" + ChainID
+// txIDTag işlem kimliği ve Merkle kökü içindir ve ağdan bağımsızdır. Genesis bir işlem
+// içerdiğinden, kimlik genesis özetine bağlı olsaydı genesis özeti kendine bağlı olurdu.
+// İmza ise ayrı bir alanda atılır (Params.SigDomain, "QBTC-SIG-v3|<ağ>|<genesis özeti>"):
+// testnet'te atılan imza mainnet'te ya da regtest'te geçersizdir. v3 ile eski
+// "QBTC-TX-v2|qbtc-mainnet" imzaları geçersiz oldu.
+const txIDTag = "QBTC-TXID-v1"
 
 var (
+	ErrNoGenesis          = errors.New("bu ağın genesis bloğu henüz tanımlı değil")
 	ErrNonPositiveAmount  = errors.New("tutar pozitif olmalı")
 	ErrNegativeFee        = errors.New("işlem ücreti negatif olamaz")
 	ErrBadSender          = errors.New("gönderen adresi açık anahtarla eşleşmiyor")
@@ -41,18 +41,26 @@ type Transaction struct {
 	IsCoinbase bool   `json:"is_coinbase"` // Sistemin ödül olarak bastığı para mı?
 }
 
-// SigningBytes imzalanan kanonik veridir. Signature alanı hariç tüm alanları,
-// uzunluk önekli ve sabit sırayla içerir; böylece iki farklı işlem aynı baytlara
-// serileşemez.
-func (tx *Transaction) SigningBytes() []byte {
+func writeField(buf *bytes.Buffer, b []byte) {
+	var l [4]byte
+	binary.BigEndian.PutUint32(l[:], uint32(len(b)))
+	buf.Write(l[:])
+	buf.Write(b)
+}
+
+// SigningBytes imzalanan kanonik veridir: ağın imza alanı + gövde. Gövde, Signature
+// hariç tüm alanları uzunluk önekli ve sabit sırayla içerir; böylece iki farklı işlem
+// aynı baytlara serileşemez.
+func (tx *Transaction) SigningBytes(domain string) []byte {
 	var buf bytes.Buffer
-	writeField := func(b []byte) {
-		var l [4]byte
-		binary.BigEndian.PutUint32(l[:], uint32(len(b)))
-		buf.Write(l[:])
-		buf.Write(b)
-	}
-	writeField([]byte(txDomain))
+	writeField(&buf, []byte(domain))
+	tx.writeBody(&buf)
+	return buf.Bytes()
+}
+
+// writeBody imza ve kimlik için ortak, alan etiketsiz gövdeyi yazar.
+func (tx *Transaction) writeBody(buf *bytes.Buffer) {
+	writeField := func(b []byte) { writeField(buf, b) }
 	writeField([]byte(tx.Sender))
 	writeField([]byte(tx.Receiver))
 	var n [8]byte
@@ -70,14 +78,17 @@ func (tx *Transaction) SigningBytes() []byte {
 	} else {
 		writeField([]byte{0})
 	}
-	return buf.Bytes()
 }
 
-// IDBytes işlemin imza dahil kimliğidir: SHA-256(SigningBytes || Signature).
-// SigningBytes uzunluk önekli olduğundan imzanın başladığı yer belirsiz değildir.
+// IDBytes işlemin imza dahil, ağdan bağımsız kimliğidir:
+// SHA-256(field(txIDTag) || gövde || Signature). İmza alanını (SigningBytes) asla kullanmaz.
+// Gövde uzunluk önekli olduğundan imzanın başladığı yer belirsiz değildir.
 func (tx *Transaction) IDBytes() [32]byte {
+	var buf bytes.Buffer
+	writeField(&buf, []byte(txIDTag))
+	tx.writeBody(&buf)
 	h := sha256.New()
-	h.Write(tx.SigningBytes())
+	h.Write(buf.Bytes())
 	h.Write(tx.Signature)
 	var id [32]byte
 	copy(id[:], h.Sum(nil))
@@ -90,11 +101,17 @@ func (tx *Transaction) ID() string {
 	return hex.EncodeToString(id[:])
 }
 
-// Sign işlemi gönderenin anahtarıyla imzalar; Sender ve PublicKey alanlarını doldurur.
-func (tx *Transaction) Sign(kp *crypto.KeyPair) error {
+// Sign işlemi gönderenin anahtarıyla, verilen ağın imza alanında imzalar; Sender ve
+// PublicKey alanlarını doldurur. Genesis'i tanımsız ağ (lansman öncesi mainnet) için
+// imza atılmaz: aksi halde lansmandan önce atılan imzalar lansmandan sonra geçerli kalırdı.
+func (tx *Transaction) Sign(kp *crypto.KeyPair, p *Params) error {
+	domain, err := p.SigDomain()
+	if err != nil {
+		return err
+	}
 	tx.Sender = kp.Address
 	tx.PublicKey = append([]byte(nil), kp.PublicKey...)
-	sig, err := crypto.Sign(kp.SecretKey, tx.SigningBytes())
+	sig, err := crypto.Sign(kp.SecretKey, tx.SigningBytes(domain))
 	if err != nil {
 		return err
 	}
@@ -103,8 +120,13 @@ func (tx *Transaction) Sign(kp *crypto.KeyPair) error {
 }
 
 // VerifyStateless durumdan bağımsız kontrolleri yapar: tutar, adresler, adres–anahtar
-// bağı ve imza. Coinbase işlemleri burada reddedilir; onlar blok düzeyinde doğrulanır.
-func (tx *Transaction) VerifyStateless() error {
+// bağı ve verilen ağın imza alanında imza. Coinbase işlemleri burada reddedilir; onlar
+// blok düzeyinde doğrulanır.
+func (tx *Transaction) VerifyStateless(p *Params) error {
+	domain, err := p.SigDomain()
+	if err != nil {
+		return err
+	}
 	if tx.IsCoinbase {
 		return ErrUnexpectedCoinbase
 	}
@@ -123,7 +145,7 @@ func (tx *Transaction) VerifyStateless() error {
 	if tx.Sender == tx.Receiver {
 		return ErrSelfTransfer
 	}
-	if !crypto.Verify(tx.PublicKey, tx.SigningBytes(), tx.Signature) {
+	if !crypto.Verify(tx.PublicKey, tx.SigningBytes(domain), tx.Signature) {
 		return ErrBadSignature
 	}
 	return nil

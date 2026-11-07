@@ -256,7 +256,7 @@ func TestWrongParentRejectedBeforeSignatures(t *testing.T) {
 
 func TestSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
-	bc, err := NewBlockchain(dir, testDifficulty)
+	bc, err := NewBlockchain(dir, testParams)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,12 +267,12 @@ func TestSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	bc.Close()
-	if _, err := NewBlockchain(dir, testDifficulty); !errors.Is(err, ErrSchemaMismatch) {
+	if _, err := NewBlockchain(dir, testParams); !errors.Is(err, ErrSchemaMismatch) {
 		t.Fatalf("şemasız dizin açıldı: %v", err)
 	}
 
 	dir2 := t.TempDir()
-	bc2, err := NewBlockchain(dir2, testDifficulty)
+	bc2, err := NewBlockchain(dir2, testParams)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	bc2.Close()
-	if _, err := NewBlockchain(dir2, testDifficulty); !errors.Is(err, ErrSchemaMismatch) {
+	if _, err := NewBlockchain(dir2, testParams); !errors.Is(err, ErrSchemaMismatch) {
 		t.Fatalf("eski şemalı dizin açıldı: %v", err)
 	}
 }

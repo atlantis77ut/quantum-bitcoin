@@ -1,9 +1,5 @@
 package core
 
-import (
-	"time"
-)
-
 // Uzlaşma (consensus) parametreleri. Değiştirmeden önce kullanıcıya sorulmalı.
 const (
 	Coin           int64 = 100_000_000     // 1 QBTC = 10^8 taban birim; tüm tutarlar taban birim cinsindendir
@@ -28,28 +24,35 @@ type Block struct {
 	Hash         string        `json:"hash"`
 }
 
-// NewGenesisBlock ilk bloğu oluşturur.
-// DİKKAT: Zaman damgası time.Now() olduğu için her düğüm farklı bir genesis üretir;
-// ağdaki düğümler ortak zincire ancak sabit bir genesis ile anlaşabilir (genesis PR'ı).
-// Genesis PoW doğrulamasından geçmez; yerel ve güvenilir kaynak olarak yazılır.
-func NewGenesisBlock() *Block {
-	genesisTx := Transaction{
-		Sender:     "SYSTEM",
-		Receiver:   "QBTC_SATOSHI_QUANTUM",
-		Amount:     21_000_000 * Coin, // İlk can suyu arzı; premine genesis PR'ında kaldırılacak (kullanıcı kararı)
-		Timestamp:  time.Now().Unix(),
+// genesisPrevHash genesis'in önceki blok özetidir (yok: 32 sıfır bayt).
+const genesisPrevHash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// NewGenesisBlock ağın sabit genesis bloğunu parametrelerden deterministik olarak üretir.
+// Premine yoktur: tek işlem, tutarı sıfır olan ve alıcısı genesis mesajından türetilen
+// bir coinbase'dir. Blok, ağın başlangıç hedefine sabit nonce ile kazılmıştır; özetin
+// p.GenesisHash'e eşit olduğu NewBlockchain'de ve testlerde doğrulanır.
+func NewGenesisBlock(p *Params) (*Block, error) {
+	if p == nil || p.GenesisHash == "" {
+		return nil, ErrNoGenesis
+	}
+	coinbase := Transaction{
+		Sender:     CoinbaseSender,
+		Receiver:   p.GenesisReceiver(),
+		Amount:     0,
+		Timestamp:  p.GenesisTimestamp,
+		Nonce:      0, // yükseklik
 		IsCoinbase: true,
 	}
-
 	block := &Block{
 		Version:      BlockVersion,
 		Index:        0,
-		Timestamp:    time.Now().Unix(),
-		Transactions: []Transaction{genesisTx},
-		PrevHash:     "0000000000000000000000000000000000000000000000000000000000000000",
-		Bits:         bigToCompact(powLimit),
+		Timestamp:    p.GenesisTimestamp,
+		Transactions: []Transaction{coinbase},
+		PrevHash:     genesisPrevHash,
+		Bits:         p.Bits,
+		Nonce:        p.GenesisNonce,
 	}
 	block.MerkleRoot = block.ComputeMerkleRoot()
 	block.Hash = block.CalculateHash()
-	return block
+	return block, nil
 }
