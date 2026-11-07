@@ -218,7 +218,7 @@ func (bc *Blockchain) acceptStatefulLocked(b *Block) error {
 	if err := bc.checkStateful(b, prev, view); err != nil {
 		// Aynı ebeveyn üzerinde durum kuralı ihlali kalıcıdır (zincir yeniden düzenlenmiyor).
 		// İndeks/önceki özet uyuşmazlığı ise ileride geçerli olabilir; önbelleğe alınmaz.
-		if b.PrevHash == prev.Hash && b.Index == prev.Index+1 {
+		if b.PrevHash == prev.Hash && b.Index == prev.Index+1 && isPermanentStatefulErr(err) {
 			bc.rejected.add(b.Hash)
 		}
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
@@ -287,6 +287,19 @@ func (bc *Blockchain) checkStateful(b *Block, prev *Block, view *stateView) erro
 		}
 	}
 	return nil
+}
+
+// isPermanentStatefulErr, aynı ebeveyn üzerinde sonucu zamanla değişmeyecek kural
+// ihlallerini ayırır. ErrTimestampFuture önbelleğe alınmaz: saati biraz geride olan
+// düğümler bloğu kalıcı reddedip ağı bölerdi. Disk/okuma hataları ve ErrCorruptState
+// geçicidir; dürüst bir bloğu kalıcı olarak dışlamamalıdır.
+func isPermanentStatefulErr(err error) bool {
+	for _, perm := range []error{ErrTimestampOld, ErrBadNonce, ErrInsufficientBal, ErrOverflow, ErrNonPositiveAmount} {
+		if errors.Is(err, perm) {
+			return true
+		}
+	}
+	return false
 }
 
 // rejectCache kalıcı olarak geçersiz blok özetlerini sınırlı boyutta tutar.

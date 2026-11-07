@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 )
@@ -135,6 +136,46 @@ func TestRejectsInvalidBlocks(t *testing.T) {
 	after, _ := bc.GetLatestBlock()
 	if after.Hash != before.Hash || mustBalance(t, bc, mallory.Address) != 0 {
 		t.Fatal("reddedilen bloklar durumu değiştirdi")
+	}
+}
+
+// Gelecek zamanlı blok kalıcı reddedilmemeli: düğümün saati yetişince aynı blok kabul edilir.
+// Aksi halde saati birkaç saniye geride olan düğümler ağdan kalıcı olarak ayrılır.
+func TestFutureBlockAcceptedWhenClockCatchesUp(t *testing.T) {
+	bc := newTestChain(t)
+	miner := newKey(t)
+	prev, _ := bc.GetLatestBlock()
+	ts := bc.now() + MaxFutureDrift + 100
+	b := &Block{Index: prev.Index + 1, Timestamp: ts,
+		Transactions: []Transaction{coinbaseTo(miner.Address)}, PrevHash: prev.Hash}
+	b.MineBlock(testDifficulty)
+
+	if err := bc.AcceptBlock(b); !errors.Is(err, ErrTimestampFuture) {
+		t.Fatalf("beklenen ErrTimestampFuture, gelen %v", err)
+	}
+	if bc.rejected.has(b.Hash) {
+		t.Fatal("gelecek zamanlı blok kalıcı ret önbelleğine yazıldı")
+	}
+
+	bc.now = func() int64 { return ts - MaxFutureDrift }
+	if err := bc.AcceptBlock(b); err != nil {
+		t.Fatalf("saat yetişince blok kabul edilmeli: %v", err)
+	}
+}
+
+func TestPermanentStatefulErrClassification(t *testing.T) {
+	perm := []error{ErrTimestampOld, ErrInsufficientBal, ErrOverflow, ErrNonPositiveAmount,
+		fmt.Errorf("işlem 1: %w", ErrBadNonce)}
+	for _, err := range perm {
+		if !isPermanentStatefulErr(err) {
+			t.Errorf("%v kalıcı sayılmalı", err)
+		}
+	}
+	transient := []error{ErrTimestampFuture, ErrCorruptState, errors.New("leveldb: okuma hatası")}
+	for _, err := range transient {
+		if isPermanentStatefulErr(err) {
+			t.Errorf("%v kalıcı sayılmamalı", err)
+		}
 	}
 }
 
