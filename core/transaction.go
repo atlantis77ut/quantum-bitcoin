@@ -73,12 +73,21 @@ func (tx *Transaction) SigningBytes() []byte {
 	return buf.Bytes()
 }
 
-// ID işlemin imza dahil benzersiz kimliğidir.
-func (tx *Transaction) ID() string {
+// IDBytes işlemin imza dahil kimliğidir: SHA-256(SigningBytes || Signature).
+// SigningBytes uzunluk önekli olduğundan imzanın başladığı yer belirsiz değildir.
+func (tx *Transaction) IDBytes() [32]byte {
 	h := sha256.New()
 	h.Write(tx.SigningBytes())
 	h.Write(tx.Signature)
-	return hex.EncodeToString(h.Sum(nil))
+	var id [32]byte
+	copy(id[:], h.Sum(nil))
+	return id
+}
+
+// ID işlem kimliğinin hex gösterimidir.
+func (tx *Transaction) ID() string {
+	id := tx.IDBytes()
+	return hex.EncodeToString(id[:])
 }
 
 // Sign işlemi gönderenin anahtarıyla imzalar; Sender ve PublicKey alanlarını doldurur.

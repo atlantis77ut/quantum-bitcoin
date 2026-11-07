@@ -19,9 +19,17 @@ import (
 
 const (
 	keyLastHash   = "lh"
+	keySchema     = "schema"
 	prefixBalance = "bal_"
 	prefixNonce   = "nonce_"
+
+	// schemaVersion disk biçimi veya uzlaşma kodlaması uyumsuz değiştiğinde artırılır.
+	// 2: taban birim (10^8), işlem ücreti, sabit başlık + Merkle kökü + compact hedef.
+	schemaVersion = "2"
 )
+
+// ErrSchemaMismatch veri dizini bu sürümle uyumsuz bir biçimde yazılmış.
+var ErrSchemaMismatch = errors.New("veri dizini şema sürümü uyumsuz; dizini silip zinciri yeniden başlatın")
 
 var (
 	ErrBadIndex        = errors.New("blok indeksi beklenen değil")
@@ -43,18 +51,20 @@ var (
 // Blockchain LevelDB üzerinde tutulan zincir ve hesap durumudur.
 // Tüm okuma/yazmalar mu ile korunur; P2P ve HTTP eşzamanlı erişebilir.
 type Blockchain struct {
-	mu         sync.RWMutex
-	db         *leveldb.DB
-	difficulty int
-	lastHash   string
-	log        *slog.Logger
-	now        func() int64 // testlerde saat sabitlemek için
-	rejected   rejectCache
+	mu       sync.RWMutex
+	db       *leveldb.DB
+	bits     uint32 // zincir genelinde sabit hedef (yeniden hedefleme ayrı bir PR'da)
+	lastHash string
+	log      *slog.Logger
+	now      func() int64 // testlerde saat sabitlemek için
+	rejected rejectCache
 }
 
-// NewBlockchain veritabanını açar; zincir boşsa genesis bloğunu yazar.
+// NewBlockchain veritabanını açar; zincir boşsa genesis bloğunu yazar. difficulty eski
+// "baştaki hex sıfır" ölçeğindedir ve DifficultyToBits ile 256 bitlik hedefe çevrilir.
 func NewBlockchain(dbPath string, difficulty int) (*Blockchain, error) {
-	if difficulty < 1 || difficulty > 64 {
+	bits, err := DifficultyToBits(difficulty)
+	if err != nil {
 		return nil, fmt.Errorf("geçersiz zorluk: %d", difficulty)
 	}
 	db, err := leveldb.OpenFile(dbPath, nil)
@@ -63,10 +73,10 @@ func NewBlockchain(dbPath string, difficulty int) (*Blockchain, error) {
 	}
 
 	bc := &Blockchain{
-		db:         db,
-		difficulty: difficulty,
-		log:        slog.Default().With("component", "blockchain"),
-		now:        func() int64 { return time.Now().Unix() },
+		db:   db,
+		bits: bits,
+		log:  slog.Default().With("component", "blockchain"),
+		now:  func() int64 { return time.Now().Unix() },
 	}
 
 	data, err := db.Get([]byte(keyLastHash), nil)
@@ -82,14 +92,22 @@ func NewBlockchain(dbPath string, difficulty int) (*Blockchain, error) {
 		db.Close()
 		return nil, fmt.Errorf("son blok okunamadı: %w", err)
 	default:
+		schema, err := db.Get([]byte(keySchema), nil)
+		if err != nil || string(schema) != schemaVersion {
+			db.Close()
+			if err != nil && !errors.Is(err, leveldb.ErrNotFound) {
+				return nil, fmt.Errorf("şema sürümü okunamadı: %w", err)
+			}
+			return nil, fmt.Errorf("%w (diskte %q, beklenen %q)", ErrSchemaMismatch, schema, schemaVersion)
+		}
 		bc.lastHash = string(data)
 		bc.log.Info("mevcut zincir diskten yüklendi", "last_hash", bc.lastHash)
 	}
 	return bc, nil
 }
 
-// Difficulty zincirin sabit zorluk seviyesidir.
-func (bc *Blockchain) Difficulty() int { return bc.difficulty }
+// Bits zincirin sabit compact hedefidir.
+func (bc *Blockchain) Bits() uint32 { return bc.bits }
 
 // GetBalance bir adresin onaylanmış bakiyesini döndürür.
 func (bc *Blockchain) GetBalance(address string) (int64, error) {
@@ -158,6 +176,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 		Sender:     CoinbaseSender,
 		Receiver:   minerAddress,
 		Amount:     BlockReward + fees,
+		Nonce:      uint64(prev.Index + 1), // yükseklik: her coinbase'in kimliği benzersiz olur
 		IsCoinbase: true,
 	}
 
@@ -176,7 +195,9 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 		Transactions: append([]Transaction{coinbase}, accepted...),
 		PrevHash:     prev.Hash,
 	}
-	newBlock.MineBlock(bc.difficulty)
+	if err := newBlock.MineBlock(bc.bits); err != nil {
+		return nil, err
+	}
 
 	// Kendi ürettiğimiz bloğu da ağdan gelen gibi doğrula: tek doğrulama yolu.
 	if err := bc.acceptLocked(newBlock); err != nil {
@@ -193,12 +214,25 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 	if bc.rejected.has(b.Hash) {
 		return ErrKnownInvalid
 	}
-	if err := bc.checkStateless(b); err != nil {
-		// Yalnızca özeti içerikle doğrulanmış blokları önbelleğe al; aksi halde saldırgan
-		// dürüst bir bloğun özetini taşıyan çöp blokla o özeti "geçersiz" diye zehirleyebilir.
-		if !errors.Is(err, ErrBadDifficulty) && !errors.Is(err, ErrInsufficientPoW) && !errors.Is(err, ErrBadHash) {
-			bc.rejected.add(b.Hash)
-		}
+	// Başlık hataları önbelleğe alınmaz: özet yalnızca başlığı kapsar ve gövde ancak Merkle
+	// kökü doğrulandıktan sonra özete bağlıdır. Aksi halde saldırgan dürüst bir başlığa çöp
+	// gövde ekleyerek o özeti her yerde "geçersiz" diye zehirleyebilirdi.
+	if err := bc.checkHeader(b); err != nil {
+		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
+		return err
+	}
+	// Ucun üzerine kurulmayan blok için imza doğrulaması yapma: zincirdeki eski bir blok ya da
+	// yanlış ebeveynli blok yeniden gönderilerek her seferinde ~1000 ML-DSA doğrulaması
+	// yaptırılamasın. Önbelleğe alınmaz (ileride geçerli olabilir); durumlu kontrol yine yapılır.
+	bc.mu.RLock()
+	tip := bc.lastHash
+	bc.mu.RUnlock()
+	if b.PrevHash != tip {
+		bc.log.Debug("blok ucun üzerine kurulmuyor", "index", b.Index, "hash", b.Hash)
+		return ErrBadPrevHash
+	}
+	if err := bc.checkBody(b); err != nil {
+		bc.rejected.add(b.Hash) // gövde Merkle köküyle özete bağlı: hata içeriğe özgü ve kalıcı
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
 		return err
 	}
@@ -234,27 +268,47 @@ func (bc *Blockchain) acceptStatefulLocked(b *Block) error {
 	return bc.commitBlock(b, view)
 }
 
-// checkStateless zincir durumuna bakmadan yapılabilen kontrollerdir: zorluk, özet, PoW,
-// işlem sayısı, coinbase biçimi ve tüm işlemlerin imzaları. Kilit gerektirmez.
+// checkStateless zincir durumuna bakmadan yapılabilen tüm kontrollerdir. Kilit gerektirmez.
 func (bc *Blockchain) checkStateless(b *Block) error {
-	if b.Difficulty != bc.difficulty {
+	if err := bc.checkHeader(b); err != nil {
+		return err
+	}
+	return bc.checkBody(b)
+}
+
+// checkHeader başlığı ve gövdenin başlığa bağlılığını doğrular: sürüm, hedef, PoW, özet,
+// işlem sayısı sınırı ve Merkle kökü. Buradaki hatalar önbelleğe alınmamalıdır.
+func (bc *Blockchain) checkHeader(b *Block) error {
+	if b.Version != BlockVersion {
+		return ErrBadVersion
+	}
+	if b.Bits != bc.bits {
 		return ErrBadDifficulty
 	}
-	if !MeetsTarget(b.Hash, bc.difficulty) {
+	if !MeetsTarget(b.Hash, b.Bits) {
 		return ErrInsufficientPoW // ucuz kontrol önce: PoW'suz bloklar özet hesaplatamaz
 	}
-	if b.Hash != b.CalculateHash() {
+	if b.Hash != b.CalculateHash() { // kanonik olmayan PrevHash/MerkleRoot de burada düşer
 		return ErrBadHash
 	}
 	if len(b.Transactions) == 0 {
 		return ErrBadCoinbase
 	}
 	if len(b.Transactions)-1 > MaxTxPerBlock {
-		return ErrTooManyTx
+		return ErrTooManyTx // Merkle hesaplamadan önce: büyük gövdeyle CPU tüketilemesin
 	}
+	if b.MerkleRoot != b.ComputeMerkleRoot() {
+		return ErrBadMerkleRoot
+	}
+	return nil
+}
+
+// checkBody coinbase biçimini, işlem imzalarını ve ödül + ücret toplamını doğrular.
+// checkHeader'dan geçmiş blokta gövde özete bağlıdır; buradaki hatalar kalıcıdır.
+func (bc *Blockchain) checkBody(b *Block) error {
 	cb := &b.Transactions[0]
 	if !cb.IsCoinbase || cb.Sender != CoinbaseSender || cb.Fee != 0 ||
-		!crypto.IsValidAddress(cb.Receiver) || cb.Nonce != 0 ||
+		!crypto.IsValidAddress(cb.Receiver) || cb.Nonce != uint64(b.Index) ||
 		len(cb.PublicKey) != 0 || len(cb.Signature) != 0 {
 		return ErrBadCoinbase
 	}
@@ -391,6 +445,9 @@ func (bc *Blockchain) commitBlock(b *Block, view *stateView) error {
 	}
 	batch.Put([]byte(b.Hash), blockData)
 	batch.Put([]byte(keyLastHash), []byte(b.Hash))
+	if b.Index == 0 {
+		batch.Put([]byte(keySchema), []byte(schemaVersion)) // genesis ile aynı atomik yazımda
+	}
 
 	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
 		return fmt.Errorf("blok diske yazılamadı: %w", err)

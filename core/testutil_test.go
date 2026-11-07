@@ -1,10 +1,16 @@
 package core
 
 import (
+	"math/big"
 	"testing"
 
 	"quantum-bitcoin/crypto"
 )
+
+// easierThanLimitBits powLimit'ten kolay (kural dışı) bir hedeftir: 2^255.
+func easierThanLimitBits() uint32 {
+	return bigToCompact(new(big.Int).Lsh(big.NewInt(1), 255))
+}
 
 const testDifficulty = 1
 
@@ -68,8 +74,30 @@ func craftBlock(t *testing.T, bc *Blockchain, txs []Transaction) *Block {
 		Transactions: txs,
 		PrevHash:     prev.Hash,
 	}
-	b.MineBlock(bc.Difficulty())
+	mineAt(t, bc, b)
 	return b
+}
+
+// regrind başlık alanlarını değiştirmeden (MineBlock'un aksine Version/Bits/MerkleRoot'a
+// dokunmadan) yalnızca nonce'u, özet bloğun Bits hedefini karşılayana kadar artırır.
+func regrind(b *Block) {
+	for b.Nonce = 0; ; b.Nonce++ {
+		b.Hash = b.CalculateHash()
+		if MeetsTarget(b.Hash, b.Bits) {
+			return
+		}
+	}
+}
+
+// mineAt coinbase nonce'u boşsa bloğun yüksekliğine ayarlar ve bloğu zincir hedefiyle kazar.
+func mineAt(t *testing.T, bc *Blockchain, b *Block) {
+	t.Helper()
+	if len(b.Transactions) > 0 && b.Transactions[0].IsCoinbase && b.Transactions[0].Nonce == 0 {
+		b.Transactions[0].Nonce = uint64(b.Index)
+	}
+	if err := b.MineBlock(bc.Bits()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func coinbaseTo(addr string) Transaction {
