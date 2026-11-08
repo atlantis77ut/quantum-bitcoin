@@ -98,8 +98,9 @@ func TestPendingBlockAddedWhenClockCatchesUp(t *testing.T) {
 	}
 }
 
-// Uç başka bir blokla ilerlerse eski uca bağlı bekleyen blok atılır, uygulanmaz.
-func TestStalePendingBlockDropped(t *testing.T) {
+// Uç aynı yükseklikte başka bir blokla ilerlerse eski uca bağlı bekleyen blok yan blok olarak
+// saklanır; işi uçtan fazla olmadığından (eşitlikte ilk görülen) uç değişmez.
+func TestStalePendingBlockStoredAsSide(t *testing.T) {
 	bc := newTestChain(t)
 	clock := fixedClock(bc, 1_900_000_000)
 	b := futureBlock(t, bc, MaxFutureDrift+30)
@@ -112,12 +113,15 @@ func TestStalePendingBlockDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	*clock += 3600
-	if n := bc.ProcessPending(); n != 0 || bc.pending.len() != 0 {
-		t.Fatalf("eklenen %d, kuyruk %d", n, bc.pending.len())
+	if n := bc.ProcessPending(); n != 1 || bc.pending.len() != 0 {
+		t.Fatalf("kabul edilen %d, kuyruk %d", n, bc.pending.len())
 	}
 	tip, _ := bc.GetLatestBlock()
 	if tip.Transactions[0].Receiver != miner.Address {
 		t.Fatal("uç değişti")
+	}
+	if _, ok := bc.index[b.Hash]; !ok || bc.isMain(bc.index[b.Hash]) {
+		t.Fatal("eski uca bağlı blok yan blok olarak saklanmadı")
 	}
 }
 
@@ -313,7 +317,7 @@ func TestPendingQueueBounded(t *testing.T) {
 	if !q.wasDropped(last) {
 		t.Fatal("tahliye edilen blok 'atıldı' kümesine yazılmadı")
 	}
-	ready := q.take("other", 1<<40)
+	ready := q.take(func(h string) bool { return h == "other" }, 1<<40)
 	if len(ready) != 0 || q.len() != 0 {
 		t.Fatal("eski uca bağlı bloklar atılmadı")
 	}

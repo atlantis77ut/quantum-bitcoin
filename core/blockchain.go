@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"sync"
@@ -28,7 +29,8 @@ const (
 	// schemaVersion disk biçimi veya uzlaşma kodlaması uyumsuz değiştiğinde artırılır.
 	// 2: taban birim (10^8), işlem ücreti, sabit başlık + Merkle kökü + compact hedef.
 	// 3: ağ parametreleri, deterministik genesis, ağa bağlı imza alanı.
-	schemaVersion = "3"
+	// 4: blok indeksi (birikmiş iş), ana zincir yükseklik tablosu, blok başına undo kayıtları.
+	schemaVersion = "4"
 )
 
 var (
@@ -73,6 +75,14 @@ type Blockchain struct {
 	rejected rejectCache
 	pending  pendingBlocks // gelecek tarihli, gövdesi doğrulanmış bloklar (bkz. pending.go)
 
+	// Blok indeksi (bkz. chain.go). Hepsi mu ile korunur.
+	index     map[string]*indexEntry // özet → indeks kaydı (ana ve yan bloklar)
+	children  map[string][]string    // ebeveyn özeti → çocuk özetleri
+	perHeight map[int64]int          // yükseklik → saklanan blok sayısı
+	main      map[int64]string       // ana zincir: yükseklik → özet
+	tip       *indexEntry
+	deepReorg bool
+
 	bodyChecks atomic.Int64 // checkBody çağrı sayısı; testler imza doğrulamasının tekrarlanmadığını ölçer
 }
 
@@ -98,6 +108,11 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 		bits:   p.Bits,
 		log:    slog.Default().With("component", "blockchain", "network", p.Name),
 		now:    func() int64 { return time.Now().Unix() },
+
+		index:     map[string]*indexEntry{},
+		children:  map[string][]string{},
+		perHeight: map[int64]int{},
+		main:      map[int64]string{},
 	}
 	// Kodda üretilen genesis, sabitlenmiş özete eşit, kendi hedefine kazılmış ve biçimce
 	// geçerli olmalı; aksi halde kodlama sessizce değişmiş demektir (ağ bölünmesi).
@@ -125,7 +140,7 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 			return nil, fmt.Errorf("%w: son blok kaydı yok ama dizin boş değil", ErrSchemaMismatch)
 		}
 		bc.log.Info("zincir boş, genesis bloğu yazılıyor", "genesis", genesis.Hash)
-		if err := bc.commitBlock(genesis, newStateView(bc)); err != nil {
+		if err := bc.writeGenesis(genesis); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("genesis yazılamadı: %w", err)
 		}
@@ -146,8 +161,23 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 			db.Close()
 			return nil, fmt.Errorf("%w: diskte %q, %s genesis'i %s", ErrGenesisMismatch, stored, p.Name, p.GenesisHash)
 		}
-		bc.lastHash = string(data)
-		bc.log.Info("mevcut zincir diskten yüklendi", "last_hash", bc.lastHash)
+		if err := bc.loadIndex(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("blok indeksi okunamadı: %w", err)
+		}
+		tip, ok := bc.index[string(data)]
+		if !ok || !bc.isMain(tip) {
+			db.Close()
+			return nil, fmt.Errorf("%w: uç indekste ya da ana zincirde yok", ErrCorruptState)
+		}
+		bc.tip = tip
+		bc.lastHash = tip.Hash
+		if err := bc.recoverBestLocked(); err != nil {
+			db.Close()
+			return nil, err
+		}
+		bc.log.Info("mevcut zincir diskten yüklendi", "last_hash", bc.lastHash, "yukseklik", bc.tip.Height,
+			"indeks", len(bc.index))
 	}
 	if tip, err := bc.getBlock(bc.lastHash); err == nil && tip.Timestamp > bc.now()+MaxFutureDrift {
 		// Yerel saat zincir ucunun gerisinde: yeni bloklar gelecek tarihli görünecek.
@@ -259,8 +289,14 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 	}
 
 	// Kendi ürettiğimiz bloğu da ağdan gelen gibi doğrula: tek doğrulama yolu.
-	if err := bc.acceptLocked(newBlock); err != nil {
+	if err := bc.checkStateless(newBlock); err != nil {
 		return nil, fmt.Errorf("üretilen blok doğrulanamadı: %w", err)
+	}
+	if err := bc.storeAndActivateLocked(newBlock); err != nil {
+		return nil, fmt.Errorf("üretilen blok doğrulanamadı: %w", err)
+	}
+	if bc.lastHash != newBlock.Hash {
+		return nil, fmt.Errorf("üretilen blok zincire eklenmedi")
 	}
 	return newBlock, nil
 }
@@ -280,19 +316,31 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
 		return err
 	}
-	// Ucun üzerine kurulmayan blok için imza doğrulaması yapma: zincirdeki eski bir blok ya da
-	// yanlış ebeveynli blok yeniden gönderilerek her seferinde ~1000 ML-DSA doğrulaması
-	// yaptırılamasın. Önbelleğe alınmaz (ileride geçerli olabilir); durumlu kontrol yine yapılır.
-	// Ebeveyni bekleme kuyruğunda olan blok da beklemeye alınır: senkronizasyon olmadığından
-	// atılırsa geri gelmez ve düğüm, ebeveyn eklendikten sonra zincirden kopar. Uç ve kuyruk
-	// aynı okuma kilidi altında okunur; ProcessPending ebeveyni arada zincire ekleyemez.
+	// Ebeveyne göre ucuz kontroller (bilinen blok, bilinmeyen/geçersiz ebeveyn, yükseklik,
+	// medyan zaman, yan zincir sınırları) imza doğrulamasından önce okuma kilidiyle yapılır:
+	// zincirdeki bir blok ya da yanlış ebeveynli blok yeniden gönderilerek ~1000 ML-DSA
+	// doğrulaması yaptırılamasın. Ebeveyni bekleme kuyruğunda olan blok da beklemeye alınır:
+	// senkronizasyon olmadığından atılırsa geri gelmez.
 	bc.mu.RLock()
-	tip := bc.lastHash
-	onPending := b.PrevHash != tip && bc.pending.has(b.PrevHash)
+	_, perr := bc.precheckLocked(b)
+	onPending := errors.Is(perr, ErrBadPrevHash) && bc.pending.has(b.PrevHash)
+	retry := false
+	if e, ok := bc.index[b.Hash]; ok && errors.Is(perr, ErrKnownBlock) {
+		retry = e.Status != statusInvalid && e.work.Cmp(bc.tip.work) > 0
+	}
 	bc.mu.RUnlock()
-	if b.PrevHash != tip && !onPending {
-		bc.log.Debug("blok ucun üzerine kurulmuyor", "index", b.Index, "hash", b.Hash)
-		return ErrBadPrevHash
+	if retry {
+		bc.mu.Lock()
+		defer bc.mu.Unlock()
+		return bc.retryKnownLocked(b.Hash)
+	}
+	if perr != nil && !onPending {
+		if errors.Is(perr, ErrBadPrevHash) {
+			bc.log.Debug("blok ebeveyni bilinmiyor", "index", b.Index, "hash", b.Hash)
+		} else if !errors.Is(perr, ErrKnownBlock) {
+			bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", perr)
+		}
+		return perr
 	}
 	// FTL yalnızca yerel saate bağlıdır; imza doğrulamasından önce bakılır. Böylece gelecek
 	// tarihli bir blok tekrar tekrar gönderilerek ~1000 ML-DSA doğrulaması yaptırılamaz:
@@ -341,33 +389,13 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	return bc.acceptStatefulLocked(b)
-}
-
-func (bc *Blockchain) acceptLocked(b *Block) error {
-	if err := bc.checkStateless(b); err != nil {
-		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
-		return err
-	}
-	return bc.acceptStatefulLocked(b)
-}
-
-func (bc *Blockchain) acceptStatefulLocked(b *Block) error {
-	prev, err := bc.getBlock(bc.lastHash)
-	if err != nil {
-		return err
-	}
-	view := newStateView(bc)
-	if err := bc.checkStateful(b, prev, view); err != nil {
-		// Aynı ebeveyn üzerinde durum kuralı ihlali kalıcıdır (zincir yeniden düzenlenmiyor).
-		// İndeks/önceki özet uyuşmazlığı ise ileride geçerli olabilir; önbelleğe alınmaz.
-		if b.PrevHash == prev.Hash && b.Index == prev.Index+1 && isPermanentStatefulErr(err) {
-			bc.rejected.add(b.Hash)
+	if err := bc.storeAndActivateLocked(b); err != nil {
+		if !errors.Is(err, ErrKnownBlock) {
+			bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
 		}
-		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
 		return err
 	}
-	return bc.commitBlock(b, view)
+	return nil
 }
 
 // checkStateless zincir durumuna bakmadan yapılabilen tüm kontrollerdir. Kilit gerektirmez.
@@ -528,34 +556,35 @@ func (c *rejectCache) add(h string) {
 	c.order = append(c.order, h)
 }
 
-// commitBlock bloğu ve view'deki tüm durum değişikliklerini tek bir atomik batch ile yazar.
-func (bc *Blockchain) commitBlock(b *Block, view *stateView) error {
-	// Genesis'in tek işlemi sıfır değerli coinbase'dir: bakiye yazılmaz (premine yok).
-	blockData, err := json.Marshal(b)
+// writeGenesis boş veritabanına genesis bloğunu, indeks kaydını, yükseklik tablosunu, şemayı
+// ve ağ kimliğini tek bir atomik batch ile yazar. Genesis'in tek işlemi sıfır değerli
+// coinbase'dir: bakiye yazılmaz (premine yok).
+func (bc *Blockchain) writeGenesis(g *Block) error {
+	e, err := newIndexEntry(g, big.NewInt(0))
+	if err != nil {
+		return err
+	}
+	e.Status = statusValid
+	data, err := json.Marshal(g)
 	if err != nil {
 		return fmt.Errorf("blok serileştirilemedi: %w", err)
 	}
-
 	batch := new(leveldb.Batch)
-	for addr, bal := range view.balances {
-		batch.Put([]byte(prefixBalance+addr), []byte(strconv.FormatInt(bal, 10)))
+	batch.Put([]byte(g.Hash), data)
+	if err := bc.putEntry(batch, e); err != nil {
+		return err
 	}
-	for addr, n := range view.nonces {
-		batch.Put([]byte(prefixNonce+addr), []byte(strconv.FormatUint(n, 10)))
-	}
-	batch.Put([]byte(b.Hash), blockData)
-	batch.Put([]byte(keyLastHash), []byte(b.Hash))
-	if b.Index == 0 {
-		// Şema ve ağ kimliği genesis ile aynı atomik yazımda.
-		batch.Put([]byte(keySchema), []byte(schemaVersion))
-		batch.Put([]byte(keyGenesis), []byte(b.Hash))
-	}
-
+	batch.Put([]byte(heightKey(0)), []byte(g.Hash))
+	batch.Put([]byte(keyLastHash), []byte(g.Hash))
+	batch.Put([]byte(keySchema), []byte(schemaVersion))
+	batch.Put([]byte(keyGenesis), []byte(g.Hash))
 	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
-		return fmt.Errorf("blok diske yazılamadı: %w", err)
+		return err
 	}
-	bc.lastHash = b.Hash
-	bc.log.Info("blok zincire eklendi", "index", b.Index, "hash", b.Hash, "tx_sayisi", len(b.Transactions))
+	bc.addToIndex(e)
+	bc.main[0] = g.Hash
+	bc.tip = e
+	bc.lastHash = g.Hash
 	return nil
 }
 
@@ -608,31 +637,78 @@ func (bc *Blockchain) Close() error {
 	return bc.db.Close()
 }
 
-// stateView diskteki duruma uygulanmamış değişiklikleri bellekte tutar.
-// Aynı bloktaki işlemler kümülatif kontrol edilir (çift harcama koruması).
+// stateView henüz yazılmamış durum değişikliklerini bellekte tutar; okumalar base'den
+// (disk ya da reorg sırasında bir overlay) yapılır. Aynı bloktaki işlemler kümülatif kontrol
+// edilir (çift harcama koruması).
 type stateView struct {
 	bc       *Blockchain
+	base     kvReader
 	balances map[string]int64
 	nonces   map[string]uint64
 }
 
 func newStateView(bc *Blockchain) *stateView {
-	return &stateView{bc: bc, balances: map[string]int64{}, nonces: map[string]uint64{}}
+	return &stateView{bc: bc, base: bc, balances: map[string]int64{}, nonces: map[string]uint64{}}
+}
+
+func (v *stateView) readInt(key string) (int64, error) {
+	s, ok, err := v.base.getRaw(key)
+	if err != nil || !ok {
+		return 0, err // hiç işlem görmemiş adres
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s", ErrCorruptState, key)
+	}
+	return n, nil
 }
 
 func (v *stateView) balance(addr string) (int64, error) {
 	if b, ok := v.balances[addr]; ok {
 		return b, nil
 	}
-	return v.bc.readInt(prefixBalance + addr)
+	return v.readInt(prefixBalance + addr)
 }
 
 func (v *stateView) nonce(addr string) (uint64, error) {
 	if n, ok := v.nonces[addr]; ok {
 		return n, nil
 	}
-	n, err := v.bc.readInt(prefixNonce + addr)
+	n, err := v.readInt(prefixNonce + addr)
 	return uint64(n), err
+}
+
+// commitTo view'deki değişiklikleri overlay'e uygular ve geri alma kaydını döndürür: her
+// anahtarın overlay'deki önceki değeri (yoksa nil; geri almada anahtar silinir, 0 yazılmaz).
+func (v *stateView) commitTo(o *overlay) ([]undoItem, error) {
+	vals := map[string]string{}
+	for addr, bal := range v.balances {
+		vals[prefixBalance+addr] = strconv.FormatInt(bal, 10)
+	}
+	for addr, n := range v.nonces {
+		vals[prefixNonce+addr] = strconv.FormatUint(n, 10)
+	}
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	undo := make([]undoItem, 0, len(keys))
+	for _, k := range keys {
+		prev, ok, err := o.getRaw(k)
+		if err != nil {
+			return nil, err
+		}
+		item := undoItem{Key: k}
+		if ok {
+			p := prev
+			item.Prev = &p
+		}
+		undo = append(undo, item)
+		nv := vals[k]
+		o.set(k, &nv)
+	}
+	return undo, nil
 }
 
 func (v *stateView) credit(addr string, amount int64) error {
