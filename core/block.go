@@ -5,9 +5,14 @@ const (
 	Coin           int64 = 100_000_000     // 1 QBTC = 10^8 taban birim; tüm tutarlar taban birim cinsindendir
 	CoinbaseSender       = "SYSTEM_REWARD" // Ödül işlemlerinin göndereni
 	MaxTxPerBlock        = 1000            // Coinbase hariç blok başına en fazla işlem (DoS sınırı)
-	MaxFutureDrift       = 2 * 60 * 60     // Saniye: blok zamanı yerel saatten en fazla bu kadar ileride olabilir
+	MaxFutureDrift       = 5 * 60          // Saniye (FTL): blok zamanı yerel saatten en fazla bu kadar ileride olabilir
 	MedianTimeSpan       = 11              // Blok zamanı son N bloğun medyanından büyük olmalı
 )
+
+// MaxFutureDrift blok süresinin katı değil, mutlak bir süredir: dürüst düğümlerin saat
+// kayması blok süresiyle küçülmez (kullanıcı kararı, 2026-11-08). LWMA'nın pencere uzunluğu
+// N seçildiğinde N·TargetSpacing/20 üst sınırına göre yeniden sınanmalıdır. Zaman yalnızca
+// yerel saatten okunur; eşlerden ayarlanmış ağ zamanı kullanılmaz.
 
 // Block başlık alanları (Version..Nonce) ve işlemlerden oluşur. Hash yalnızca sabit
 // boyutlu başlığın özetidir (bkz. header.go); işlemler MerkleRoot ile bağlanır.

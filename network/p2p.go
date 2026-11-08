@@ -80,6 +80,10 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	defer listener.Close()
 	ps.log.Info("P2P sunucusu dinlemede", "addr", listener.Addr().String())
 
+	stop := make(chan struct{})
+	defer close(stop)
+	go ps.retryPendingLoop(stop)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -135,6 +139,25 @@ func (ps *P2PServer) handleConnection(conn net.Conn) {
 		return
 	}
 	ps.log.Info("eşten gelen blok zincire eklendi", "remote", remote, "index", incomingBlock.Index)
+}
+
+// pendingRetryInterval gelecek tarihli bekleyen blokların yeniden denenme aralığıdır.
+const pendingRetryInterval = 5 * time.Second
+
+// retryPendingLoop saat yetiştikçe bekleyen blokları zincire eklemeyi dener.
+func (ps *P2PServer) retryPendingLoop(stop <-chan struct{}) {
+	t := time.NewTicker(pendingRetryInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if n := ps.Blockchain.ProcessPending(); n > 0 {
+				ps.log.Info("bekleyen bloklar zincire eklendi", "adet", n)
+			}
+		}
+	}
 }
 
 // BroadcastBlock bloğu bilinen tüm eşlere gönderir.
