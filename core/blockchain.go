@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"math/big"
 	"sort"
 	"strconv"
 	"sync"
