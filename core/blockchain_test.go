@@ -48,7 +48,8 @@ func TestRejectsForgedTransactions(t *testing.T) {
 	stolen.Sender = alice.Address // mallory kendi anahtarıyla alice adına imzalıyor
 	stolen.Receiver = bob.Address
 
-	unsigned := Transaction{Sender: alice.Address, Receiver: bob.Address, Amount: 10, Nonce: 1, PublicKey: alice.PublicKey}
+	unsigned := Transaction{Sender: alice.Address, Receiver: bob.Address, Amount: 10, Nonce: 1,
+		ExpiryHeight: testExpiry, PublicKey: alice.PublicKey}
 
 	redirected := signedTx(t, alice, bob.Address, 10, 1)
 	redirected.Receiver = mallory.Address // alıcı imzadan sonra değiştirildi

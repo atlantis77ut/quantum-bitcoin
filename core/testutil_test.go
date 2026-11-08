@@ -15,6 +15,9 @@ func easierThanLimitBits() uint32 {
 // testParams testlerin ağıdır: en kolay hedef, sabit genesis.
 var testParams = RegtestParams
 
+// testExpiry testlerde süre kuralına takılmayacak kadar uzak bir son kullanma yüksekliğidir.
+const testExpiry int64 = 1 << 40
+
 // testReward regtest'in ilk dönem ödülüdür. Bunu kullanan testler yükseklik
 // HalvingInterval'a (150) ulaşmadan biter; craftBlock ve fund bunu denetler.
 var testReward = RegtestParams.InitialSubsidy
@@ -74,7 +77,7 @@ func signedTx(t *testing.T, from *crypto.KeyPair, to string, amount int64, nonce
 
 func signedTxFee(t *testing.T, from *crypto.KeyPair, to string, amount, fee int64, nonce uint64) Transaction {
 	t.Helper()
-	tx := Transaction{Receiver: to, Amount: amount, Fee: fee, Timestamp: 1, Nonce: nonce}
+	tx := Transaction{Receiver: to, Amount: amount, Fee: fee, ExpiryHeight: testExpiry, Nonce: nonce}
 	if err := tx.Sign(from, testParams); err != nil {
 		t.Fatal(err)
 	}
