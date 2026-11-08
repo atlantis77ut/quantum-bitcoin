@@ -86,6 +86,8 @@ type Blockchain struct {
 	deepReorg bool
 	syncAllow map[string]struct{} // yan zincir sınırı uygulanmayacak bloklar (bkz. sync.go)
 
+	mineChunk  int          // kazımda denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
+	mineHook   func()       // testler için: her nonce diliminden önce çağrılır
 	bodyChecks atomic.Int64 // checkBody çağrı sayısı; testler imza doğrulamasının tekrarlanmadığını ölçer
 }
 
@@ -227,102 +229,22 @@ func (bc *Blockchain) GetLatestBlock() (*Block, error) {
 	return bc.getBlock(bc.lastHash)
 }
 
-// AddBlock işlemleri doğrular, geçersizleri ayıklar, madenci ödülünü ekler, bloğu kazar
-// ve atomik olarak diske yazar.
+// AddBlock işlemlerden bir blok şablonu kurar, onu zincir kilidi tutulmadan kazar ve
+// zincire ekler (NewTemplate → Mine → SubmitBlock). Kazım sırasında uç değişirse
+// ErrStaleTemplate döner; çağıran yeni şablonla yeniden dener.
 func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) (*Block, error) {
-	if !crypto.IsValidAddress(minerAddress) {
-		return nil, fmt.Errorf("%w: madenci adresi", ErrBadReceiver)
-	}
-
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
-	prev, err := bc.getBlock(bc.lastHash)
+	t, err := bc.NewTemplate(transactions, minerAddress)
 	if err != nil {
 		return nil, err
 	}
-	subsidy := BlockSubsidy(prev.Index+1, bc.params)
-
-	view := newStateView(bc)
-	// Doğrulayıcıyla aynı sıra: olgunlaşan coinbase işlemlerden önce.
-	if err := bc.creditMaturedLocked(view, prev.Index+1, prev.Hash); err != nil {
-		return nil, err
-	}
-	var accepted []Transaction
-	fees := int64(0)
-	for i := range transactions {
-		if len(accepted) == MaxTxPerBlock {
-			bc.log.Warn("blok dolu, kalan işlemler bekletiliyor", "kalan", len(transactions)-i)
-			break
-		}
-		tx := transactions[i]
-		// Süresi dolmuş işlem atlanır: bloğa girerse kendi bloğumuz doğrulamada düşerdi.
-		if err := tx.CheckExpiry(prev.Index + 1); err != nil {
-			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
-			continue
-		}
-		if err := tx.VerifyStateless(bc.params); err != nil {
-			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
-			continue
-		}
-		// Ücret toplamı (ödül dahil) taşacaksa işlemi bloğa alma; aksi halde coinbase geçersiz olur.
-		if subsidy+fees > math.MaxInt64-tx.Fee {
-			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", "ücret toplamı taşar")
-			continue
-		}
-		if err := view.apply(&tx); err != nil {
-			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
-			continue
-		}
-		fees += tx.Fee
-		accepted = append(accepted, tx)
-	}
-
-	coinbase := Transaction{
-		Sender:     CoinbaseSender,
-		Receiver:   minerAddress,
-		Amount:     subsidy + fees,
-		Nonce:      uint64(prev.Index + 1), // yükseklik: her coinbase'in kimliği benzersiz olur
-		IsCoinbase: true,
-	}
-
-	mtp, err := bc.medianTimePast(prev)
+	b, err := bc.Mine(t, nil)
 	if err != nil {
 		return nil, err
 	}
-	ts := bc.now()
-	if ts <= mtp {
-		// Yerel saat medyanın gerisinde: blok medyan+1 ile damgalanır. Saat FTL'den fazla
-		// geride kaldıysa kendi bloğumuz da ErrTimestampFuture ile düşer; nedeni görünür olsun.
-		// Aynı saniyede birkaç blok (regtest) olağandır; yalnızca belirgin geri kalma uyarılır.
-		if mtp-ts >= bc.params.TargetSpacing {
-			bc.log.Warn("yerel saat son blokların medyanının gerisinde; saatinizi NTP ile doğrulayın",
-				"medyan", mtp, "yerel", ts)
-		}
-		ts = mtp + 1
-	}
-
-	newBlock := &Block{
-		Index:        prev.Index + 1,
-		Timestamp:    ts,
-		Transactions: append([]Transaction{coinbase}, accepted...),
-		PrevHash:     prev.Hash,
-	}
-	if err := newBlock.MineBlock(bc.params.nextBits(bc.tip.Height, bc.tip.Timestamp, bc.tip.AnchorTime)); err != nil {
+	if err := bc.SubmitBlock(b); err != nil {
 		return nil, err
 	}
-
-	// Kendi ürettiğimiz bloğu da ağdan gelen gibi doğrula: tek doğrulama yolu.
-	if err := bc.checkStateless(newBlock); err != nil {
-		return nil, fmt.Errorf("üretilen blok doğrulanamadı: %w", err)
-	}
-	if err := bc.storeAndActivateLocked(newBlock); err != nil {
-		return nil, fmt.Errorf("üretilen blok doğrulanamadı: %w", err)
-	}
-	if bc.lastHash != newBlock.Hash {
-		return nil, fmt.Errorf("üretilen blok zincire eklenmedi")
-	}
-	return newBlock, nil
+	return b, nil
 }
 
 // AcceptBlock ağdan gelen bir bloğu tam doğrulamadan geçirip zincire ekler.

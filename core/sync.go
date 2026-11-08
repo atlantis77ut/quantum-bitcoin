@@ -152,8 +152,8 @@ func (bc *Blockchain) HeadersAfter(locator []string, max int) []BlockHeader {
 func (bc *Blockchain) BlockByHash(hash string) (*Block, error) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
-	if _, ok := bc.index[hash]; !ok {
-		return nil, ErrUnknownBlock
+	if e, ok := bc.index[hash]; !ok || e.Status == statusInvalid {
+		return nil, ErrUnknownBlock // geçersiz işaretli bloklar eşlere sunulmaz
 	}
 	return bc.getBlock(hash)
 }

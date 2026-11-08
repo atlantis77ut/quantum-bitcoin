@@ -27,6 +27,7 @@ func main() {
 	peerAddr := flag.String("peer", "", "Bağlanılacak diğer düğümlerin adresleri (virgülle ayrılmış)")
 	tlsCert := flag.String("tls-cert", "", "API için TLS sertifika dosyası (boşsa HTTP)")
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
+	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -73,6 +74,18 @@ func main() {
 	go func() { errCh <- fmt.Errorf("p2p: %w", p2p.Start()) }()
 	go func() { errCh <- fmt.Errorf("api: %w", apiServer.Start()) }()
 
+	// 5. Kazım (isteğe bağlı): zincir kilidi tutulmadan, uç değişince şablon yenilenerek.
+	stopMining := make(chan struct{})
+	if *mineTo != "" {
+		miner, err := network.NewMiner(p2p, *mineTo)
+		if err != nil {
+			slog.Error("geçersiz kazım adresi", "address", *mineTo)
+			os.Exit(2)
+		}
+		slog.Info("kazım başlıyor", "address", *mineTo, "network", params.Name)
+		go miner.Run(stopMining)
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
@@ -83,6 +96,7 @@ func main() {
 		slog.Info("kapatma sinyali alındı", "signal", s.String())
 	}
 
+	close(stopMining)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := apiServer.Shutdown(ctx); err != nil {
