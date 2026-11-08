@@ -15,6 +15,10 @@ func easierThanLimitBits() uint32 {
 // testParams testlerin ağıdır: en kolay hedef, sabit genesis.
 var testParams = RegtestParams
 
+// testReward regtest'in ilk dönem ödülüdür. Bunu kullanan testler yükseklik
+// HalvingInterval'a (150) ulaşmadan biter; craftBlock ve fund bunu denetler.
+var testReward = RegtestParams.InitialSubsidy
+
 // newTestChain geçici dizinde, sabit saatli ve düşük zorluklu bir zincir açar.
 func newTestChain(t *testing.T) *Blockchain {
 	t.Helper()
@@ -37,10 +41,11 @@ func newKey(t *testing.T) *crypto.KeyPair {
 	return kp
 }
 
-// fund madenciye n blok kazdırarak n*BlockReward verir.
+// fund madenciye n blok kazdırarak n*testReward verir (ilk dönemde).
 func fund(t *testing.T, bc *Blockchain, kp *crypto.KeyPair, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
+		requireFirstEpoch(t, bc)
 		if _, err := bc.AddBlock(nil, kp.Address); err != nil {
 			t.Fatal(err)
 		}
@@ -69,6 +74,7 @@ func craftBlock(t *testing.T, bc *Blockchain, txs []Transaction) *Block {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireFirstEpoch(t, bc)
 	b := &Block{
 		Index:        prev.Index + 1,
 		Timestamp:    bc.now(),
@@ -101,8 +107,20 @@ func mineAt(t *testing.T, bc *Blockchain, b *Block) {
 	}
 }
 
+// requireFirstEpoch, testReward varsayan yardımcıların ilk yarılanmayı geçmesini engeller.
+func requireFirstEpoch(t *testing.T, bc *Blockchain) {
+	t.Helper()
+	tip, err := bc.GetLatestBlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bc.params == RegtestParams && tip.Index+1 >= RegtestParams.HalvingInterval {
+		t.Fatal("testReward ilk dönem içindir; bu test BlockSubsidy kullanmalı")
+	}
+}
+
 func coinbaseTo(addr string) Transaction {
-	return Transaction{Sender: CoinbaseSender, Receiver: addr, Amount: BlockReward, IsCoinbase: true}
+	return Transaction{Sender: CoinbaseSender, Receiver: addr, Amount: testReward, IsCoinbase: true}
 }
 
 // coinbaseWithFees ödül + verilen işlemlerin ücretleri kadar coinbase üretir.

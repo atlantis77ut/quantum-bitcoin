@@ -3,7 +3,6 @@ package core
 // Uzlaşma (consensus) parametreleri. Değiştirmeden önce kullanıcıya sorulmalı.
 const (
 	Coin           int64 = 100_000_000     // 1 QBTC = 10^8 taban birim; tüm tutarlar taban birim cinsindendir
-	BlockReward    int64 = 50 * Coin       // Blok ödülü (emisyon takvimi ayrı bir uzlaşma kararıdır)
 	CoinbaseSender       = "SYSTEM_REWARD" // Ödül işlemlerinin göndereni
 	MaxTxPerBlock        = 1000            // Coinbase hariç blok başına en fazla işlem (DoS sınırı)
 	MaxFutureDrift       = 2 * 60 * 60     // Saniye: blok zamanı yerel saatten en fazla bu kadar ileride olabilir

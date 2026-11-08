@@ -65,7 +65,7 @@ func TestRejectsForgedTransactions(t *testing.T) {
 			}
 		})
 	}
-	if got := mustBalance(t, bc, alice.Address); got != BlockReward {
+	if got := mustBalance(t, bc, alice.Address); got != testReward {
 		t.Fatalf("alice bakiyesi değişti: %d", got)
 	}
 }
@@ -76,7 +76,7 @@ func TestRejectsInvalidBlocks(t *testing.T) {
 	mallory := newKey(t)
 
 	bigCoinbase := coinbaseTo(mallory.Address)
-	bigCoinbase.Amount = BlockReward + 1 // fazla talep (para basma)
+	bigCoinbase.Amount = testReward + 1 // fazla talep (para basma)
 
 	extraCoinbase := coinbaseTo(mallory.Address)
 
@@ -213,7 +213,7 @@ func TestRejectsNonPositiveAmounts(t *testing.T) {
 			t.Fatalf("tutar %d kabul edildi", amt)
 		}
 	}
-	if mustBalance(t, bc, alice.Address) != BlockReward || mustBalance(t, bc, bob.Address) != 0 {
+	if mustBalance(t, bc, alice.Address) != testReward || mustBalance(t, bc, bob.Address) != 0 {
 		t.Fatal("bakiyeler değişti")
 	}
 }
@@ -265,7 +265,7 @@ func TestRejectsReplay(t *testing.T) {
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadNonce) {
 		t.Fatalf("atlanan nonce: hata %v", err)
 	}
-	if got := mustBalance(t, bc, bob.Address); got != BlockReward+10*Coin {
+	if got := mustBalance(t, bc, bob.Address); got != testReward+10*Coin {
 		t.Fatalf("bob bakiyesi %d", got)
 	}
 }

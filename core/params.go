@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"quantum-bitcoin/crypto"
@@ -17,6 +18,66 @@ type Params struct {
 	GenesisMessage   string // genesis'in bu andan önce bilinemeyeceğini gösteren taahhüt
 	GenesisNonce     uint64
 	GenesisHash      string // boşsa ağ henüz başlatılamaz (lansman öncesi mainnet)
+
+	// Emisyon (bkz. emission.go). Değerler TargetSpacing'den withEmission ile türetilir.
+	TargetSpacing   int64 // hedef blok aralığı, saniye; lansmandan önce dondurulur
+	InitialSubsidy  int64 // ilk dönem blok ödülü, taban birim
+	TailSubsidy     int64 // kuyruk emisyonu: yarılanmış ödülün altına inemeyeceği taban
+	HalvingInterval int64 // yarılanma aralığı, blok
+	SlowStartBlocks int64 // ödülün 0'dan InitialSubsidy'ye doğrusal yükseldiği ilk blok sayısı
+}
+
+// 60 sn blok süresi için emisyon (kullanıcı kararı, 2026-11-08): 5 QBTC ilk ödül,
+// 2.100.000 blokta (~4 yıl) bir yarılanma, 0,1 QBTC kuyruk, 20.000 blokluk başlangıç
+// rampası. Başka bir blok süresinde ödüller süreyle orantılı, aralıklar ters orantılı
+// ölçeklenir; böylece zamana göre emisyon eğrisi aynı kalır. Blok süresi zincir ortasında
+// değiştirilmez: lansmandan önce ölçülüp dondurulur.
+const (
+	referenceSpacing         int64 = 60
+	referenceInitialSubsidy  int64 = 5 * Coin
+	referenceTailSubsidy     int64 = Coin / 10
+	referenceHalvingInterval int64 = 2_100_000
+	referenceSlowStartBlocks int64 = 20_000
+)
+
+// withEmission emisyon değerlerini p.TargetSpacing'den türetir. Ölçekleme tam bölünmüyorsa
+// paket başlatılırken panikler: bu bir kod sabiti hatasıdır ve sessizce yuvarlanmamalıdır.
+func withEmission(p *Params) *Params {
+	s := p.TargetSpacing
+	if s <= 0 || referenceInitialSubsidy*s%referenceSpacing != 0 ||
+		referenceTailSubsidy*s%referenceSpacing != 0 ||
+		referenceHalvingInterval*referenceSpacing%s != 0 ||
+		referenceSlowStartBlocks*referenceSpacing%s != 0 {
+		panic(fmt.Sprintf("%s: blok süresi %d sn emisyonu tam ölçeklemiyor", p.Name, s))
+	}
+	p.InitialSubsidy = referenceInitialSubsidy * s / referenceSpacing
+	p.TailSubsidy = referenceTailSubsidy * s / referenceSpacing
+	p.HalvingInterval = referenceHalvingInterval * referenceSpacing / s
+	p.SlowStartBlocks = referenceSlowStartBlocks * referenceSpacing / s
+	return p
+}
+
+// ErrBadParams ağ parametreleri tutarsız.
+var ErrBadParams = errors.New("geçersiz ağ parametreleri")
+
+// Validate emisyon parametrelerinin ödül fonksiyonunu tanımsız bırakmadığını denetler
+// (sıfıra bölme, negatif ödül, kuyruğun ilk ödülden büyük olması vb.).
+func (p *Params) Validate() error {
+	switch {
+	case p == nil:
+		return ErrBadParams
+	case p.TargetSpacing <= 0:
+		return fmt.Errorf("%w: %s blok aralığı %d", ErrBadParams, p.Name, p.TargetSpacing)
+	case p.InitialSubsidy <= 0 || p.InitialSubsidy > maxSubsidy:
+		return fmt.Errorf("%w: %s ilk ödül %d", ErrBadParams, p.Name, p.InitialSubsidy)
+	case p.TailSubsidy <= 0 || p.TailSubsidy > p.InitialSubsidy:
+		return fmt.Errorf("%w: %s kuyruk ödülü %d", ErrBadParams, p.Name, p.TailSubsidy)
+	case p.HalvingInterval <= 0:
+		return fmt.Errorf("%w: %s yarılanma aralığı %d", ErrBadParams, p.Name, p.HalvingInterval)
+	case p.SlowStartBlocks < 0 || p.SlowStartBlocks > maxSlowStart || p.SlowStartBlocks >= p.HalvingInterval:
+		return fmt.Errorf("%w: %s başlangıç rampası %d", ErrBadParams, p.Name, p.SlowStartBlocks)
+	}
+	return nil
 }
 
 // sigTag imza alanının sürüm etiketidir.
@@ -26,28 +87,40 @@ var (
 	// MainnetParams: genesis kasıtlı olarak tanımsızdır. Genesis bugünden sabitlenirse onu bilen
 	// herkes lansmana kadar gizlice zincir kazıp "premine yok" vaadini delebilir. Mainnet genesis'i
 	// lansman anında öngörülemez bir mesajla (ör. o anki bir Bitcoin blok özeti) üretilecektir.
-	MainnetParams = &Params{Name: "mainnet", Bits: 0x1f00ffff}
+	MainnetParams = withEmission(&Params{Name: "mainnet", Bits: 0x1f00ffff, TargetSpacing: 60})
 
 	// TestnetParams: herkese açık test ağı (hedef eski zorluk 4'e eşdeğer).
-	TestnetParams = &Params{
+	TestnetParams = withEmission(&Params{
 		Name:             "testnet",
 		Bits:             0x1f00ffff,
 		GenesisTimestamp: 1794096000, // 2026-11-08T00:00:00Z
 		GenesisMessage:   "Q-BTC testnet genesis 2026-11-08",
 		GenesisNonce:     129686,
 		GenesisHash:      "00004fb2d4e92c6947ed1d8b9c039fd4ea0d23f2dd48babeeded9082f7e6b0ae",
-	}
+		TargetSpacing:    60,
+	})
 
 	// RegtestParams: yerel geliştirme ve testler için en kolay hedef (powLimit'e yakın).
-	RegtestParams = &Params{
+	// Yalnızca testler içindir: ilk ödül 50 QBTC (mevcut tutar testleri bu ölçekte yazılı),
+	// yarılanma 150 blokta bir ve rampa yok; testler dönem ve kuyruk geçişlerini (1350.
+	// blok) kısa zincirde görebilsin. Mainnet/testnet emisyonu bundan etkilenmez.
+	RegtestParams = regtestEmission(withEmission(&Params{
 		Name:             "regtest",
 		Bits:             0x200fffff,
 		GenesisTimestamp: 1794096000,
 		GenesisMessage:   "Q-BTC regtest genesis",
 		GenesisNonce:     6,
 		GenesisHash:      "02f739de53b008231b18af8ef6c028edf6f6f80e560895994577bfbdf9986157",
-	}
+		TargetSpacing:    60,
+	}))
 )
+
+func regtestEmission(p *Params) *Params {
+	p.InitialSubsidy = 50 * Coin
+	p.HalvingInterval = 150
+	p.SlowStartBlocks = 0
+	return p
+}
 
 // ParamsByName komut satırındaki ağ adını parametrelere çevirir.
 func ParamsByName(name string) (*Params, error) {

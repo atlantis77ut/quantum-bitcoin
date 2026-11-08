@@ -62,7 +62,7 @@ func TestBalanceEndpoint(t *testing.T) {
 		BalanceQBTC string `json:"balance_qbtc"`
 		Decimals    int
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || body.Balance != core.BlockReward {
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || body.Balance != core.RegtestParams.InitialSubsidy {
 		t.Fatalf("bakiye %d, hata %v", body.Balance, err)
 	}
 	if body.BalanceQBTC != "50.00000000" || body.Decimals != 8 {
@@ -183,7 +183,7 @@ func TestP2PAcceptsValidBlock(t *testing.T) {
 	prev, _ := dst.GetLatestBlock()
 	b := &core.Block{
 		Index: prev.Index + 1, Timestamp: prev.Timestamp + 1, PrevHash: prev.Hash,
-		Transactions: []core.Transaction{{Sender: core.CoinbaseSender, Receiver: miner.Address, Amount: core.BlockReward,
+		Transactions: []core.Transaction{{Sender: core.CoinbaseSender, Receiver: miner.Address, Amount: core.RegtestParams.InitialSubsidy,
 			Nonce: uint64(prev.Index + 1), IsCoinbase: true}},
 	}
 	if err := b.MineBlock(dst.Bits()); err != nil {
