@@ -77,6 +77,35 @@ func DifficultyToBits(d int) (uint32, error) {
 	return bits, nil
 }
 
+// BitsForHashrate saniyede hashesPerSec özetle ortalama spacing saniyede bir blok veren
+// hedeftir: hedef ≈ 2^256 / (hashesPerSec·spacing). Mainnet başlangıç hedefi lansmanda bununla,
+// başlatıcının genesis ile kanıtladığı hashrate'ten seçilir. Sonuç limit'e kırpılır.
+func BitsForHashrate(hashesPerSec float64, spacing int64, limitBits uint32) (uint32, error) {
+	limit, err := TargetFromBits(limitBits)
+	if err != nil {
+		return 0, err
+	}
+	if !(hashesPerSec >= 1 && hashesPerSec <= 1e40) || spacing <= 0 { // NaN ve sonsuz da reddedilir
+		return 0, ErrBadBits
+	}
+	work, _ := new(big.Float).Mul(big.NewFloat(hashesPerSec), big.NewFloat(float64(spacing))).Int(nil)
+	if work.Sign() <= 0 {
+		return 0, ErrBadBits
+	}
+	t := new(big.Int).Div(new(big.Int).Lsh(big.NewInt(1), 256), work)
+	if t.Cmp(limit) > 0 {
+		t = limit
+	}
+	if t.Sign() <= 0 {
+		t = big.NewInt(1)
+	}
+	bits := bigToCompact(t)
+	if _, err := TargetFromBits(bits); err != nil {
+		return 0, err
+	}
+	return bits, nil
+}
+
 // hashMeetsTarget özeti büyük-endian 256 bitlik tamsayı olarak okur; kural: özet <= hedef.
 func hashMeetsTarget(h [32]byte, target *big.Int) bool {
 	return new(big.Int).SetBytes(h[:]).Cmp(target) <= 0

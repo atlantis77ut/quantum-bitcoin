@@ -88,6 +88,6 @@ func (p *Params) nextBits(parentHeight, parentTime, anchorTime int64) uint32 {
 	// Çapanın ideal zamanı kendi zamanıdır: ebeveynin ideal zamanı
 	// anchorTime + spacing·(parentHeight−1). Belirtimin "çapanın ebeveyni" tanımına
 	// heightDelta = parentHeight − 2 ile çevrilir (exponent aynı kalır).
-	t := asertTarget(anchor, parentTime-anchorTime, parentHeight-2, p.TargetSpacing, p.HalfLife, powLimit)
+	t := asertTarget(anchor, parentTime-anchorTime, parentHeight-2, p.TargetSpacing, p.HalfLife, p.powLimitTarget())
 	return bigToCompact(t)
 }

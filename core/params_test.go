@@ -91,7 +91,7 @@ func TestParamsBits(t *testing.T) {
 	}{
 		{RegtestParams, 1},
 		{TestnetParams, 4},
-		{MainnetParams, 4},
+		// Mainnet başlangıç hedefi lansmanda seçilir (yer tutucu, powlimit_test.go).
 	}
 	for _, c := range cases {
 		want, err := DifficultyToBits(c.difficulty)

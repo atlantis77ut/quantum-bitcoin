@@ -339,6 +339,9 @@ func (bc *Blockchain) bitsGate(b *Block) error {
 	if err != nil {
 		return ErrBadBits
 	}
+	if claimed.Cmp(bc.params.powLimitTarget()) > 0 {
+		return ErrOrphanTooEasy // ağ tabanından kolay hedef hiçbir zincirde geçerli olamaz
+	}
 	tip, err := TargetFromBits(bc.params.nextBits(bc.tip.Height, bc.tip.Timestamp, bc.tip.AnchorTime))
 	if err != nil {
 		return err
