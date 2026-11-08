@@ -33,7 +33,8 @@ const (
 	// 5: ertelenmiş coinbase ödemesi (olgunluk), indekste coinbase alıcısı ve tutarı.
 	// 6: indekste tam başlık (sürüm, Merkle kökü, nonce): başlıklar diskten okunmadan sunulur.
 	// 7: işlem son kullanma yüksekliği (zaman damgası yerine), imza alanı v4, yeni genesis.
-	schemaVersion = "7"
+	// 8: ASERT zorluk ayarlaması; indekste çapa zamanı.
+	schemaVersion = "8"
 )
 
 var (
@@ -51,7 +52,8 @@ var (
 	ErrBadIndex        = errors.New("blok indeksi beklenen değil")
 	ErrBadPrevHash     = errors.New("önceki blok özeti eşleşmiyor")
 	ErrBadHash         = errors.New("blok özeti içerikle eşleşmiyor")
-	ErrBadDifficulty   = errors.New("blok zorluğu zincir zorluğuyla eşleşmiyor")
+	ErrBadDifficulty   = errors.New("blok zorluğu beklenen hedefle (ASERT) eşleşmiyor")
+	ErrOrphanTooEasy   = errors.New("ebeveyni bilinmeyen blok ucun hedefinden çok kolay")
 	ErrInsufficientPoW = errors.New("iş ispatı (PoW) hedefi karşılanmıyor")
 	ErrBadCoinbase     = errors.New("geçersiz coinbase işlemi")
 	ErrTooManyTx       = errors.New("blokta çok fazla işlem var")
@@ -70,7 +72,7 @@ type Blockchain struct {
 	mu       sync.RWMutex
 	db       *leveldb.DB
 	params   *Params
-	bits     uint32 // zincir genelinde sabit hedef (yeniden hedefleme ayrı bir PR'da)
+	bits     uint32 // başlangıç (çapa) hedefi; blok başına hedef ASERT ile hesaplanır
 	lastHash string
 	log      *slog.Logger
 	now      func() int64 // testlerde saat sabitlemek için
@@ -191,7 +193,18 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 }
 
 // Bits zincirin sabit compact hedefidir.
-func (bc *Blockchain) Bits() uint32 { return bc.bits }
+func (bc *Blockchain) Bits() uint32 {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.params.nextBits(bc.tip.Height, bc.tip.Timestamp, bc.tip.AnchorTime)
+}
+
+// BitsAfter ebeveyni parentHash olan bloğun hedefidir (ebeveyn indekste olmalıdır).
+func (bc *Blockchain) BitsAfter(parentHash string) (uint32, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.expectedBitsLocked(parentHash, nil)
+}
 
 // GetBalance bir adresin onaylanmış bakiyesini döndürür.
 func (bc *Blockchain) GetBalance(address string) (int64, error) {
@@ -296,7 +309,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 		Transactions: append([]Transaction{coinbase}, accepted...),
 		PrevHash:     prev.Hash,
 	}
-	if err := newBlock.MineBlock(bc.bits); err != nil {
+	if err := newBlock.MineBlock(bc.params.nextBits(bc.tip.Height, bc.tip.Timestamp, bc.tip.AnchorTime)); err != nil {
 		return nil, err
 	}
 
@@ -324,6 +337,10 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 	// Başlık hataları önbelleğe alınmaz: özet yalnızca başlığı kapsar ve gövde ancak Merkle
 	// kökü doğrulandıktan sonra özete bağlıdır. Aksi halde saldırgan dürüst bir başlığa çöp
 	// gövde ekleyerek o özeti her yerde "geçersiz" diye zehirleyebilirdi.
+	if err := bc.bitsGate(b); err != nil {
+		bc.log.Debug("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
+		return err
+	}
 	if err := bc.checkHeader(b); err != nil {
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
 		return err
@@ -378,6 +395,39 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 	return nil
 }
 
+// orphanEasyShift: ebeveyni bilinmeyen blok ucun bir sonraki hedefinden en fazla 2^orphanEasyShift
+// kat kolay hedef ilan edebilir.
+const orphanEasyShift = 2
+
+// bitsGate zorluk kapısıdır; PoW, özet ve Merkle kökünden önce yalnızca indekse bakar.
+// Ebeveyn biliniyorsa hedef tam olarak beklenen değer olmalıdır. Bilinmiyorsa beklenen değer
+// hesaplanamaz; blok ucun hedefinden en fazla 4 kat kolay bir hedef ilan etmelidir: aksi halde
+// neredeyse bedava kazılan sahte "yetim" bloklar özet hesaplatıp her biri senkronizasyon
+// turu tetiklerdi. Dürüst ama çok farklı hedefli bir dal (ör. uzun duraklamadan sonra)
+// periyodik senkronizasyonla gelir.
+func (bc *Blockchain) bitsGate(b *Block) error {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	if parent, ok := bc.index[b.PrevHash]; ok {
+		if b.Bits != bc.params.nextBits(parent.Height, parent.Timestamp, parent.AnchorTime) {
+			return ErrBadDifficulty
+		}
+		return nil
+	}
+	claimed, err := TargetFromBits(b.Bits)
+	if err != nil {
+		return ErrBadBits
+	}
+	tip, err := TargetFromBits(bc.params.nextBits(bc.tip.Height, bc.tip.Timestamp, bc.tip.AnchorTime))
+	if err != nil {
+		return err
+	}
+	if claimed.Cmp(tip.Lsh(tip, orphanEasyShift)) > 0 {
+		return ErrOrphanTooEasy
+	}
+	return nil
+}
+
 // checkStateless zincir durumuna bakmadan yapılabilen tüm kontrollerdir. Kilit gerektirmez.
 func (bc *Blockchain) checkStateless(b *Block) error {
 	if err := bc.checkHeader(b); err != nil {
@@ -392,9 +442,9 @@ func (bc *Blockchain) checkHeader(b *Block) error {
 	if b.Version != BlockVersion {
 		return ErrBadVersion
 	}
-	if b.Bits != bc.bits {
-		return ErrBadDifficulty
-	}
+	// Hedefin beklenen değeri ebeveyne bağlıdır ve precheckLocked'ta denetlenir; ağdan gelen
+	// bloklarda AcceptBlock bunu PoW'dan önce yapar (kolay hedef ilan eden blok özet ve
+	// Merkle kökü hesaplatamaz).
 	if !MeetsTarget(b.Hash, b.Bits) {
 		return ErrInsufficientPoW // ucuz kontrol önce: PoW'suz bloklar özet hesaplatamaz
 	}
@@ -554,7 +604,7 @@ func (c *rejectCache) add(h string) {
 // ve ağ kimliğini tek bir atomik batch ile yazar. Genesis'in tek işlemi sıfır değerli
 // coinbase'dir: bakiye yazılmaz (premine yok).
 func (bc *Blockchain) writeGenesis(g *Block) error {
-	e, err := newIndexEntry(g, big.NewInt(0))
+	e, err := newIndexEntry(g, nil)
 	if err != nil {
 		return err
 	}

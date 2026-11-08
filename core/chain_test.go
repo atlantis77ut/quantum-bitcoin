@@ -317,7 +317,7 @@ func storeOnly(t *testing.T, bc *Blockchain, b *Block) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := newIndexEntry(b, parent.work)
+	e, err := newIndexEntry(b, parent)
 	if err != nil {
 		t.Fatal(err)
 	}

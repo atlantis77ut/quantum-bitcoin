@@ -63,9 +63,47 @@ func (e *indexEntry) header() BlockHeader {
 		MerkleRoot: e.MerkleRoot, Bits: e.Bits, Nonce: e.Nonce, Hash: e.Hash}
 }
 
-// expectedBits ebeveyni parent olan bloğun taşıması gereken hedeftir. Şimdilik sabit;
-// LWMA bu fonksiyonun yerine geçecek.
-func (bc *Blockchain) expectedBits(parentHash string) uint32 { return bc.bits }
+// ancestor zorluk ve medyan zaman hesabı için bir atanın özetidir.
+type ancestor struct {
+	ts, height int64
+	prev       string
+	anchorTime int64 // atanın zincirindeki 1. bloğun zamanı (ASERT çapası; genesis'te 0)
+}
+
+// lookupFn henüz indekste olmayan atalar (senkronizasyon oturumu başlıkları) için aramadır.
+type lookupFn func(hash string) (ancestor, bool)
+
+// ancestorLocked bir atayı önce lookup'ta, sonra indekste arar. Kilit altında çağrılır.
+func (bc *Blockchain) ancestorLocked(h string, lookup lookupFn) (ancestor, bool) {
+	if lookup != nil {
+		if a, ok := lookup(h); ok {
+			return a, true
+		}
+	}
+	if e, ok := bc.index[h]; ok {
+		return ancestor{ts: e.Timestamp, height: e.Height, prev: e.Prev, anchorTime: e.AnchorTime}, true
+	}
+	return ancestor{}, false
+}
+
+// childAnchorTime ebeveyninin çapa zamanı parentAnchor olan, childHeight yüksekliğinde ve
+// childTime zamanlı bloğun çapa zamanıdır: 1. blok kendi zamanıyla çapadır.
+func childAnchorTime(childHeight, childTime, parentAnchor int64) int64 {
+	if childHeight == 1 {
+		return childTime
+	}
+	return parentAnchor
+}
+
+// expectedBitsLocked ebeveyni parentHash olan bloğun taşıması gereken hedeftir (ASERT,
+// bkz. asert.go). Yalnızca ebeveyne bağlıdır; ata indekste ya da lookup'ta olmalıdır.
+func (bc *Blockchain) expectedBitsLocked(parentHash string, lookup lookupFn) (uint32, error) {
+	a, ok := bc.ancestorLocked(parentHash, lookup)
+	if !ok {
+		return 0, fmt.Errorf("%w: zorluk için ata yok", ErrCorruptState)
+	}
+	return bc.params.nextBits(a.height, a.ts, a.anchorTime), nil
+}
 
 // Locator ana zincirden bir konum belirleyici üretir: uçtan geriye ilk 10 blok tek tek,
 // sonra adım ikiye katlanarak; genesis her zaman sondadır.
@@ -135,28 +173,17 @@ func (bc *Blockchain) Confirmations(hash string) (int64, bool) {
 // mtpLocked ebeveyni parentHash olan bloğun medyan zaman sınırını hesaplar; atalar önce
 // lookup'ta (henüz indekste olmayan başlıklar), sonra indekste aranır. medianTimePast ile
 // aynı pencereyi kullanır (genesis dahil, en fazla MedianTimeSpan blok).
-func (bc *Blockchain) mtpLocked(parentHash string, lookup func(string) (int64, int64, string, bool)) (int64, error) {
-	get := func(h string) (ts, height int64, prev string, ok bool) {
-		if lookup != nil {
-			if ts, height, prev, ok = lookup(h); ok {
-				return
-			}
-		}
-		if e, found := bc.index[h]; found {
-			return e.Timestamp, e.Height, e.Prev, true
-		}
-		return 0, 0, "", false
-	}
-	ts, height, prev, ok := get(parentHash)
+func (bc *Blockchain) mtpLocked(parentHash string, lookup lookupFn) (int64, error) {
+	a, ok := bc.ancestorLocked(parentHash, lookup)
 	if !ok {
 		return 0, fmt.Errorf("%w: medyan zaman için ata yok", ErrCorruptState)
 	}
-	times := []int64{ts}
-	for len(times) < MedianTimeSpan && height > 0 {
-		if ts, height, prev, ok = get(prev); !ok {
+	times := []int64{a.ts}
+	for len(times) < MedianTimeSpan && a.height > 0 {
+		if a, ok = bc.ancestorLocked(a.prev, lookup); !ok {
 			return 0, fmt.Errorf("%w: medyan zaman için ata yok", ErrCorruptState)
 		}
-		times = append(times, ts)
+		times = append(times, a.ts)
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 	return times[len(times)/2], nil
@@ -174,8 +201,9 @@ type HeaderSync struct {
 }
 
 type syncHeader struct {
-	h    BlockHeader
-	work *big.Int
+	h          BlockHeader
+	work       *big.Int
+	anchorTime int64
 }
 
 func (bc *Blockchain) NewHeaderSync() *HeaderSync {
@@ -195,26 +223,26 @@ func (s *HeaderSync) Add(hs []BlockHeader) (int, error) {
 	if s.last != "" && hs[0].PrevHash != s.last {
 		return 0, fmt.Errorf("%w: önceki yanıtın devamı değil", ErrBadHeaders)
 	}
-	lookup := func(h string) (int64, int64, string, bool) {
+	lookup := func(h string) (ancestor, bool) {
 		if x, ok := s.headers[h]; ok {
-			return x.h.Timestamp, x.h.Index, x.h.PrevHash, true
+			return ancestor{ts: x.h.Timestamp, height: x.h.Index, prev: x.h.PrevHash, anchorTime: x.anchorTime}, true
 		}
-		return 0, 0, "", false
+		return ancestor{}, false
 	}
 	for i := range hs {
 		h := &hs[i]
 		if i > 0 && h.PrevHash != hs[i-1].Hash {
 			return i, fmt.Errorf("%w: kesintili dizi", ErrBadHeaders)
 		}
-		var parentHeight int64
+		var parentHeight, parentAnchor int64
 		var parentWork *big.Int
 		if p, ok := s.headers[h.PrevHash]; ok {
-			parentHeight, parentWork = p.h.Index, p.work
+			parentHeight, parentWork, parentAnchor = p.h.Index, p.work, p.anchorTime
 		} else if e, ok := bc.index[h.PrevHash]; ok {
 			if e.Status == statusInvalid {
 				return i, ErrKnownInvalid
 			}
-			parentHeight, parentWork = e.Height, e.work
+			parentHeight, parentWork, parentAnchor = e.Height, e.work, e.AnchorTime
 		} else {
 			return i, ErrBadPrevHash
 		}
@@ -245,7 +273,7 @@ func (s *HeaderSync) Add(hs []BlockHeader) (int, error) {
 			return i, err
 		}
 		total := new(big.Int).Add(parentWork, w)
-		s.headers[h.Hash] = &syncHeader{h: *h, work: total}
+		s.headers[h.Hash] = &syncHeader{h: *h, work: total, anchorTime: childAnchorTime(h.Index, h.Timestamp, parentAnchor)}
 		s.order = append(s.order, h.Hash)
 		s.last, s.best = h.Hash, total
 	}
@@ -253,16 +281,19 @@ func (s *HeaderSync) Add(hs []BlockHeader) (int, error) {
 }
 
 // checkHeaderOnly bir başlığı gövdesiz doğrular. Okuma kilidi altında çağrılır.
-func (bc *Blockchain) checkHeaderOnly(h *BlockHeader, parentHeight int64,
-	lookup func(string) (int64, int64, string, bool)) error {
+func (bc *Blockchain) checkHeaderOnly(h *BlockHeader, parentHeight int64, lookup lookupFn) error {
 	if !IsHashHex(h.Hash) || !IsHashHex(h.PrevHash) || !IsHashHex(h.MerkleRoot) {
 		return ErrBadHash
 	}
 	if h.Version != BlockVersion {
 		return ErrBadVersion
 	}
-	if h.Bits != bc.expectedBits(h.PrevHash) {
-		return ErrBadDifficulty
+	want, err := bc.expectedBitsLocked(h.PrevHash, lookup)
+	if err != nil {
+		return err
+	}
+	if h.Bits != want {
+		return ErrBadDifficulty // PoW'dan önce: kolay hedef ilan eden başlık özet hesaplatamaz
 	}
 	if !MeetsTarget(h.Hash, h.Bits) {
 		return ErrInsufficientPoW

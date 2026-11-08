@@ -142,6 +142,10 @@ func TestEmissionParams(t *testing.T) {
 		func(p *Params) { p.SlowStartBlocks = p.HalvingInterval },
 		func(p *Params) { p.TargetSpacing = 0 },
 		func(p *Params) { p.CoinbaseMaturity = 0 },
+		func(p *Params) { p.HalfLife = minHalfLifePerFTL*MaxFutureDrift - 1 },
+		// yeniden hedeflemesiz yalnızca regtest olabilir; başlangıç hedefi geçerli olmalı
+		func(p *Params) { p.Name = "testnet" },
+		func(p *Params) { p.Bits = 0x21010000 },
 	}
 	for i, mut := range bad {
 		p := *RegtestParams
