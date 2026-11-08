@@ -29,8 +29,8 @@ const (
 	ReorgAlarmDepth = 100
 
 	// Yan zincir depolama politikası (uzlaşma kuralı değil, DoS sınırı). Ucun bu kadar
-	// gerisinden çatallanan ve uçtan fazla iş taşımayan yan bloklar saklanmaz; daha derin
-	// reorg'lar başlık öncelikli senkronizasyonla (P2P PR'ı) gelir.
+	// gerisinden çatallanan ve uçtan fazla iş taşımayan, tek tek gelen yan bloklar saklanmaz;
+	// daha derin reorg'lar başlık öncelikli senkronizasyonla gelir (bkz. sync.go).
 	MaxSideForkDepth = 2 * ReorgAlarmDepth
 
 	// MaxBlocksPerHeight bir yükseklikte saklanan en fazla blok sayısıdır (ana blok dahil);
@@ -60,6 +60,11 @@ type indexEntry struct {
 	Work      string `json:"work"` // genesis dahil birikmiş iş, hex
 	Status    uint8  `json:"status"`
 
+	// Başlığın geri kalanı: eşlere başlık sunarken disk okumadan yeniden kurulur.
+	Version    uint32 `json:"version"`
+	MerkleRoot string `json:"merkle_root"`
+	Nonce      uint64 `json:"nonce"`
+
 	// Coinbase alıcısı ve tutarı (ödül + ücretler): olgunlaşınca gövde okunmadan
 	// alacaklandırılır. Yalnızca gövdesi doğrulanıp saklanan bloklar için anlamlıdır.
 	CbTo    string `json:"cb_to,omitempty"`
@@ -85,7 +90,8 @@ func newIndexEntry(b *Block, parentWork *big.Int) (*indexEntry, error) {
 	}
 	total := new(big.Int).Add(parentWork, w)
 	e := &indexEntry{Hash: b.Hash, Prev: b.PrevHash, Height: b.Index, Bits: b.Bits,
-		Timestamp: b.Timestamp, Work: total.Text(16), Status: statusStored, work: total}
+		Timestamp: b.Timestamp, Work: total.Text(16), Status: statusStored, work: total,
+		Version: b.Version, MerkleRoot: b.MerkleRoot, Nonce: b.Nonce}
 	if len(b.Transactions) > 0 {
 		e.CbTo, e.CbValue = b.Transactions[0].Receiver, b.Transactions[0].Amount
 	}
@@ -201,10 +207,10 @@ func (bc *Blockchain) precheckLocked(b *Block) (*indexEntry, error) {
 		bc.rejected.add(b.Hash) // yükseklik ve ebeveyn özete bağlı: kalıcı
 		return nil, ErrBadIndex
 	}
-	// Yan zincir sınırı yalnızca bellekteki indekse bakar ve disk okumasından (MTP için ~11
-	// blok gövdesi) önce gelir: sınıra takılan blok önbelleğe alınmadığından tekrar tekrar
-	// gönderilebilir, bu yolun ucuz kalması gerekir.
-	if parent.Hash != bc.tip.Hash {
+	// Yan zincir sınırı yalnızca bellekteki indekse bakar: sınıra takılan blok önbelleğe
+	// alınmadığından tekrar tekrar gönderilebilir, bu yolun ucuz kalması gerekir. Başlıkları
+	// doğrulanmış, ucun işini aşan bir zincirin blokları (syncAllow) sınıra takılmaz.
+	if _, allowed := bc.syncAllow[b.Hash]; !allowed && parent.Hash != bc.tip.Hash {
 		e, err := newIndexEntry(b, parent.work)
 		if err != nil {
 			return nil, err
@@ -219,11 +225,7 @@ func (bc *Blockchain) precheckLocked(b *Block) (*indexEntry, error) {
 			}
 		}
 	}
-	pb, err := bc.getBlock(parent.Hash)
-	if err != nil {
-		return nil, err
-	}
-	mtp, err := bc.medianTimePast(pb)
+	mtp, err := bc.mtpLocked(parent.Hash, nil) // indeksten: disk okuması yok
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +260,7 @@ func (bc *Blockchain) storeAndActivateLocked(b *Block) error {
 		return fmt.Errorf("blok diske yazılamadı: %w", err)
 	}
 	bc.addToIndex(e)
+	delete(bc.syncAllow, b.Hash)
 	if e.work.Cmp(bc.tip.work) <= 0 {
 		bc.log.Info("yan blok saklandı (uçtan fazla iş taşımıyor)", "index", b.Index, "hash", b.Hash)
 		return nil

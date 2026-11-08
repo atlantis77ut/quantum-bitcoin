@@ -31,7 +31,8 @@ const (
 	// 3: ağ parametreleri, deterministik genesis, ağa bağlı imza alanı.
 	// 4: blok indeksi (birikmiş iş), ana zincir yükseklik tablosu, blok başına undo kayıtları.
 	// 5: ertelenmiş coinbase ödemesi (olgunluk), indekste coinbase alıcısı ve tutarı.
-	schemaVersion = "5"
+	// 6: indekste tam başlık (sürüm, Merkle kökü, nonce): başlıklar diskten okunmadan sunulur.
+	schemaVersion = "6"
 )
 
 var (
@@ -55,7 +56,6 @@ var (
 	ErrTooManyTx       = errors.New("blokta çok fazla işlem var")
 	ErrTimestampOld    = errors.New("blok zamanı son blokların medyanından eski")
 	ErrTimestampFuture = errors.New("blok zamanı çok ileride")
-	ErrParentPending   = errors.New("blok ebeveyni bekleme kuyruğunda")
 	ErrBadNonce        = errors.New("işlem sırası (nonce) beklenen değil")
 	ErrInsufficientBal = errors.New("yetersiz bakiye")
 	ErrOverflow        = errors.New("bakiye taşması")
@@ -74,7 +74,6 @@ type Blockchain struct {
 	log      *slog.Logger
 	now      func() int64 // testlerde saat sabitlemek için
 	rejected rejectCache
-	pending  pendingBlocks // gelecek tarihli, gövdesi doğrulanmış bloklar (bkz. pending.go)
 
 	// Blok indeksi (bkz. chain.go). Hepsi mu ile korunur.
 	index     map[string]*indexEntry // özet → indeks kaydı (ana ve yan bloklar)
@@ -83,6 +82,7 @@ type Blockchain struct {
 	main      map[int64]string       // ana zincir: yükseklik → özet
 	tip       *indexEntry
 	deepReorg bool
+	syncAllow map[string]struct{} // yan zincir sınırı uygulanmayacak bloklar (bkz. sync.go)
 
 	bodyChecks atomic.Int64 // checkBody çağrı sayısı; testler imza doğrulamasının tekrarlanmadığını ölçer
 }
@@ -114,6 +114,7 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 		children:  map[string][]string{},
 		perHeight: map[int64]int{},
 		main:      map[int64]string{},
+		syncAllow: map[string]struct{}{},
 	}
 	// Kodda üretilen genesis, sabitlenmiş özete eşit, kendi hedefine kazılmış ve biçimce
 	// geçerli olmalı; aksi halde kodlama sessizce değişmiş demektir (ağ bölünmesi).
@@ -324,11 +325,10 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 	// Ebeveyne göre ucuz kontroller (bilinen blok, bilinmeyen/geçersiz ebeveyn, yükseklik,
 	// medyan zaman, yan zincir sınırları) imza doğrulamasından önce okuma kilidiyle yapılır:
 	// zincirdeki bir blok ya da yanlış ebeveynli blok yeniden gönderilerek ~1000 ML-DSA
-	// doğrulaması yaptırılamasın. Ebeveyni bekleme kuyruğunda olan blok da beklemeye alınır:
-	// senkronizasyon olmadığından atılırsa geri gelmez.
+	// doğrulaması yaptırılamasın. Ebeveyni bilinmeyen blok önbelleğe alınmaz; eksik atalar
+	// başlık öncelikli senkronizasyonla eşlerden çekilir.
 	bc.mu.RLock()
 	_, perr := bc.precheckLocked(b)
-	onPending := errors.Is(perr, ErrBadPrevHash) && bc.pending.has(b.PrevHash)
 	retry := false
 	if e, ok := bc.index[b.Hash]; ok && errors.Is(perr, ErrKnownBlock) {
 		retry = e.Status != statusInvalid && e.work.Cmp(bc.tip.work) > 0
@@ -339,7 +339,7 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 		defer bc.mu.Unlock()
 		return bc.retryKnownLocked(b.Hash)
 	}
-	if perr != nil && !onPending {
+	if perr != nil {
 		if errors.Is(perr, ErrBadPrevHash) {
 			bc.log.Debug("blok ebeveyni bilinmiyor", "index", b.Index, "hash", b.Hash)
 		} else if !errors.Is(perr, ErrKnownBlock) {
@@ -347,45 +347,14 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 		}
 		return perr
 	}
-	// FTL yalnızca yerel saate bağlıdır; imza doğrulamasından önce bakılır. Böylece gelecek
-	// tarihli bir blok tekrar tekrar gönderilerek ~1000 ML-DSA doğrulaması yaptırılamaz:
-	// pencere dışındakiler ve dolu kuyruğa giremeyecek olanlar ucuzca düşer, kuyruğa
-	// girenler bir kez doğrulanır.
-	if ahead := b.Timestamp - bc.now(); ahead > MaxFutureDrift || onPending {
-		wait := ErrTimestampFuture
-		if ahead <= MaxFutureDrift {
-			wait = ErrParentPending
-		}
-		if bc.pending.has(b.Hash) {
-			return wait
-		}
-		// Kuyruktan tahliye edilen ya da yetim kalıp atılan blok yeniden doğrulatılamaz:
-		// aksi halde sabit bir blok kümesi tahliye/budama döngüsüyle süresiz doğrulatılırdı.
-		if bc.pending.wasDropped(b.Hash) {
-			return wait
-		}
-		// Bu iki ret yolu aynı blokla tekrar tekrar tetiklenebilir; log taşkını olmasın diye Debug.
-		if ahead > pendingWindow {
-			bc.log.Debug("blok reddedildi: zaman çok ileride (saatinizi NTP ile doğrulayın)",
-				"index", b.Index, "hash", b.Hash, "ileri_sn", ahead, "ftl_sn", MaxFutureDrift)
-			return ErrTimestampFuture
-		}
-		if !bc.pending.canAdd(b.Timestamp) {
-			bc.log.Debug("bekleme kuyruğu dolu, blok atıldı", "index", b.Index, "hash", b.Hash, "ileri_sn", ahead)
-			return wait
-		}
-		if err := bc.checkBody(b); err != nil {
-			bc.rejected.add(b.Hash)
-			bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
-			return err
-		}
-		queued := bc.pending.add(b)
-		bc.log.Warn("blok beklemeye alındı, saat yetişince yeniden denenecek (saatinizi NTP ile doğrulayın)",
-			"index", b.Index, "hash", b.Hash, "ileri_sn", ahead, "ftl_sn", MaxFutureDrift,
-			"ebeveyn_beklemede", onPending, "kuyrukta", queued)
-		return wait
+	// FTL yalnızca yerel saate bağlıdır; imza doğrulamasından önce bakılır ve önbelleğe
+	// alınmaz: gelecek tarihli blok tekrar gönderilerek ML-DSA doğrulaması yaptırılamaz, saat
+	// yetişince aynı blok bir sonraki senkronizasyon turunda eşten yeniden çekilir.
+	if ahead := b.Timestamp - bc.now(); ahead > MaxFutureDrift {
+		bc.log.Debug("blok reddedildi: zaman çok ileride (saatinizi NTP ile doğrulayın)",
+			"index", b.Index, "hash", b.Hash, "ileri_sn", ahead, "ftl_sn", MaxFutureDrift)
+		return ErrTimestampFuture
 	}
-	bc.pending.remove(b.Hash)
 	if err := bc.checkBody(b); err != nil {
 		bc.rejected.add(b.Hash) // gövde Merkle köküyle özete bağlı: hata içeriğe özgü ve kalıcı
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)

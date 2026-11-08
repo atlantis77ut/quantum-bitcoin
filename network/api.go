@@ -66,6 +66,10 @@ func (api *APIServer) Handler() http.Handler {
 	// Son blok (borsalar ağı senkronize etmek için)
 	// Kullanım: GET /latestblock
 	mux.HandleFunc("/latestblock", getOnly(api.handleGetLatestBlock))
+	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm true ise onaylara
+	// güvenilmemeli ve operatöre danışılmalıdır.
+	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
+	mux.HandleFunc("/confirmations", getOnly(api.handleConfirmations))
 	return api.withRateLimit(mux)
 }
 
@@ -131,6 +135,20 @@ func (api *APIServer) handleGetLatestBlock(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, latestBlock)
+}
+
+func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request) {
+	hash := r.URL.Query().Get("hash")
+	if !core.IsHashHex(hash) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik hash parametresi"})
+		return
+	}
+	n, alarm := api.Blockchain.Confirmations(hash)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"hash":             hash,
+		"confirmations":    n,
+		"deep_reorg_alarm": alarm,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
