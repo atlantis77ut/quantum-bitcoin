@@ -27,7 +27,8 @@ func TestASERTVectors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var anchorHeight, anchorParentTime int64
+		var anchorParentTime int64
+		var anchorHeight *big.Int // run10 yüksekliği int64 sınırını aşar; fark küçüktür
 		var anchorTarget *big.Int
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
@@ -41,7 +42,7 @@ func TestASERTVectors(t *testing.T) {
 				v := strings.TrimSpace(kv[1])
 				switch strings.TrimSpace(kv[0]) {
 				case "anchor height":
-					anchorHeight = mustInt(t, v)
+					anchorHeight = mustBig(t, v)
 				case "anchor ancestor time", "anchor parent time":
 					anchorParentTime = mustInt(t, v)
 				case "anchor nBits":
@@ -57,10 +58,17 @@ func TestASERTVectors(t *testing.T) {
 				if len(fs) != 4 || anchorTarget == nil {
 					t.Fatalf("%s: satır %q", path, line)
 				}
-				h, ts, want := mustInt(t, fs[1]), mustInt(t, fs[2]), uint32(mustInt(t, fs[3]))
-				got := bigToCompact(asertTarget(anchorTarget, ts-anchorParentTime, h-anchorHeight, 600, 172800, maxTarget))
+				if anchorHeight == nil {
+					t.Fatalf("%s: çapa yüksekliği yok", path)
+				}
+				hd := new(big.Int).Sub(mustBig(t, fs[1]), anchorHeight)
+				if !hd.IsInt64() {
+					t.Fatalf("%s: yükseklik farkı %s", path, hd)
+				}
+				h, ts, want := hd.Int64(), mustInt(t, fs[2]), uint32(mustInt(t, fs[3]))
+				got := bigToCompact(asertTarget(anchorTarget, ts-anchorParentTime, h, 600, 172800, maxTarget))
 				if got != want {
-					t.Fatalf("%s: yükseklik %d zaman %d: %08x, beklenen %08x", path, h, ts, got, want)
+					t.Fatalf("%s: yükseklik farkı %d zaman %d: %08x, beklenen %08x", path, h, ts, got, want)
 				}
 				total++
 			}
@@ -73,6 +81,15 @@ func TestASERTVectors(t *testing.T) {
 	if total < 4000 {
 		t.Fatalf("yalnızca %d vektör sınandı", total)
 	}
+}
+
+func mustBig(t *testing.T, s string) *big.Int {
+	t.Helper()
+	v, ok := new(big.Int).SetString(s, 0)
+	if !ok {
+		t.Fatalf("sayı %q", s)
+	}
+	return v
 }
 
 func mustInt(t *testing.T, s string) int64 {
