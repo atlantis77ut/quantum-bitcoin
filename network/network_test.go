@@ -224,21 +224,23 @@ func TestClientKeyIPv6Prefix(t *testing.T) {
 	}
 }
 
-func TestP2PPerIPConnLimit(t *testing.T) {
+func TestP2PPerGroupConnLimit(t *testing.T) {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
-	for i := 0; i < maxConnsPerIP; i++ {
-		if !ps.acquireIP("198.51.100.1") {
+	// 198.51.100.1 ve .2 aynı /24 grubundadır (kasıtlı: tek bir kiralık blok tüm yuvaları alamaz).
+	g := peerGroup("198.51.100.1")
+	for i := 0; i < connsPerGroup; i++ {
+		if !ps.connQuota.tryAcquire(g) {
 			t.Fatalf("%d. bağlantı reddedildi", i+1)
 		}
 	}
-	if ps.acquireIP("198.51.100.1") {
-		t.Fatal("IP başına sınır aşıldı")
+	if ps.connQuota.tryAcquire(peerGroup("198.51.100.2")) {
+		t.Fatal("aynı /24 içinde grup sınırı aşıldı")
 	}
-	if !ps.acquireIP("198.51.100.2") {
-		t.Fatal("başka IP etkilendi")
+	if !ps.connQuota.tryAcquire(peerGroup("198.51.101.1")) {
+		t.Fatal("başka /24 etkilendi")
 	}
-	ps.releaseIP("198.51.100.1")
-	if !ps.acquireIP("198.51.100.1") {
+	ps.connQuota.release(g)
+	if !ps.connQuota.tryAcquire(g) {
 		t.Fatal("serbest bırakılan yuva geri alınamadı")
 	}
 }

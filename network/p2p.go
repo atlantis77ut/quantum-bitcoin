@@ -22,9 +22,8 @@ const (
 	connWriteTimeout       = 10 * time.Second
 	dialTimeout            = 5 * time.Second
 	maxConcurrentConns     = 64
-	maxConnsPerIP          = 4 // Tek bir IP tüm bağlantı yuvalarını dolduramasın (eclipse)
-	maxConcurrentDecodes   = 4 // Aynı anda çözümlenen büyük mesaj sayısı (bellek tavanı)
-	maxConcurrentServes    = 8 // Aynı anda sunulan blok/başlık yanıtı (bant genişliği tavanı)
+	maxConcurrentDecodes   = 8  // Aynı anda çözümlenen büyük mesaj sayısı (bellek tavanı ~8×8 MiB)
+	maxConcurrentServes    = 16 // Aynı anda sunulan blok/başlık yanıtı (bant genişliği tavanı)
 
 	syncInterval  = 30 * time.Second // Senkronizasyon hiç bitmez; "senkronuz" kararı zamana bağlı değildir
 	relayQueueLen = 16
@@ -37,7 +36,7 @@ const (
 	// her istekten önce denetlendiğinden bir aşama en fazla syncPeerBudget+transferTimeout
 	// (~3 dk), bir eşle tur ~6 dk sürer (gövde aşaması ucu aşan gerçek PoW gerektirir). Yavaş
 	// ya da kötü niyetli tek bir eş senkronizasyonu böylece geciktirebilir ama bloke edemez;
-	// kalan iş sonraki tura kalır. Eşlerin paralel senkronizasyonu DoS PR'ındadır.
+	// kalan iş sonraki tura kalır. Eşlerin paralel senkronizasyonu henüz yok.
 	syncPeerBudget = 2 * time.Minute
 
 	// maxHeaderRounds bir turda yeni başlık ekleyen en fazla yanıt sayısıdır.
@@ -75,9 +74,12 @@ type P2PServer struct {
 	sem       chan struct{}
 	decodeSem chan struct{}
 	serveSem  chan struct{}
-	ipMu      sync.Mutex
-	ipConns   map[string]int
 	log       *slog.Logger
+
+	// Adres grubu başına kotalar (quota.go).
+	connQuota   *groupQuota
+	decodeQuota *groupQuota
+	serveQuota  *groupQuota
 
 	syncEvery time.Duration
 
@@ -96,11 +98,14 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		sem:        make(chan struct{}, maxConcurrentConns),
 		decodeSem:  make(chan struct{}, maxConcurrentDecodes),
 		serveSem:   make(chan struct{}, maxConcurrentServes),
-		ipConns:    map[string]int{},
 		log:        slog.Default().With("component", "p2p"),
 		syncEvery:  syncInterval,
 		syncCh:     make(chan struct{}, 1),
 		relayCh:    make(chan *core.Block, relayQueueLen),
+
+		connQuota:   newGroupQuota(connsPerGroup),
+		decodeQuota: newGroupQuota(decodesPerGroup),
+		serveQuota:  newGroupQuota(servesPerGroup),
 	}
 }
 
@@ -152,42 +157,51 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 			}
 			return err
 		}
-		ip := hostOf(conn.RemoteAddr())
-		if !ps.acquireIP(ip) {
-			ps.log.Warn("IP başına bağlantı sınırı aşıldı", "remote", conn.RemoteAddr().String())
+		group := groupOf(conn.RemoteAddr())
+		if !ps.connQuota.tryAcquire(group) {
+			// Debug: kota aşımı saldırgan denetimindedir, log taşkını olmasın.
+			ps.log.Debug("adres grubu başına bağlantı sınırı aşıldı", "remote", conn.RemoteAddr().String())
 			conn.Close()
 			continue
 		}
 		select {
 		case ps.sem <- struct{}{}:
 			go func() {
-				defer func() { <-ps.sem; ps.releaseIP(ip) }()
-				ps.handleConnection(conn)
+				defer func() { <-ps.sem; ps.connQuota.release(group) }()
+				ps.handleConnection(conn, group)
 			}()
 		default:
-			ps.releaseIP(ip)
+			ps.connQuota.release(group)
 			ps.log.Warn("bağlantı sınırı dolu, bağlantı reddedildi", "remote", conn.RemoteAddr().String())
 			conn.Close()
 		}
 	}
 }
 
-func (ps *P2PServer) handleConnection(conn net.Conn) {
+func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	if err := conn.SetReadDeadline(time.Now().Add(connReadTimeout)); err != nil {
 		return
 	}
 
-	// Bellek tavanı: aynı anda en fazla maxConcurrentDecodes mesaj çözümlenir.
+	// Bellek tavanı: aynı anda en fazla maxConcurrentDecodes mesaj çözümlenir; tek bir adres
+	// grubu bunların en çok decodesPerGroup kadarını tutar (yavaş gönderen eş, okuma süresi
+	// boyunca tüm çözümleme yuvalarını kilitleyemez).
+	if !ps.decodeQuota.acquire(group, quotaWait) {
+		ps.log.Debug("adres grubu başına çözümleme sınırı aşıldı", "remote", remote)
+		return
+	}
 	select {
 	case ps.decodeSem <- struct{}{}:
 	case <-time.After(connReadTimeout):
+		ps.decodeQuota.release(group)
 		return
 	}
 	var msg message
 	err := json.NewDecoder(io.LimitReader(conn, maxBlockMessageBytes)).Decode(&msg)
 	<-ps.decodeSem
+	ps.decodeQuota.release(group)
 	if err != nil {
 		ps.log.Warn("eş mesajı okunamadı", "remote", remote, "err", err)
 		return
@@ -199,9 +213,9 @@ func (ps *P2PServer) handleConnection(conn net.Conn) {
 			ps.handleBlock(remote, msg.Block)
 		}
 	case msgGetHeaders:
-		ps.serveHeaders(conn, remote, msg.Locator)
+		ps.serveHeaders(conn, remote, group, msg.Locator)
 	case msgGetBlock:
-		ps.serveBlock(conn, remote, msg.Hash)
+		ps.serveBlock(conn, remote, group, msg.Hash)
 	default:
 		ps.log.Debug("bilinmeyen mesaj türü", "remote", remote, "type", msg.Type)
 	}
@@ -235,18 +249,18 @@ func (ps *P2PServer) handleBlock(remote string, b *core.Block) {
 	}
 }
 
+// reply yanıtı parça başına süreyle yazar (deadlineWriter): okumayan eş yuvayı tutamaz.
 func (ps *P2PServer) reply(conn net.Conn, remote string, m message) {
-	if err := conn.SetWriteDeadline(time.Now().Add(transferTimeout)); err != nil {
-		return
-	}
-	if err := json.NewEncoder(conn).Encode(m); err != nil {
+	w := &deadlineWriter{conn: conn, chunk: writeChunk, per: chunkWriteTimeout,
+		end: time.Now().Add(transferTimeout)}
+	if err := json.NewEncoder(w).Encode(m); err != nil {
 		ps.log.Debug("yanıt gönderilemedi", "remote", remote, "err", err)
 	}
 }
 
 // serveHeaders konum belirleyiciye göre başlık sunar. Ağdan gelen her özet biçimce
 // denetlenir; başlıklar indeksten okunur (disk okuması yok).
-func (ps *P2PServer) serveHeaders(conn net.Conn, remote string, locator []string) {
+func (ps *P2PServer) serveHeaders(conn net.Conn, remote, group string, locator []string) {
 	if len(locator) > core.MaxLocatorHashes {
 		ps.log.Debug("konum belirleyici çok uzun", "remote", remote, "adet", len(locator))
 		return
@@ -257,23 +271,23 @@ func (ps *P2PServer) serveHeaders(conn net.Conn, remote string, locator []string
 			return
 		}
 	}
-	if !ps.acquireServe() {
+	if !ps.acquireServe(group) {
 		return
 	}
-	defer func() { <-ps.serveSem }()
+	defer ps.releaseServe(group)
 	ps.reply(conn, remote, message{Type: msgHeaders, Headers: ps.Blockchain.HeadersAfter(locator, core.MaxHeadersPerMsg)})
 }
 
 // serveBlock indeksteki bir bloğu sunar; eşzamanlı sunum serveSem ile sınırlıdır.
-func (ps *P2PServer) serveBlock(conn net.Conn, remote, hash string) {
+func (ps *P2PServer) serveBlock(conn net.Conn, remote, group, hash string) {
 	if !core.IsHashHex(hash) {
 		ps.log.Debug("geçersiz özet", "remote", remote)
 		return
 	}
-	if !ps.acquireServe() {
+	if !ps.acquireServe(group) {
 		return
 	}
-	defer func() { <-ps.serveSem }()
+	defer ps.releaseServe(group)
 	b, err := ps.Blockchain.BlockByHash(hash)
 	if err != nil {
 		ps.reply(conn, remote, message{Type: msgBlock})
@@ -282,15 +296,25 @@ func (ps *P2PServer) serveBlock(conn net.Conn, remote, hash string) {
 	ps.reply(conn, remote, message{Type: msgBlock, Block: b})
 }
 
-// acquireServe bir sunum yuvası alır; yuva kısa sürede boşalmazsa istek yanıtsız kapanır.
-// Kimlik doğrulamasız eşlere karşı eş başına kota DoS PR'ındadır (CLAUDE.md madde 5).
-func (ps *P2PServer) acquireServe() bool {
+// acquireServe önce adres grubunun, sonra ortak sunum yuvalarından birini alır; yuva kısa
+// sürede boşalmazsa istek yanıtsız kapanır.
+func (ps *P2PServer) acquireServe(group string) bool {
+	if !ps.serveQuota.acquire(group, quotaWait) {
+		ps.log.Debug("adres grubu başına sunum sınırı aşıldı", "group", group)
+		return false
+	}
 	select {
 	case ps.serveSem <- struct{}{}:
 		return true
-	case <-time.After(2 * time.Second):
+	case <-time.After(quotaWait):
+		ps.serveQuota.release(group)
 		return false
 	}
+}
+
+func (ps *P2PServer) releaseServe(group string) {
+	<-ps.serveSem
+	ps.serveQuota.release(group)
 }
 
 // request bir eşe tek bir istek gönderip tek bir yanıt okur.
@@ -476,32 +500,4 @@ func (ps *P2PServer) BroadcastBlock(block *core.Block) {
 		}
 		conn.Close()
 	}
-}
-
-func (ps *P2PServer) acquireIP(ip string) bool {
-	ps.ipMu.Lock()
-	defer ps.ipMu.Unlock()
-	if ps.ipConns[ip] >= maxConnsPerIP {
-		return false
-	}
-	ps.ipConns[ip]++
-	return true
-}
-
-func (ps *P2PServer) releaseIP(ip string) {
-	ps.ipMu.Lock()
-	defer ps.ipMu.Unlock()
-	if ps.ipConns[ip] <= 1 {
-		delete(ps.ipConns, ip)
-		return
-	}
-	ps.ipConns[ip]--
-}
-
-func hostOf(a net.Addr) string {
-	host, _, err := net.SplitHostPort(a.String())
-	if err != nil {
-		return a.String()
-	}
-	return clientKey(host)
 }
