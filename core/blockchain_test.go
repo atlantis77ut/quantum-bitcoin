@@ -20,14 +20,18 @@ func TestValidTransfer(t *testing.T) {
 	if len(b.Transactions) != 2 {
 		t.Fatalf("blokta %d işlem, beklenen 2", len(b.Transactions))
 	}
-	if got := mustBalance(t, bc, alice.Address); got != (100-30+50)*Coin {
-		t.Fatalf("alice bakiyesi %d", got)
+	if got := mustBalance(t, bc, alice.Address); got != (100-30)*Coin {
+		t.Fatalf("alice bakiyesi %d (yeni coinbase henüz olgunlaşmamalı)", got)
 	}
 	if got := mustBalance(t, bc, bob.Address); got != 30*Coin {
 		t.Fatalf("bob bakiyesi %d", got)
 	}
 	if n, _ := bc.GetNonce(alice.Address); n != 1 {
 		t.Fatalf("alice nonce %d", n)
+	}
+	mature(t, bc)
+	if got := mustBalance(t, bc, alice.Address); got != (100-30+50)*Coin {
+		t.Fatalf("olgunluktan sonra alice bakiyesi %d", got)
 	}
 }
 
@@ -265,8 +269,8 @@ func TestRejectsReplay(t *testing.T) {
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadNonce) {
 		t.Fatalf("atlanan nonce: hata %v", err)
 	}
-	if got := mustBalance(t, bc, bob.Address); got != testReward+10*Coin {
-		t.Fatalf("bob bakiyesi %d", got)
+	if got := mustBalance(t, bc, bob.Address); got != 10*Coin {
+		t.Fatalf("bob bakiyesi %d (coinbase'i henüz olgunlaşmamalı)", got)
 	}
 }
 
@@ -305,7 +309,7 @@ func TestStatePersistsAcrossReopen(t *testing.T) {
 	if err != nil || tip2.Hash != tip.Hash {
 		t.Fatalf("uç blok korunmadı: %v", err)
 	}
-	if mustBalance(t, bc2, alice.Address) != 80*Coin || mustBalance(t, bc2, bob.Address) != 20*Coin {
+	if mustBalance(t, bc2, alice.Address) != 30*Coin || mustBalance(t, bc2, bob.Address) != 20*Coin {
 		t.Fatal("bakiyeler korunmadı")
 	}
 	if n, _ := bc2.GetNonce(alice.Address); n != 1 {

@@ -30,7 +30,8 @@ const (
 	// 2: taban birim (10^8), işlem ücreti, sabit başlık + Merkle kökü + compact hedef.
 	// 3: ağ parametreleri, deterministik genesis, ağa bağlı imza alanı.
 	// 4: blok indeksi (birikmiş iş), ana zincir yükseklik tablosu, blok başına undo kayıtları.
-	schemaVersion = "4"
+	// 5: ertelenmiş coinbase ödemesi (olgunluk), indekste coinbase alıcısı ve tutarı.
+	schemaVersion = "5"
 )
 
 var (
@@ -229,6 +230,10 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 	subsidy := BlockSubsidy(prev.Index+1, bc.params)
 
 	view := newStateView(bc)
+	// Doğrulayıcıyla aynı sıra: olgunlaşan coinbase işlemlerden önce.
+	if err := bc.creditMaturedLocked(view, prev.Index+1, prev.Hash); err != nil {
+		return nil, err
+	}
 	var accepted []Transaction
 	fees := int64(0)
 	for i := range transactions {
@@ -499,7 +504,9 @@ func (bc *Blockchain) checkStateful(b *Block, prev *Block, view *stateView) erro
 	if b.Timestamp > bc.now()+MaxFutureDrift {
 		return ErrTimestampFuture
 	}
-	if err := view.credit(b.Transactions[0].Receiver, b.Transactions[0].Amount); err != nil {
+	// Bu bloğun coinbase'i hemen alacaklandırılmaz (olgunluk); CoinbaseMaturity blok önceki
+	// atanın coinbase'i işlemlerden önce alacaklandırılır, böylece aynı blokta harcanabilir.
+	if err := bc.creditMaturedLocked(view, b.Index, prev.Hash); err != nil {
 		return err
 	}
 	for i := 1; i < len(b.Transactions); i++ {
@@ -565,6 +572,7 @@ func (bc *Blockchain) writeGenesis(g *Block) error {
 		return err
 	}
 	e.Status = statusValid
+	e.CbTo, e.CbValue = "", 0 // genesis hiçbir şey alacaklandırmaz (premine yok)
 	data, err := json.Marshal(g)
 	if err != nil {
 		return fmt.Errorf("blok serileştirilemedi: %w", err)

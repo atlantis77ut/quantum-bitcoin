@@ -60,6 +60,11 @@ type indexEntry struct {
 	Work      string `json:"work"` // genesis dahil birikmiş iş, hex
 	Status    uint8  `json:"status"`
 
+	// Coinbase alıcısı ve tutarı (ödül + ücretler): olgunlaşınca gövde okunmadan
+	// alacaklandırılır. Yalnızca gövdesi doğrulanıp saklanan bloklar için anlamlıdır.
+	CbTo    string `json:"cb_to,omitempty"`
+	CbValue int64  `json:"cb_value,omitempty"`
+
 	work *big.Int
 }
 
@@ -79,8 +84,34 @@ func newIndexEntry(b *Block, parentWork *big.Int) (*indexEntry, error) {
 		return nil, err
 	}
 	total := new(big.Int).Add(parentWork, w)
-	return &indexEntry{Hash: b.Hash, Prev: b.PrevHash, Height: b.Index, Bits: b.Bits,
-		Timestamp: b.Timestamp, Work: total.Text(16), Status: statusStored, work: total}, nil
+	e := &indexEntry{Hash: b.Hash, Prev: b.PrevHash, Height: b.Index, Bits: b.Bits,
+		Timestamp: b.Timestamp, Work: total.Text(16), Status: statusStored, work: total}
+	if len(b.Transactions) > 0 {
+		e.CbTo, e.CbValue = b.Transactions[0].Receiver, b.Transactions[0].Amount
+	}
+	return e, nil
+}
+
+// creditMaturedLocked, height yüksekliğindeki blok bağlanırken olgunlaşan coinbase'i
+// (height − CoinbaseMaturity yüksekliğindeki atanın ödülü + ücretleri) view'e alacaklandırır.
+// Ata parentHash'ten indeks üzerinden yürünerek bulunur; bc.main kullanılmaz, çünkü reorg
+// sırasında ana zincir tablosu henüz eski dalı gösterir. Genesis hiçbir şey alacaklandırmaz.
+func (bc *Blockchain) creditMaturedLocked(v *stateView, height int64, parentHash string) error {
+	m := height - bc.params.CoinbaseMaturity
+	if m < 1 {
+		return nil
+	}
+	e, ok := bc.index[parentHash]
+	for ok && e.Height > m {
+		e, ok = bc.index[e.Prev]
+	}
+	if !ok || e.Height != m || e.CbTo == "" {
+		return fmt.Errorf("%w: olgunlaşan coinbase atası yok (yükseklik %d)", ErrCorruptState, m)
+	}
+	if e.CbValue == 0 {
+		return nil
+	}
+	return v.credit(e.CbTo, e.CbValue)
 }
 
 func heightKey(h int64) string { return prefixHeight + fmt.Sprintf("%016x", h) }

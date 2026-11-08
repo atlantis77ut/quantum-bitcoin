@@ -41,12 +41,27 @@ func newKey(t *testing.T) *crypto.KeyPair {
 	return kp
 }
 
-// fund madenciye n blok kazdırarak n*testReward verir (ilk dönemde).
+// fund madenciye n blok kazdırarak n*testReward verir (ilk dönemde); ardından ödüller
+// harcanabilir olsun diye olgunluk süresince başka bir adrese blok kazar.
 func fund(t *testing.T, bc *Blockchain, kp *crypto.KeyPair, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		requireFirstEpoch(t, bc)
 		if _, err := bc.AddBlock(nil, kp.Address); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mature(t, bc)
+}
+
+// mature olgunluk süresince (CoinbaseMaturity blok) yeni bir adrese boş blok kazar: o ana
+// kadarki bütün coinbase'ler harcanabilir olur.
+func mature(t *testing.T, bc *Blockchain) {
+	t.Helper()
+	burn := newKey(t).Address
+	for i := int64(0); i < bc.params.CoinbaseMaturity; i++ {
+		requireFirstEpoch(t, bc)
+		if _, err := bc.AddBlock(nil, burn); err != nil {
 			t.Fatal(err)
 		}
 	}
