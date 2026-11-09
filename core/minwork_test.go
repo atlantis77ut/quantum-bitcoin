@@ -28,6 +28,8 @@ func chainWithMinWork(t *testing.T, w *big.Int) *Blockchain {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clock := int64(1_900_000_000) // newTestChain ile aynı sabit saat: kaynak blokları gelecek tarihli olmasın
+	bc.now = func() int64 { clock++; return clock }
 	t.Cleanup(func() { bc.Close() })
 	return bc
 }
