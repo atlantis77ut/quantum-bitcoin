@@ -67,6 +67,7 @@ var (
 type P2PServer struct {
 	ListenAddr string
 	Blockchain *core.Blockchain
+	Mempool    *core.Mempool // madenci şablonu ve API işlem kabulü bunu paylaşır
 
 	mu    sync.RWMutex
 	peers []string
@@ -100,6 +101,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 	return &P2PServer{
 		ListenAddr: listenAddr,
 		Blockchain: bc,
+		Mempool:    core.NewMempool(bc),
 		sem:        make(chan struct{}, maxConcurrentConns),
 		decodeSem:  make(chan struct{}, maxConcurrentDecodes),
 		serveSem:   make(chan struct{}, maxConcurrentServes),

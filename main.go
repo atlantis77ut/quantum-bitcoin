@@ -69,6 +69,7 @@ func main() {
 	// 4. Borsa API sunucusu
 	apiServer := network.NewAPIServer(*apiPort, bc)
 	apiServer.TLSCert, apiServer.TLSKey = *tlsCert, *tlsKey
+	apiServer.Mempool = p2p.Mempool
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- fmt.Errorf("p2p: %w", p2p.Start()) }()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -25,6 +26,9 @@ const (
 	// İstemci IP'si başına oran sınırı: saniyede rateLimitPerSec istek, en fazla rateLimitBurst ani.
 	rateLimitPerSec = 10
 	rateLimitBurst  = 20
+
+	// maxTxBodyBytes POST /tx gövde sınırıdır: ML-DSA-65 işlemi JSON'da ~7,5 KiB.
+	maxTxBodyBytes = 16 << 10
 )
 
 type APIServer struct {
@@ -32,6 +36,7 @@ type APIServer struct {
 	ListenAddr string
 	TLSCert    string // Boş değilse HTTPS ile dinler
 	TLSKey     string
+	Mempool    *core.Mempool // nil ise işlem kabulü kapalıdır (503)
 
 	server  *http.Server
 	limiter *ipRateLimiter
@@ -70,6 +75,13 @@ func (api *APIServer) Handler() http.Handler {
 	// güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
 	mux.HandleFunc("/confirmations", getOnly(api.handleConfirmations))
+	// İmzalı işlem gönderimi (mempool politikası: core/mempool.go).
+	// Kullanım: POST /tx, gövde core.Transaction JSON'u; yanıt {"txid": ...}
+	mux.HandleFunc("/tx", postOnly(api.handleSubmitTx))
+	// Cüzdanın işlemi imzalamak için gereken değerler: sıradaki nonce, en düşük ücret ve
+	// son kullanma yüksekliği aralığı (varsayılan 1 gün).
+	// Kullanım: GET /txpolicy?address=QBTC...
+	mux.HandleFunc("/txpolicy", getOnly(api.handleTxPolicy))
 	return api.withRateLimit(mux)
 }
 
@@ -80,6 +92,18 @@ func getOnly(h http.HandlerFunc) http.HandlerFunc {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "yalnızca GET"})
+			return
+		}
+		h(w, r)
+	}
+}
+
+// postOnly yalnızca POST isteklerine izin verir.
+func postOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "yalnızca POST"})
 			return
 		}
 		h(w, r)
@@ -161,6 +185,95 @@ func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request
 		"work_in_start_blocks": api.Blockchain.WorkInBlocks(c.Work),
 		"deep_reorg_alarm":     c.DeepReorg,
 		"below_min_chain_work": c.BelowMinWork,
+	})
+}
+
+// handleSubmitTx imzalı bir işlemi havuza alır. Düğüm senkronize değilken (en az zincir
+// işinin altında) durum eski olduğundan işlem kabul edilmez.
+func (api *APIServer) handleSubmitTx(w http.ResponseWriter, r *http.Request) {
+	if api.Mempool == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "işlem kabulü kapalı"})
+		return
+	}
+	if api.Blockchain.BelowMinChainWork() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "düğüm senkronize değil"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxTxBodyBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var tx core.Transaction
+	if err := dec.Decode(&tx); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz işlem gövdesi"})
+		return
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gövdede tek işlem olmalı"})
+		return
+	}
+	id, err := api.Mempool.Add(tx)
+	if err != nil {
+		status := txRejectStatus(err)
+		if status == http.StatusInternalServerError {
+			api.log.Error("işlem havuza alınamadı", "err", err)
+			writeJSON(w, status, map[string]string{"error": "iç hata"})
+			return
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"txid": id})
+}
+
+// txRejectStatus havuz retlerini HTTP durumuna eşler: geçersiz işlem 400, sıra çakışması ya da
+// yineleme 409, dolu havuz 503; bilinmeyen hata (ör. okuma hatası) 500 olur ve ayrıntısı
+// istemciye gönderilmez.
+func txRejectStatus(err error) int {
+	for _, e := range []error{core.ErrTxKnown, core.ErrBadNonce, core.ErrNonceGap, core.ErrReplaceFee, core.ErrSenderLimit} {
+		if errors.Is(err, e) {
+			return http.StatusConflict
+		}
+	}
+	for _, e := range []error{core.ErrUnexpectedCoinbase, core.ErrNonPositiveAmount, core.ErrNegativeFee,
+		core.ErrBadExpiry, core.ErrBadReceiver, core.ErrBadSender, core.ErrSelfTransfer, core.ErrBadSignature,
+		core.ErrFeeTooLow, core.ErrExpiryTooSoon, core.ErrExpiryTooFar, core.ErrTxExpired,
+		core.ErrInsufficientBal, core.ErrOverflow} {
+		if errors.Is(err, e) {
+			return http.StatusBadRequest
+		}
+	}
+	if errors.Is(err, core.ErrMempoolFull) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
+}
+
+// handleTxPolicy bir adresin sıradaki nonce'unu (havuzdaki bekleyenler dahil) ve işlem
+// politikasını döndürür.
+func (api *APIServer) handleTxPolicy(w http.ResponseWriter, r *http.Request) {
+	if api.Mempool == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "işlem kabulü kapalı"})
+		return
+	}
+	address := r.URL.Query().Get("address")
+	if !crypto.IsValidAddress(address) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik address parametresi"})
+		return
+	}
+	p, err := api.Mempool.Policy(address)
+	if err != nil {
+		api.log.Error("işlem politikası okunamadı", "address", address, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"address":               address,
+		"tip_height":            p.TipHeight,
+		"next_nonce":            p.NextNonce,
+		"min_fee":               p.MinFee,
+		"min_expiry_height":     p.MinExpiryHeight,
+		"default_expiry_height": p.DefaultExpiryHeight,
+		"max_expiry_height":     p.MaxExpiryHeight,
 	})
 }
 
