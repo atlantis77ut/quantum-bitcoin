@@ -21,10 +21,10 @@ const (
 	MaxLocatorHashes = 64
 
 	// MaxSyncHeaders bir senkronizasyon oturumunun bellekte tuttuğu en fazla yeni başlık
-	// sayısıdır (~25 MB, 60 sn'de ~69 gün). Uzlaşma kuralı değildir, ama açık bir sınırlamadır:
-	// ilk MaxSyncHeaders başlığında ucun işini geçmeyen daha derin bir dal benimsenemez
-	// (CLAUDE.md'de açık madde).
-	MaxSyncHeaders = 100_000
+	// sayısıdır (~5 MB, 60 sn'de ~14 gün). Bu pencerede ucun işini (ve en az zincir işini)
+	// geçmeyen bir zincir ön-senkronizasyonla (presync.go) sabit bellekte sayılır ve eşiği
+	// geçerse bu boyutta parçalarla yeniden indirilir; derinlik sınırı yoktur.
+	MaxSyncHeaders = 20_000
 )
 
 var (
@@ -198,6 +198,13 @@ type HeaderSync struct {
 	last    string   // son eklenen başlığın özeti
 	best    *big.Int // son başlığın birikmiş işi
 	limit   int      // en fazla yeni başlık (MaxSyncHeaders; testler küçültür)
+
+	// Ön-senkronizasyonla yetkilendirilmiş yeniden indirme (presync.go): yalnızca order[:authorized]
+	// gövdeleri indirilebilir; authorized eşleşen son kontrol noktasına kadar ilerler.
+	proof          *Presync
+	authorized     int
+	authorizedHash string // yetkilendirilen son başlık (bir sonraki parçanın başlangıcı)
+	reachedFinal   bool
 }
 
 type syncHeader struct {
@@ -208,6 +215,13 @@ type syncHeader struct {
 
 func (bc *Blockchain) NewHeaderSync() *HeaderSync {
 	return &HeaderSync{bc: bc, headers: map[string]*syncHeader{}, limit: MaxSyncHeaders}
+}
+
+// SetLimit oturum penceresini değiştirir (ağ katmanı ve testler için; en az 1).
+func (s *HeaderSync) SetLimit(n int) {
+	if n > 0 {
+		s.limit = n
+	}
 }
 
 // Add bir başlık yanıtını doğrulayıp oturuma ekler ve eklenen başlık sayısını döndürür.
@@ -234,6 +248,10 @@ func (s *HeaderSync) Add(hs []BlockHeader) (int, error) {
 		if i > 0 && h.PrevHash != hs[i-1].Hash {
 			return i, fmt.Errorf("%w: kesintili dizi", ErrBadHeaders)
 		}
+		matched, err := s.checkProof(h)
+		if err != nil {
+			return i, err
+		}
 		var parentHeight, parentAnchor int64
 		var parentWork *big.Int
 		if p, ok := s.headers[h.PrevHash]; ok {
@@ -257,6 +275,7 @@ func (s *HeaderSync) Add(hs []BlockHeader) (int, error) {
 				return i, fmt.Errorf("%w: bilinen blokla tutarsız başlık", ErrBadHeaders)
 			}
 			s.last, s.best = h.Hash, e.work
+			s.authorize(matched, h)
 			continue
 		}
 		if _, ok := s.headers[h.Hash]; ok {
@@ -276,8 +295,21 @@ func (s *HeaderSync) Add(hs []BlockHeader) (int, error) {
 		s.headers[h.Hash] = &syncHeader{h: *h, work: total, anchorTime: childAnchorTime(h.Index, h.Timestamp, parentAnchor)}
 		s.order = append(s.order, h.Hash)
 		s.last, s.best = h.Hash, total
+		s.authorize(matched, h)
 	}
 	return len(hs), nil
+}
+
+// authorize eşleşen bir kontrol noktasında oturumdaki tüm öneki yetkilendirir.
+func (s *HeaderSync) authorize(matched bool, h *BlockHeader) {
+	if !matched {
+		return
+	}
+	s.authorized = len(s.order)
+	s.authorizedHash = h.Hash
+	if h.Index == s.proof.finalHeight {
+		s.reachedFinal = true
+	}
 }
 
 // checkHeaderOnly bir başlığı gövdesiz doğrular. Okuma kilidi altında çağrılır.
@@ -326,6 +358,9 @@ func (s *HeaderSync) Full() bool { return len(s.headers) >= s.limit }
 func (s *HeaderSync) MoreWork() bool {
 	s.bc.mu.RLock()
 	defer s.bc.mu.RUnlock()
+	if s.proof != nil {
+		return s.bc.enoughWorkLocked(s.proof.finalWork)
+	}
 	return s.bc.enoughWorkLocked(s.best)
 }
 
@@ -342,11 +377,18 @@ func (s *HeaderSync) Missing() []string {
 	bc := s.bc
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	if !bc.enoughWorkLocked(s.best) {
+	order := s.order
+	if s.proof != nil {
+		// Yetki ön-senkronizasyonun toplam işine dayanır; uç bu arada ilerlediyse yeniden denetlenir.
+		if !bc.enoughWorkLocked(s.proof.finalWork) {
+			return nil
+		}
+		order = s.order[:s.authorized]
+	} else if !bc.enoughWorkLocked(s.best) {
 		return nil
 	}
 	var out []string
-	for _, h := range s.order {
+	for _, h := range order {
 		if _, ok := bc.index[h]; !ok {
 			out = append(out, h)
 		}
