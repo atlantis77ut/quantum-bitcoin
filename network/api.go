@@ -137,20 +137,30 @@ func (api *APIServer) handleGetLatestBlock(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, latestBlock)
 }
 
+// handleConfirmations blok sayısının yanında iş ve zamana dayalı onay bilgisini döndürür
+// (bkz. core/confirm.go): entegrasyonlar confirmations, elapsed_seconds ve work eşiklerinin
+// üçünü birlikte kullanmalı; deep_reorg_alarm ya da below_min_chain_work true ise hiçbir
+// onaya güvenilmez.
 func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("hash")
 	if !core.IsHashHex(hash) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik hash parametresi"})
 		return
 	}
-	n, alarm := api.Blockchain.Confirmations(hash)
+	c, err := api.Blockchain.ConfirmationOf(hash)
+	if err != nil {
+		api.log.Error("onay bilgisi okunamadı", "hash", hash, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"hash":             hash,
-		"confirmations":    n,
-		"deep_reorg_alarm": alarm,
-
-		// Uç en az zincir işinin altındaysa düğüm henüz senkronize değildir: onaylara güvenilmez.
-		"below_min_chain_work": api.Blockchain.BelowMinChainWork(),
+		"hash":                 hash,
+		"confirmations":        c.Blocks,
+		"elapsed_seconds":      c.ElapsedSeconds,
+		"work":                 c.Work.String(), // ondalık; JSON sayısı 2^53'ü aşabilir
+		"work_in_start_blocks": api.Blockchain.WorkInBlocks(c.Work),
+		"deep_reorg_alarm":     c.DeepReorg,
+		"below_min_chain_work": c.BelowMinWork,
 	})
 }
 
