@@ -148,6 +148,9 @@ func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request
 		"hash":             hash,
 		"confirmations":    n,
 		"deep_reorg_alarm": alarm,
+
+		// Uç en az zincir işinin altındaysa düğüm henüz senkronize değildir: onaylara güvenilmez.
+		"below_min_chain_work": api.Blockchain.BelowMinChainWork(),
 	})
 }
 

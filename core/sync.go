@@ -321,11 +321,12 @@ func (bc *Blockchain) checkHeaderOnly(h *BlockHeader, parentHeight int64, lookup
 // sonraki oturumda (indirilen blokların üzerinden) gelir.
 func (s *HeaderSync) Full() bool { return len(s.headers) >= s.limit }
 
-// MoreWork oturumun başlık zinciri ucun işini geçiyorsa true döner.
+// MoreWork oturumun başlık zinciri ucun işini geçiyor ve en az zincir işine ulaşıyorsa
+// true döner (bkz. minwork.go).
 func (s *HeaderSync) MoreWork() bool {
 	s.bc.mu.RLock()
 	defer s.bc.mu.RUnlock()
-	return s.best != nil && s.best.Cmp(s.bc.tip.work) > 0
+	return s.bc.enoughWorkLocked(s.best)
 }
 
 // Last son eklenen başlığın özetidir (bir sonraki başlık isteğinin konum belirleyicisi için).
@@ -341,7 +342,7 @@ func (s *HeaderSync) Missing() []string {
 	bc := s.bc
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	if s.best == nil || s.best.Cmp(bc.tip.work) <= 0 {
+	if !bc.enoughWorkLocked(s.best) {
 		return nil
 	}
 	var out []string

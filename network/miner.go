@@ -13,6 +13,9 @@ import (
 // acceptCheckDelay kazılan bloğun eşlerde aranmadan önce beklenen süredir (yayın + doğrulama).
 const acceptCheckDelay = 10 * time.Second
 
+// minWorkWait düğüm senkronize değilken kazımın yeniden denenme aralığıdır (testler değiştirir).
+var minWorkWait = 5 * time.Second
+
 // Miner düğümün kazım döngüsüdür. Kazım zincir kilidi tutulmadan yapılır (core.Mine); uç
 // değişirse şablon yenilenir. Kazılan blok eşlere yayılır ve bir süre sonra eşlerde aranır:
 // hiçbir eş bloğu saklamamışsa madenci uyarılır (saat, ağ/genesis ayarı ya da bağlantı sorunu).
@@ -39,11 +42,28 @@ func NewMiner(ps *P2PServer, address string) (*Miner, error) {
 // Run stop kapanana kadar kazar.
 func (m *Miner) Run(stop <-chan struct{}) {
 	bc := m.ps.Blockchain
+	waiting := false
 	for {
 		select {
 		case <-stop:
 			return
 		default:
+		}
+		// Uç en az zincir işinin altındaysa düğüm senkronize değildir: eski uç üzerine boşa
+		// kazılmaz; eşik aşılınca kazım kendiliğinden başlar.
+		if bc.BelowMinChainWork() {
+			if !waiting {
+				m.log.Warn("düğüm senkronize değil (en az zincir işinin altında); kazım bekliyor")
+				waiting = true
+			}
+			if !sleep(stop, minWorkWait) {
+				return
+			}
+			continue
+		}
+		if waiting {
+			m.log.Info("en az zincir işine ulaşıldı; kazım başlıyor")
+			waiting = false
 		}
 		t, err := bc.NewTemplate(nil, m.address) // mempool yok: yalnızca coinbase
 		if err != nil {

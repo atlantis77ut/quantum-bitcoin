@@ -36,6 +36,10 @@ type Params struct {
 	// regtest içindir: hedef Bits'te sabit kalır, testler hızlı ve öngörülebilir olsun.
 	HalfLife   int64
 	NoRetarget bool
+
+	// MinChainWork sürüme gömülü en az zincir işidir (düğüm politikası, bkz. minwork.go);
+	// nil ise 0. Başlığa ve genesis'e girmez.
+	MinChainWork *big.Int
 }
 
 // 60 sn blok süresi için emisyon (kullanıcı kararı, 2026-11-08): 5 QBTC ilk ödül,
@@ -101,6 +105,8 @@ func (p *Params) Validate() error {
 			p.HalfLife, minHalfLifePerFTL*MaxFutureDrift)
 	case p.NoRetarget && p.Name != "regtest":
 		return fmt.Errorf("%w: %s yeniden hedeflemesiz olamaz", ErrBadParams, p.Name)
+	case p.MinChainWork != nil && p.MinChainWork.Sign() < 0:
+		return fmt.Errorf("%w: %s en az zincir işi negatif", ErrBadParams, p.Name)
 	}
 	start, err := TargetFromBits(p.Bits)
 	if err != nil {

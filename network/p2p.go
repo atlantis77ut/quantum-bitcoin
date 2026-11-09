@@ -225,6 +225,12 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 // senkronizasyonu tetikler: gelen bağlantının eşine geri bağlanılamaz, eksik atalar
 // yapılandırılmış eşlerden çekilir.
 func (ps *P2PServer) handleBlock(remote string, b *core.Block) {
+	// Yeni düğüme sahte düşük işli zincir blok blok yutturulamasın (bkz. core/minwork.go);
+	// gerçek zincir eşikten geçen başlık zinciriyle senkronizasyondan gelir.
+	if ps.Blockchain.RelayBelowMinWork(b) {
+		ps.log.Debug("en az zincir işinin altındaki blok bırakıldı", "remote", remote, "index", b.Index)
+		return
+	}
 	// Tüm uzlaşma kuralları (PoW, coinbase, imzalar, bakiye, nonce, zaman) burada uygulanır.
 	err := ps.Blockchain.AcceptBlock(b)
 	switch {
