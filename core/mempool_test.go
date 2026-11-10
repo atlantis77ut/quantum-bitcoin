@@ -304,7 +304,8 @@ func TestMempoolInventory(t *testing.T) {
 			t.Fatalf("envanter sırası %d yanlış", i)
 		}
 	}
-	unknown := mpTx(t, bc, bob, alice.Address, Coin, MempoolMinFee, 1).ID()
+	u := mpTx(t, bc, bob, alice.Address, Coin, MempoolMinFee, 1)
+	unknown := u.ID()
 	missing := m.Missing([]string{a1.ID(), "zz", unknown, unknown, "ABC"})
 	if len(missing) != 1 || missing[0] != unknown {
 		t.Fatalf("eksikler %v", missing)
