@@ -34,7 +34,7 @@ func (bc *Blockchain) ConfirmationOf(hash string) (Confirmation, error) {
 	defer bc.mu.RUnlock()
 	c := Confirmation{
 		Work:         new(big.Int),
-		DeepReorg:    bc.deepReorg,
+		DeepReorg:    bc.deepReorg != nil,
 		BelowMinWork: bc.tip.work.Cmp(bc.params.minChainWork()) < 0,
 	}
 	e, ok := bc.index[hash]

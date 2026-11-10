@@ -28,6 +28,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "API için TLS sertifika dosyası (boşsa HTTP)")
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
 	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
+	clearAlarm := flag.Bool("clear-reorg-alarm", false, "Kalıcı derin reorg alarmını temizler ve çıkar (olay incelendikten sonra)")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -56,6 +57,20 @@ func main() {
 		os.Exit(1)
 	}
 	defer bc.Close()
+	if *clearAlarm {
+		rec, err := bc.ClearDeepReorgAlarm()
+		if err != nil {
+			slog.Error("derin reorg alarmı temizlenemedi", "err", err)
+			os.Exit(1)
+		}
+		if rec == nil {
+			slog.Info("temizlenecek derin reorg alarmı yok")
+		}
+		// Düğüm çalışmaya devam etmez: bayrak servis yapılandırmasında kalırsa her yeniden
+		// başlatma (açılıştaki kurtarmanın yeni alarmı dahil) alarmı sessizce silerdi.
+		slog.Info("derin reorg alarmı işlendi; düğüm bayraksız yeniden başlatılmalı")
+		return
+	}
 
 	// 3. P2P sunucusu ve eşler
 	p2p := network.NewP2PServer(*port, bc)

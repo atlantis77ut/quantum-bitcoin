@@ -206,9 +206,9 @@ func (bc *Blockchain) Confirmations(hash string) (int64, bool) {
 	defer bc.mu.RUnlock()
 	e, ok := bc.index[hash]
 	if !ok || !bc.isMain(e) {
-		return 0, bc.deepReorg
+		return 0, bc.deepReorg != nil
 	}
-	return bc.tip.Height - e.Height + 1, bc.deepReorg
+	return bc.tip.Height - e.Height + 1, bc.deepReorg != nil
 }
 
 // mtpLocked ebeveyni parentHash olan bloğun medyan zaman sınırını hesaplar; atalar önce

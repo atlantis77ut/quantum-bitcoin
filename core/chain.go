@@ -15,8 +15,9 @@ import (
 
 // Zincir seçimi (kullanıcı kararı, 2026-11-08): uzlaşmada saf "en çok birikmiş iş" kuralı
 // geçerlidir, reorg derinliğine sınır yoktur. Eşit işte ilk görülen kalır; yalnızca kesin
-// olarak daha fazla iş taşıyan zincire geçilir. ReorgAlarmDepth'ten derin bir reorg zinciri
-// değiştirir ama yüksek sesle alarm verir (DeepReorgAlarm); sayısal değer LWMA ile dondurulur.
+// olarak daha fazla iş taşıyan zincire geçilir. Params.ReorgAlarmDepth'ten derin bir reorg
+// zinciri değiştirir ama yüksek sesle alarm verir (DeepReorgAlarm); alarm diske yazılır ve
+// yalnızca operatör temizler (bkz. reorgalarm.go).
 //
 // Disk düzeni: blok gövdeleri ham 64 hex özet anahtarındadır; diğer anahtarların hepsi '_'
 // içeren öneklerle başlar ve özetlerle çakışmaz.
@@ -25,13 +26,12 @@ const (
 	prefixHeight = "h_"    // h_<16 hex yükseklik> → ana zincirdeki blok özeti
 	prefixUndo   = "undo_" // undo_<özet> → bloğun dokunduğu anahtarların önceki değerleri
 
-	// ReorgAlarmDepth bu kadar bloktan derin reorg'da alarm verilir (uzlaşma kuralı değildir).
-	ReorgAlarmDepth = 100
-
 	// Yan zincir depolama politikası (uzlaşma kuralı değil, DoS sınırı). Ucun bu kadar
 	// gerisinden çatallanan ve uçtan fazla iş taşımayan, tek tek gelen yan bloklar saklanmaz;
-	// daha derin reorg'lar başlık öncelikli senkronizasyonla gelir (bkz. sync.go).
-	MaxSideForkDepth = 2 * ReorgAlarmDepth
+	// daha derin reorg'lar başlık öncelikli senkronizasyonla gelir (bkz. sync.go). Disk ve G/Ç
+	// bütçesidir (kullanıcı kararı 2026-11-11): alarm derinliğinden ve blok süresinden
+	// bağımsız bir blok sayısıdır.
+	MaxSideForkDepth = 200
 
 	// MaxBlocksPerHeight bir yükseklikte saklanan en fazla blok sayısıdır (ana blok dahil);
 	// uçtan fazla iş taşıyan aday bu sınıra takılmaz.
@@ -417,6 +417,10 @@ func (bc *Blockchain) activateLocked(target *indexEntry) error {
 		}
 	}
 	batch.Put([]byte(keyLastHash), []byte(newTip.Hash))
+	alarm, err := bc.reorgAlarmLocked(batch, int64(len(disconnected)), fork, newTip)
+	if err != nil {
+		return err
+	}
 	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
 		return fmt.Errorf("zincir güncellenemedi: %w", err)
 	}
@@ -436,10 +440,10 @@ func (bc *Blockchain) activateLocked(target *indexEntry) error {
 	if n := len(disconnected); n > 0 {
 		bc.log.Warn("reorg: daha çok iş taşıyan zincire geçildi", "geri_sarilan", n,
 			"baglanan", len(connected), "eski_uc", oldTip.Hash, "yeni_uc", newTip.Hash, "catal", fork.Height)
-		if n > ReorgAlarmDepth {
-			bc.deepReorg = true
+		if alarm != nil {
+			bc.deepReorg = alarm
 			bc.log.Error("DERİN REORG ALARMI: onayları durdurun ve operatöre danışın",
-				"derinlik", n, "esik", ReorgAlarmDepth, "catal", fork.Height)
+				"derinlik", n, "esik", bc.params.ReorgAlarmDepth, "catal", fork.Height, "olay", alarm.Count)
 		}
 	}
 	for _, e := range connected {
@@ -455,12 +459,13 @@ func (bc *Blockchain) TipHash() string {
 	return bc.lastHash
 }
 
-// DeepReorgAlarm, düğüm ReorgAlarmDepth'ten derin bir reorg yaşadıysa true döner. Borsa
+// DeepReorgAlarm, düğüm Params.ReorgAlarmDepth'ten derin bir reorg yaşadıysa ve alarm
+// operatörce temizlenmediyse true döner (yeniden başlatma alarmı silmez). Borsa
 // entegrasyonları bu durumda onay bildirmeyi durdurmalıdır.
 func (bc *Blockchain) DeepReorgAlarm() bool {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
-	return bc.deepReorg
+	return bc.deepReorg != nil
 }
 
 // recoverBestLocked açılışta, indekste uçtan fazla iş taşıyan geçerli bir blok varsa

@@ -83,7 +83,7 @@ type Blockchain struct {
 	perHeight map[int64]int          // yükseklik → saklanan blok sayısı
 	main      map[int64]string       // ana zincir: yükseklik → özet
 	tip       *indexEntry
-	deepReorg bool
+	deepReorg *DeepReorgRecord    // nil değilse kalıcı derin reorg alarmı (bkz. reorgalarm.go)
 	syncAllow map[string]struct{} // yan zincir sınırı uygulanmayacak bloklar (bkz. sync.go)
 
 	mineChunk  int          // kazımda denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
@@ -178,6 +178,10 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 		}
 		bc.tip = tip
 		bc.lastHash = tip.Hash
+		if err := bc.loadReorgAlarm(); err != nil {
+			db.Close()
+			return nil, err
+		}
 		if err := bc.recoverBestLocked(); err != nil {
 			db.Close()
 			return nil, err
