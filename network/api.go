@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -189,7 +188,7 @@ func (api *APIServer) handleHeader(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz hash parametresi"})
 		return
 	}
-	h, ok := api.Blockchain.HeaderByHash(strings.ToLower(hash)) // indeks küçük harfli
+	h, ok := api.Blockchain.HeaderByHash(hash)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "blok ana zincirde değil"})
 		return

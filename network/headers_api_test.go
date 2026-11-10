@@ -26,7 +26,7 @@ func TestHeaderEndpoints(t *testing.T) {
 		t.Fatalf("uç başlığı %d %+v", rec.Code, tip)
 	}
 	var byHash core.BlockHeader
-	if rec := get("/header?hash=" + strings.ToUpper(tip.PrevHash)); rec.Code != http.StatusOK ||
+	if rec := get("/header?hash=" + tip.PrevHash); rec.Code != http.StatusOK ||
 		json.NewDecoder(rec.Body).Decode(&byHash) != nil || byHash.Index != 2 {
 		t.Fatalf("özetle başlık %d %+v", rec.Code, byHash)
 	}
