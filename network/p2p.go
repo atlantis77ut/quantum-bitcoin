@@ -68,6 +68,7 @@ type message struct {
 	Headers []core.BlockHeader `json:"headers,omitempty"`
 	Hash    string             `json:"hash,omitempty"`
 	Txs     []core.Transaction `json:"txs,omitempty"`
+	TxIDs   []string           `json:"txids,omitempty"`
 }
 
 var (
@@ -101,6 +102,11 @@ type P2PServer struct {
 	// testler küçültür). presyncs yalnızca senkronizasyon döngüsünden erişilir.
 	syncWindow int
 	presyncs   map[string]*peerPresync
+
+	// Havuz eşitlemesi (mempoolsync.go); lastMempoolSync yalnızca senkronizasyon döngüsünden
+	// erişilir.
+	mempoolSyncEvery time.Duration
+	lastMempoolSync  map[string]time.Time
 
 	// syncCh senkronizasyonu hemen tetikler; tek yuvalıdır, bekleyen tetikler birleşir.
 	syncCh    chan struct{}
@@ -137,6 +143,9 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		connQuota:   newGroupQuota(connsPerGroup),
 		decodeQuota: newGroupQuota(decodesPerGroup),
 		serveQuota:  newGroupQuota(servesPerGroup),
+
+		mempoolSyncEvery: mempoolSyncInterval,
+		lastMempoolSync:  map[string]time.Time{},
 	}
 }
 
@@ -263,6 +272,10 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 		ps.serveBlock(conn, remote, group, msg.Hash)
 	case msgTxs:
 		ps.handleTxs(remote, group, msg.Txs)
+	case msgGetMempool:
+		ps.serveMempool(conn, remote, group)
+	case msgGetTxs:
+		ps.serveTxs(conn, remote, group, msg.TxIDs)
 	default:
 		ps.log.Debug("bilinmeyen mesaj türü", "remote", remote, "type", msg.Type)
 	}
@@ -501,9 +514,11 @@ func (ps *P2PServer) syncLoop(stop <-chan struct{}) {
 		case <-ps.syncCh:
 		}
 		for _, peer := range ps.Peers() {
-			if err := ps.syncFrom(peer, stop); err != nil {
+			err := ps.syncFrom(peer, stop)
+			if err != nil {
 				ps.log.Warn("eşle senkronizasyon başarısız", "peer", peer, "err", err)
 			}
+			ps.maybePullMempool(peer, err, stop)
 		}
 		ps.syncRounds.Add(1)
 	}

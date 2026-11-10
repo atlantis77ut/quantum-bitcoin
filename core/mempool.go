@@ -96,7 +96,7 @@ type Mempool struct {
 
 	mu      sync.Mutex
 	senders map[string][]*poolTx // gönderen → onaylı nonce + 1'den başlayan bitişik zincir
-	ids     map[[32]byte]struct{}
+	ids     map[[32]byte]*poolTx
 	count   int
 	bytes   int
 	tip     string // havuzun en son uzlaştırıldığı uç
@@ -105,7 +105,7 @@ type Mempool struct {
 // NewMempool bc'nin ucuna göre boş bir havuz kurar.
 func NewMempool(bc *Blockchain) *Mempool {
 	return &Mempool{bc: bc, maxTxs: MempoolMaxTxs, maxBytes: MempoolMaxBytes,
-		senders: map[string][]*poolTx{}, ids: map[[32]byte]struct{}{}}
+		senders: map[string][]*poolTx{}, ids: map[[32]byte]*poolTx{}}
 }
 
 // Len havuzdaki işlem sayısıdır (uç değiştiyse uzlaştırmadan sonra).
@@ -273,6 +273,72 @@ func replaceFee(old int64) (int64, bool) {
 // başları arasında ücreti yüksek olan önce. NewTemplate işlemleri verilen sırayla işlediğinden
 // başka bir sıra aynı gönderenin sonraki işlemlerini düşürürdü.
 func (m *Mempool) Select(max int) ([]Transaction, error) {
+	ps, err := m.ordered(max)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Transaction, len(ps))
+	for i, p := range ps {
+		out[i] = p.tx
+	}
+	return out, nil
+}
+
+// Inventory havuzdaki en çok max işlemin kimliğini Select sırasıyla döndürür: bu sırayla
+// getiren eş her göndericinin nonce'larını boşluksuz alır (eşlerle havuz eşitlemesi).
+func (m *Mempool) Inventory(max int) ([]string, error) {
+	ps, err := m.ordered(max)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = hex.EncodeToString(p.id[:])
+	}
+	return out, nil
+}
+
+// Missing ids içinden havuzda olmayanları sırayı koruyarak döndürür; geçersiz ve yinelenen
+// kimlikler atlanır.
+func (m *Mempool) Missing(ids []string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	seen := map[[32]byte]bool{}
+	for _, s := range ids {
+		id, ok := decodeHash(s)
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, in := m.ids[id]; !in {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Get havuzdaki işlemlerden kimliği ids içinde olanları ids sırasıyla döndürür (bulunmayan ve
+// geçersiz kimlikler atlanır). Uç değişimine göre uzlaştırma yapılmaz: dönen işlemler alıcı
+// tarafından yeniden doğrulanır.
+func (m *Mempool) Get(ids []string) []Transaction {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Transaction
+	for _, s := range ids {
+		id, ok := decodeHash(s)
+		if !ok {
+			continue
+		}
+		if p, in := m.ids[id]; in {
+			out = append(out, p.tx)
+		}
+	}
+	return out
+}
+
+// ordered havuzu uca göre uzlaştırıp en çok max işlemi Select sırasıyla döndürür.
+func (m *Mempool) ordered(max int) ([]*poolTx, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.bc.mu.RLock()
@@ -285,10 +351,10 @@ func (m *Mempool) Select(max int) ([]Transaction, error) {
 		*h = append(*h, head{chain: chain})
 	}
 	heap.Init(h)
-	var out []Transaction
+	var out []*poolTx
 	for h.Len() > 0 && len(out) < max {
 		top := &(*h)[0]
-		out = append(out, top.chain[top.pos].tx)
+		out = append(out, top.chain[top.pos])
 		top.pos++
 		if top.pos == len(top.chain) {
 			heap.Pop(h)
@@ -350,7 +416,7 @@ func (m *Mempool) syncLocked() error {
 	}
 	// Okuma hatasında havuz eski haline döner (m.tip değişmez, sonraki erişim yeniden dener).
 	oldSenders, oldIDs, oldCount, oldBytes := m.senders, m.ids, m.count, m.bytes
-	m.senders, m.ids, m.count, m.bytes = map[string][]*poolTx{}, map[[32]byte]struct{}{}, 0, 0
+	m.senders, m.ids, m.count, m.bytes = map[string][]*poolTx{}, map[[32]byte]*poolTx{}, 0, 0
 	for sender, list := range bySender {
 		sort.SliceStable(list, func(i, j int) bool { return list[i].tx.Nonce < list[j].tx.Nonce })
 		kept, _, err := m.validChainLocked(sender, list, matured)
@@ -532,7 +598,7 @@ func (m *Mempool) setChainLocked(sender string, kept []*poolTx) {
 		return
 	}
 	for _, p := range kept {
-		m.ids[p.id] = struct{}{}
+		m.ids[p.id] = p
 		m.count++
 		m.bytes += p.size
 	}
