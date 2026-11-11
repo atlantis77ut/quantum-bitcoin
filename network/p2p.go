@@ -103,6 +103,10 @@ type P2PServer struct {
 	syncWindow int
 	presyncs   map[string]*peerPresync
 
+	// presyncBackoff başarısız ön-senkronizasyondan sonra eş başına ertelemedir; yalnızca
+	// senkronizasyon döngüsünden erişilir, yapılandırılmış eş sayısıyla sınırlıdır.
+	presyncBackoff map[string]*presyncPenalty
+
 	// Havuz eşitlemesi (mempoolsync.go); lastMempoolSync yalnızca senkronizasyon döngüsünden
 	// erişilir.
 	mempoolSyncEvery time.Duration
@@ -146,6 +150,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 
 		mempoolSyncEvery: mempoolSyncInterval,
 		lastMempoolSync:  map[string]time.Time{},
+		presyncBackoff:   map[string]*presyncPenalty{},
 	}
 }
 
@@ -545,10 +550,28 @@ func (ps *P2PServer) syncFrom(peer string, stop <-chan struct{}) error {
 	if st := ps.presyncs[peer]; st != nil {
 		return ps.continuePresync(peer, st, stopped)
 	}
+	backoff := ps.presyncBackedOff(peer)
+	window := ps.syncWindow
+	if backoff {
+		// Ertelemede eşten turda tek başlık mesajı işlenir: ucumuzu uzatan başlıklar ilk yeni
+		// başlıkta ucun işini geçtiğinden olağan senkronizasyon etkilenmez.
+		window = min(window, core.MaxHeadersPerMsg)
+	}
 	s := bc.NewHeaderSync()
-	s.SetLimit(ps.syncWindow)
+	s.SetLimit(window)
 	herr := ps.syncHeaders(peer, s, bc.Locator(), stopped)
 	if !s.MoreWork() {
+		if s.Full() && backoff {
+			return errPresyncBackoff
+		}
+		if !s.Full() && s.Len() > lowWorkHeaderLimit(window) {
+			// Pencereyi doldurmayan uzun, az işli yanıt: ön-senkronizasyona girmeden aynı
+			// ertelemeye alınır (aksi halde eş her turda pencereye yakın başlık doğrulatırdı).
+			if !backoff {
+				ps.dropPresync(peer, true, errLowWorkHeaders)
+			}
+			return errLowWorkHeaders
+		}
 		if s.Full() {
 			// Pencere doldu ama zincir eşiği geçmedi: daha derin bir dal ya da düşük işli spam.
 			// Başlıklar saklanmadan sabit bellekte sayılır (core/presync.go).
@@ -576,10 +599,59 @@ type peerPresync struct {
 // maxPresyncFails art arda bu kadar turda gövdeleri indirilemeyen ön-senkronizasyon bırakılır.
 const maxPresyncFails = 3
 
+// Başarısız ön-senkronizasyon ertelemesi (kullanıcı kararı 2026-11-11). Ön-senkronizasyon
+// zinciri vermeden bırakılırsa (eşin zinciri eşiğe ulaşmadan bitti, geçersiz başlık,
+// yeniden indirme ilerlemedi, gövdeler gelmedi) o eşle yeni ön-senkronizasyon ertelenir:
+// süre her başarısızlıkta ikiye katlanır, yalnızca başarılı bir ön-senkronizasyon (uç
+// zincirini geçti ya da gövdeler indirildi) sıfırlar. Ucumuzu uzatmak sıfırlamaz: eş dürüst
+// blok ileterek cezasını silemez. Böylece önceden hazırlanmış düşük işli bir başlık zinciri
+// (taban zorluğunda ucuz, zaman sınırıyla ana zincir kadar uzun) bedavaya her turda yeniden
+// doğrulatılamaz. Ertelemede o eşten derin bir dalın benimsenmesi en çok presyncBackoffMax
+// gecikir.
+const (
+	presyncBackoffMin = 10 * time.Minute
+	presyncBackoffMax = 4 * time.Hour
+)
+
+type presyncPenalty struct {
+	until time.Time
+	delay time.Duration
+}
+
 var (
 	errPresyncEnd     = errors.New("eşin zinciri ön-senkronizasyon eşiğine ulaşmadan bitti")
 	errPresyncInvalid = errors.New("ön-senkronizasyonda geçersiz başlık")
+	errPresyncBackoff = errors.New("eşle ön-senkronizasyon ertelendi (önceki başarısız oldu)")
+	errLowWorkHeaders = errors.New("eş ucun işini geçmeyen uzun bir başlık zinciri gönderdi")
 )
+
+// lowWorkHeaderLimit ucun işini geçmeyen yanıtta cezasız kabul edilen en fazla yeni başlıktır:
+// dürüst bir yan dal ya da bizden geride kalan eş bundan azını gönderir.
+func lowWorkHeaderLimit(window int) int {
+	return min(core.MaxHeadersPerMsg, window/2)
+}
+
+// presyncBackedOff eşle yeni ön-senkronizasyonun ertelenip ertelenmediğini söyler.
+func (ps *P2PServer) presyncBackedOff(peer string) bool {
+	pen := ps.presyncBackoff[peer]
+	return pen != nil && time.Now().Before(pen.until)
+}
+
+// dropPresync eşin ön-senkronizasyon durumunu bırakır. failed ise (zincir alınamadı) erteleme
+// başlar ya da ikiye katlanır; değilse erteleme sıfırlanır.
+func (ps *P2PServer) dropPresync(peer string, failed bool, reason error) {
+	delete(ps.presyncs, peer)
+	if !failed {
+		delete(ps.presyncBackoff, peer)
+		return
+	}
+	d := presyncBackoffMin
+	if pen := ps.presyncBackoff[peer]; pen != nil {
+		d = min(2*pen.delay, presyncBackoffMax)
+	}
+	ps.presyncBackoff[peer] = &presyncPenalty{until: time.Now().Add(d), delay: d}
+	ps.log.Info("ön-senkronizasyon bırakıldı, eşle yenisi ertelendi", "peer", peer, "erteleme", d, "neden", reason)
+}
 
 // continuePresync ön-senkronizasyonu sürdürür; eşik geçildiyse başlıkları parça parça
 // yeniden indirir ve yalnızca kontrol noktalarıyla eşleşen önekin gövdelerini indirir.
@@ -591,8 +663,8 @@ func (ps *P2PServer) continuePresync(peer string, st *peerPresync, stopped func(
 		err := ps.presyncHeaders(peer, st.p, stopped)
 		if !st.p.Done() {
 			if errors.Is(err, errPresyncEnd) || errors.Is(err, errPresyncInvalid) {
-				delete(ps.presyncs, peer)
-				ps.log.Info("ön-senkronizasyon bırakıldı", "peer", peer, "dogrulanan", st.p.Count(), "neden", err)
+				ps.log.Info("ön-senkronizasyon eşiğe ulaşmadı", "peer", peer, "dogrulanan", st.p.Count())
+				ps.dropPresync(peer, true, err)
 			}
 			return err
 		}
@@ -607,23 +679,32 @@ func (ps *P2PServer) continuePresync(peer string, st *peerPresync, stopped func(
 		}
 		herr := ps.syncHeaders(peer, s, loc, stopped)
 		if !s.MoreWork() {
-			delete(ps.presyncs, peer) // uç ön-senkronizasyonun işini geçti: olağan senkronizasyon sürer
+			ps.dropPresync(peer, false, nil) // uç ön-senkronizasyonun işini geçti: olağan senkronizasyon sürer
 			return herr
 		}
 		if s.AuthorizedTip() == "" {
 			if herr == nil || headerRejected(herr) {
-				delete(ps.presyncs, peer) // eş ön-senkronizasyondaki zinciri vermiyor
-				return fmt.Errorf("ön-senkronizasyon yeniden indirmesi ilerlemedi: %v", herr)
+				err := fmt.Errorf("ön-senkronizasyon yeniden indirmesi ilerlemedi: %v", herr)
+				ps.dropPresync(peer, true, err) // eş ön-senkronizasyondaki zinciri vermiyor
+				return err
 			}
 			return herr // geçici (ağ, süre): sonraki tur
 		}
 		if s.AuthorizedTip() == st.resume {
-			delete(ps.presyncs, peer) // eş ilerleme vermiyor (yalnızca bilinen önek)
-			return fmt.Errorf("ön-senkronizasyon yeniden indirmesi ilerlemedi: %v", herr)
+			err := fmt.Errorf("ön-senkronizasyon yeniden indirmesi ilerlemedi: %v", herr)
+			ps.dropPresync(peer, true, err) // eş ilerleme vermiyor (yalnızca bilinen önek)
+			return err
 		}
+		before := bc.TipHash()
 		if err := ps.downloadBodies(peer, s, stopped); err != nil {
+			if errors.Is(err, errSyncBudget) || bc.TipHash() != before {
+				// Yavaş ama ilerleyen eş (ör. en az zincir işinin altında ilk eşitleme)
+				// başarısız sayılmaz; kalan gövdeler sonraki turda.
+				st.fails = 0
+				return err
+			}
 			if st.fails++; st.fails >= maxPresyncFails {
-				delete(ps.presyncs, peer) // eş gövdeleri vermiyor ya da geçersiz veriyor
+				ps.dropPresync(peer, true, err) // eş gövdeleri vermiyor ya da geçersiz veriyor
 			}
 			return err
 		}
@@ -632,7 +713,7 @@ func (ps *P2PServer) continuePresync(peer string, st *peerPresync, stopped func(
 		if s.ReachedFinal() || headerRejected(herr) {
 			// Son başlığa ulaşıldı (kalan iş olağan senkronizasyonla gelir) ya da eş yetkili
 			// önekten sonra tutarsızlaştı (yetkili kısım indirildi, gerisi bırakıldı).
-			delete(ps.presyncs, peer)
+			ps.dropPresync(peer, false, nil)
 			return herr
 		}
 	}
@@ -765,8 +846,8 @@ func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, loc []string, 
 		if s.Len() > n {
 			rounds++
 		}
-		if len(resp.Headers) < core.MaxHeadersPerMsg {
-			return nil
+		if len(resp.Headers) < core.MaxHeadersPerMsg || s.Full() {
+			return nil // dolu pencere için bir yanıt daha istenmez
 		}
 		loc = withFirst(s.Last(), bc.Locator())
 	}
