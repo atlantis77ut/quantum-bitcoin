@@ -57,16 +57,36 @@ static int qb_device_count(void) {
 	return n;
 }
 
-static cl_int qb_device_name(int idx, char *name, size_t n) {
+// qb_info idx'inci aygıtın (plat != 0 ise aygıtın platformunun) param dizgesini buf'a yazar.
+// buf her durumda NUL ile biter; dizge sığmazsa CL_INVALID_VALUE döner.
+static cl_int qb_info(int idx, int plat, cl_uint param, char *buf, size_t n) {
+	if (n == 0) return CL_INVALID_VALUE;
+	memset(buf, 0, n);
 	cl_device_id d;
 	cl_int err = qb_device(idx, &d);
 	if (err != CL_SUCCESS) return err;
-	memset(name, 0, n);
 	size_t need = 0;
-	err = clGetDeviceInfo(d, CL_DEVICE_NAME, 0, NULL, &need);
+	if (plat) {
+		cl_platform_id p;
+		err = clGetDeviceInfo(d, CL_DEVICE_PLATFORM, sizeof p, &p, NULL);
+		if (err != CL_SUCCESS) return err;
+		err = clGetPlatformInfo(p, (cl_platform_info)param, 0, NULL, &need);
+		if (err != CL_SUCCESS) return err;
+		if (need >= n) return CL_INVALID_VALUE;
+		return clGetPlatformInfo(p, (cl_platform_info)param, n - 1, buf, NULL);
+	}
+	err = clGetDeviceInfo(d, (cl_device_info)param, 0, NULL, &need);
 	if (err != CL_SUCCESS) return err;
 	if (need >= n) return CL_INVALID_VALUE;
-	return clGetDeviceInfo(d, CL_DEVICE_NAME, n - 1, name, NULL);
+	return clGetDeviceInfo(d, (cl_device_info)param, n - 1, buf, NULL);
+}
+
+// qb_device_type idx'inci aygıtın CL_DEVICE_TYPE bit alanını okur.
+static cl_int qb_device_type(int idx, cl_device_type *t) {
+	cl_device_id d;
+	cl_int err = qb_device(idx, &d);
+	if (err != CL_SUCCESS) return err;
+	return clGetDeviceInfo(d, CL_DEVICE_TYPE, sizeof *t, t, NULL);
 }
 
 typedef struct {
@@ -164,7 +184,6 @@ static cl_int qb_scan(qb_gpu *g, const cl_uint *w1, const cl_uint *w2, const cl_
 import "C"
 
 import (
-	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -175,9 +194,6 @@ import (
 
 	"quantum-bitcoin/core"
 )
-
-//go:embed sha256d.cl
-var kernelSource string
 
 // tuneTarget otomatik tur boyunun hedeflediği tek başlatma süresidir: durdurma ve uç
 // değişimi en geç bu kadar gecikir.
@@ -202,15 +218,48 @@ func Devices() ([]Device, error) {
 		return nil, fmt.Errorf("OpenCL platformu bulunamadı (hata %d): ICD yükleyicisi ve sürücü kurulu mu?", n)
 	}
 	devs := make([]Device, 0, n)
-	var buf [256]C.char
 	for i := 0; i < n; i++ {
-		name := "?"
-		if C.qb_device_name(C.int(i), &buf[0], C.size_t(len(buf))) == C.CL_SUCCESS {
-			name = C.GoString(&buf[0])
-		}
-		devs = append(devs, Device{Index: i, Name: name})
+		devs = append(devs, Device{
+			Index:           i,
+			Name:            deviceInfo(i, false, C.CL_DEVICE_NAME),
+			Type:            deviceType(i),
+			Platform:        deviceInfo(i, true, C.CL_PLATFORM_NAME),
+			PlatformVersion: deviceInfo(i, true, C.CL_PLATFORM_VERSION),
+			DeviceVersion:   deviceInfo(i, false, C.CL_DEVICE_VERSION),
+			Driver:          deviceInfo(i, false, C.CL_DRIVER_VERSION),
+		})
 	}
 	return devs, nil
+}
+
+// deviceInfo aygıtın (plat ise platformunun) bir dizge özelliğidir; okunamazsa "?".
+func deviceInfo(idx int, plat bool, param C.cl_uint) string {
+	var buf [512]C.char
+	p := C.int(0)
+	if plat {
+		p = 1
+	}
+	if C.qb_info(C.int(idx), p, param, &buf[0], C.size_t(len(buf))) != C.CL_SUCCESS {
+		return "?"
+	}
+	return C.GoString(&buf[0])
+}
+
+// deviceType CL_DEVICE_TYPE'ı Type* sabitlerinden birine çevirir; okunamazsa TypeOther.
+func deviceType(idx int) string {
+	var t C.cl_device_type
+	if C.qb_device_type(C.int(idx), &t) != C.CL_SUCCESS {
+		return TypeOther
+	}
+	switch {
+	case t&C.CL_DEVICE_TYPE_GPU != 0:
+		return TypeGPU
+	case t&C.CL_DEVICE_TYPE_CPU != 0:
+		return TypeCPU
+	case t&C.CL_DEVICE_TYPE_ACCELERATOR != 0:
+		return TypeAccelerator
+	}
+	return TypeOther
 }
 
 // Open device'ı açar ve çekirdeği derler. batch bir Scan çağrısının nonce sayısıdır; 0 ise

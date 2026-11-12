@@ -39,6 +39,9 @@ func main() {
 	gpuDevice := flag.Int("gpu-device", 0, "Kazım için OpenCL aygıtı (-gpu-list ile listelenir)")
 	gpuBatch := flag.Uint64("gpu-batch", 0, "GPU turundaki nonce sayısı (0: ~100 ms'ye ölçülerek seçilir)")
 	gpuList := flag.Bool("gpu-list", false, "OpenCL aygıtlarını listeler ve çıkar")
+	benchRuns := flag.Int("bench-runs", 1, "-bench-hashrate ölçüm sayısı; 1'den büyükse önce bir ısınma ölçümü atılır, ortanca raporlanır")
+	benchOut := flag.String("bench-out", "", "-bench-hashrate raporunun yazılacağı JSON dosyası (docs/GPU-OLCUM.md)")
+	benchAllowNonGPU := flag.Bool("bench-allow-non-gpu", false, "GPU ölçümünde GPU olmayan OpenCL aygıtına izin verir (yalnızca CI/pocl; sonuç GPU hashrate'i değildir)")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -72,11 +75,26 @@ func main() {
 			fmt.Println("OpenCL aygıtı yok")
 		}
 		for _, d := range devs {
-			fmt.Printf("%d\t%s\n", d.Index, d.Name)
+			fmt.Printf("%d\t%s\t%s\t%s\tsürücü %s\n", d.Index, d.Type, d.Name, d.Platform, d.Driver)
 		}
 		return
 	}
 	var backend gpu.Backend
+	var benchDev *gpu.Device
+	if *mineGPU && *benchHashrate != 0 {
+		// Aygıt türü açılmadan önce denetlenir: GPU olmayan aygıtın sonucu GPU hashrate'i değildir.
+		devs, err := gpu.Devices()
+		if err != nil {
+			slog.Error("OpenCL aygıtları listelenemedi", "err", err)
+			os.Exit(2)
+		}
+		d, err := benchDevice(devs, *gpuDevice, *benchAllowNonGPU)
+		if err != nil {
+			slog.Error("ölçüm başlatılamadı", "err", err, "ipucu", "-gpu-list ile aygıtları görün")
+			os.Exit(2)
+		}
+		benchDev = &d
+	}
 	if *mineGPU {
 		backend, err = gpu.Open(*gpuDevice, *gpuBatch)
 		if err != nil {
@@ -89,25 +107,32 @@ func main() {
 	if *benchHashrate != 0 {
 		// Ölçüm kazımla aynı turları kullanır; zincir açılmaz. Lansmanda açıklanan hashrate
 		// aynı komutla yeniden üretilebilir (docs/MAINNET-ONCESI.md madde 6a).
-		var rate float64
-		args := []any{"network", params.Name, "sure", benchHashrate.String()}
+		measure := func() (float64, error) { return core.MeasureHashrate(threads, *benchHashrate) }
+		var round uint64
 		if backend != nil {
-			rate, err = core.MeasureBackendHashrate(backend, *benchHashrate)
-			args = append(args, "aygit", backend.Name(), "tur", backend.RoundSize())
-		} else {
-			rate, err = core.MeasureHashrate(threads, *benchHashrate)
-			args = append(args, "is_parcacigi", threads)
+			measure = func() (float64, error) { return core.MeasureBackendHashrate(backend, *benchHashrate) }
+			round = backend.RoundSize()
+		}
+		rates, warmup, err := runBench(measure, *benchRuns)
+		if err == nil {
+			var rep benchReport
+			rep, err = newBenchReport(params, benchDev, *benchAllowNonGPU, threads, round, *benchHashrate, rates, warmup)
+			if err == nil {
+				slog.Info("hashrate ölçümü", "network", rep.Network, "arka_uc", rep.Backend, "sure", benchHashrate.String(),
+					"olcum", len(rates), "ortanca_hash_per_sn", rep.Median, "en_dusuk", rep.Min, "en_yuksek", rep.Max,
+					"yayilim_yuzde", rep.SpreadPct, "tur", round, "is_parcacigi", threads,
+					"bu_hashrate_icin_bits", rep.NetworkBits, "mainnet_baslangic_bits", rep.StartBits,
+					"mainnet_taban_bits", rep.FloorBits)
+				if *benchOut != "" {
+					err = writeBenchReport(*benchOut, rep)
+				}
+			}
 		}
 		if err != nil {
 			slog.Error("hashrate ölçülemedi", "err", err)
 			backendClose(backend)
 			os.Exit(2)
 		}
-		args = append(args, "hash_per_sn", rate)
-		if bits, err := core.BitsForHashrate(rate, params.TargetSpacing, params.PowLimitBits); err == nil {
-			args = append(args, "bu_hashrate_icin_bits", fmt.Sprintf("0x%08x", bits))
-		}
-		slog.Info("hashrate ölçümü", args...)
 		return
 	}
 	if backend != nil && *mineTo == "" {

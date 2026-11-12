@@ -93,6 +93,44 @@ func TestOrphanEasierThanFloorRejected(t *testing.T) {
 	}
 }
 
+// Lansman önerisi: başlangıç mainnet tavanına kırpılır, taban hedef cinsinden
+// min(başlangıç · 2^16, tavan) olur ve başlangıçtan kolay ya da ona eşittir.
+func TestLaunchTargets(t *testing.T) {
+	ceiling := mustTarget(t, mainnetMaxPowLimitBits)
+	for _, c := range []struct {
+		h       float64
+		capped  bool // taban tavana kırpılır
+		atLimit bool // başlangıç da tavanda
+	}{
+		{1, true, true},      // tek CPU'dan bile yavaş: ikisi de tavanda
+		{3e9, true, false},   // ~3 GH/s (GPU ölçeği): oran 2^16'nın altında kalır
+		{1e15, false, false}, // 1 PH/s: taban tam olarak başlangıç · 2^16
+	} {
+		sb, fb, err := LaunchTargets(c.h, MainnetParams.TargetSpacing)
+		if err != nil {
+			t.Fatalf("%v: %v", c.h, err)
+		}
+		want, _ := BitsForHashrate(c.h, MainnetParams.TargetSpacing, mainnetMaxPowLimitBits)
+		start, floor := mustTarget(t, sb), mustTarget(t, fb)
+		if sb != want || (sb == mainnetMaxPowLimitBits) != c.atLimit {
+			t.Fatalf("%v: başlangıç %08x, beklenen %08x", c.h, sb, want)
+		}
+		if floor.Cmp(start) < 0 || floor.Cmp(ceiling) > 0 {
+			t.Fatalf("%v: taban %08x başlangıç %08x ile tavan arasında değil", c.h, fb, sb)
+		}
+		if c.capped {
+			if fb != mainnetMaxPowLimitBits {
+				t.Fatalf("%v: taban %08x, beklenen tavan", c.h, fb)
+			}
+		} else if new(big.Int).Lsh(start, 16).Cmp(floor) != 0 {
+			t.Fatalf("%v: taban %08x başlangıç · 2^16 değil (%08x)", c.h, fb, sb)
+		}
+	}
+	if _, _, err := LaunchTargets(0, 60); err == nil {
+		t.Fatal("sıfır hashrate kabul edildi")
+	}
+}
+
 func TestBitsForHashrate(t *testing.T) {
 	limit := uint32(0x1d00ffff)
 	h := 1e15 // 1 PH/s

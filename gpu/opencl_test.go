@@ -6,16 +6,32 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"math"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"quantum-bitcoin/core"
 )
 
-// openTest ilk OpenCL aygıtını küçük, sabit tur boyuyla açar. CI'da (QBTC_REQUIRE_OPENCL)
-// aygıt yoksa test başarısız olur; yerelde atlanır.
+// testDevice sınanacak aygıttır: QBTC_GPU_DEVICE (ölçüm betiği, scripts/gpu-olcum.sh) ya da 0.
+func testDevice(t *testing.T) int {
+	t.Helper()
+	s := os.Getenv("QBTC_GPU_DEVICE")
+	if s == "" {
+		return 0
+	}
+	d, err := strconv.Atoi(s)
+	if err != nil || d < 0 {
+		t.Fatalf("geçersiz QBTC_GPU_DEVICE: %q", s)
+	}
+	return d
+}
+
+// openTest seçili OpenCL aygıtını (testDevice) küçük, sabit tur boyuyla açar. CI'da
+// (QBTC_REQUIRE_OPENCL) aygıt yoksa test başarısız olur; yerelde atlanır.
 func openTest(t *testing.T) *clMiner {
 	t.Helper()
 	devs, err := Devices()
@@ -25,7 +41,7 @@ func openTest(t *testing.T) *clMiner {
 		}
 		t.Skipf("OpenCL aygıtı yok: %v", err)
 	}
-	b, err := Open(0, MinBatch)
+	b, err := Open(testDevice(t), MinBatch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +234,8 @@ func BenchmarkKernel(b *testing.B) {
 // TestKernelAB döngülü (gpu/testdata/sha256d_loop.cl) ve açılmış (gpu/sha256d.cl,
 // gpu/gen/genkernel.py ile üretilir) çekirdekleri aynı süreçte ve aynı aygıtta, turlar hâlinde dönüşümlü sırayla ölçer; böylece
 // makineler arası fark karşılaştırmayı bozmaz. Önce döngülü çekirdeğin doğruluğu sınanır.
-// Yalnızca QBTC_KERNEL_AB ayarlıysa çalışır (CI'da pocl; gerçek GPU ölçümü değildir).
+// Yalnızca QBTC_KERNEL_AB ayarlıysa çalışır (CI'da pocl; gerçek GPU ölçümü değildir). Aygıt
+// QBTC_GPU_DEVICE ile seçilir; QBTC_KERNEL_AB_OUT verilirse sonuç o dosyaya JSON yazılır.
 func TestKernelAB(t *testing.T) {
 	if os.Getenv("QBTC_KERNEL_AB") == "" {
 		t.Skip("QBTC_KERNEL_AB ayarlı değil")
@@ -232,7 +249,7 @@ func TestKernelAB(t *testing.T) {
 	names := []string{"döngülü", "açılmış"}
 	kernels := make([]Backend, 2)
 	for i, source := range []string{string(src), kernelSource} {
-		b, err := openSource(0, batch, source)
+		b, err := openSource(testDevice(t), batch, source)
 		if err != nil {
 			t.Fatalf("%s: %v", names[i], err)
 		}
@@ -274,6 +291,49 @@ func TestKernelAB(t *testing.T) {
 	for i := range kernels {
 		t.Logf("%s: %.0f hash/s", names[i], hashes/total[i].Seconds())
 	}
-	t.Logf("açılmış/döngülü hız oranı: %.3f (turlarda en düşük %.3f, en yüksek %.3f)",
-		total[0].Seconds()/total[1].Seconds(), minRatio, maxRatio)
+	ratio := total[0].Seconds() / total[1].Seconds()
+	t.Logf("açılmış/döngülü hız oranı: %.3f (turlarda en düşük %.3f, en yüksek %.3f)", ratio, minRatio, maxRatio)
+	if out := os.Getenv("QBTC_KERNEL_AB_OUT"); out != "" {
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"device":                testDevice(t),
+			"device_name":           kernels[1].Name(),
+			"loop_hash_per_sec":     hashes / total[0].Seconds(),
+			"unrolled_hash_per_sec": hashes / total[1].Seconds(),
+			"ratio":                 ratio,
+			"ratio_min":             minRatio,
+			"ratio_max":             maxRatio,
+			"rounds":                rounds,
+		}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(out, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Devices her aygıt için türü ve sürüm bilgisini doldurur (ölçüm raporunun girdisi).
+func TestDevicesInfo(t *testing.T) {
+	openTest(t)
+	devs, err := Devices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range devs {
+		switch d.Type {
+		case TypeGPU, TypeCPU, TypeAccelerator, TypeOther:
+		default:
+			t.Fatalf("aygıt %d: bilinmeyen tür %q", d.Index, d.Type)
+		}
+		for _, v := range []string{d.Name, d.Platform, d.Driver, d.DeviceVersion, d.PlatformVersion} {
+			if v == "" || v == "?" {
+				t.Fatalf("aygıt %d: eksik bilgi %+v", d.Index, d)
+			}
+		}
+		t.Logf("%+v", d)
+	}
+	if len(KernelSHA256()) != 64 {
+		t.Fatal("çekirdek özeti 64 hex değil")
+	}
 }

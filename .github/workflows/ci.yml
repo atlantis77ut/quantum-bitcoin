@@ -82,10 +82,17 @@ jobs:
           python3 gpu/gen/genkernel.py /tmp/sha256d.cl
           diff -u gpu/sha256d.cl /tmp/sha256d.cl
 
-      - name: GPU çekirdeği hızı ve A/B (pocl, yalnızca bilgi; gerçek GPU ölçümü değil)
-        env:
-          QBTC_KERNEL_AB: "1"
+      - name: GPU çekirdeği hızı (pocl, yalnızca bilgi; gerçek GPU ölçümü değil)
         run: |
           export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
           go test -tags opencl -run '^$' -bench Kernel -benchtime 3x ./gpu/
-          go test -tags opencl -count=1 -run '^TestKernelAB$' -v ./gpu/
+
+      - name: Ölçüm betiği uçtan uca (pocl, kısa; A/B dahil; gerçek GPU ölçümü değil)
+        env:
+          QBTC_OLCUM_SURE: 2s
+          QBTC_OLCUM_TEKRAR: "2"
+          QBTC_OLCUM_IZIN_CPU: "1"
+          QBTC_OLCUM_CIKTI: /tmp/qbtc-olcum.json
+        run: |
+          bash scripts/gpu-olcum.sh
+          python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["gpu_hashrate_mi"] is False and r["gpu"]["non_gpu_allowed"] is True, r; print(json.dumps(r, ensure_ascii=False, indent=2))' /tmp/qbtc-olcum.json
