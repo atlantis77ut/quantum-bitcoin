@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -79,57 +80,74 @@ func TestRejectsInvalidBlocks(t *testing.T) {
 
 	extraCoinbase := coinbaseTo(mallory.Address)
 
-	cases := map[string]func() *Block{
-		"şişirilmiş coinbase": func() *Block { return craftBlock(t, bc, []Transaction{bigCoinbase}) },
-		"ikinci coinbase": func() *Block {
+	type invalidCase struct {
+		mk   func() *Block
+		want error
+	}
+	cases := map[string]invalidCase{
+		"şişirilmiş coinbase": {func() *Block { return craftBlock(t, bc, []Transaction{bigCoinbase}) }, ErrBadCoinbase},
+		"ikinci coinbase": {func() *Block {
 			return craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address), extraCoinbase})
-		},
-		"coinbase yok": func() *Block { return craftBlock(t, bc, nil) },
-		"hash içerikle uyuşmuyor": func() *Block {
+		}, ErrUnexpectedCoinbase},
+		"coinbase yok": {func() *Block { return craftBlock(t, bc, nil) }, ErrBadCoinbase},
+		"gövde başlıkla uyuşmuyor": {func() *Block {
 			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
 			b.Transactions[0].Amount = 500
 			return b
-		},
-		"PoW yok": func() *Block {
+		}, ErrBadMerkleRoot},
+		"PoW yok": {func() *Block {
 			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
 			for b.Nonce = 0; ; b.Nonce++ {
 				b.Hash = b.CalculateHash()
-				if !MeetsTarget(b.Hash, testDifficulty) {
+				if !MeetsTarget(b.Hash, bc.Bits()) {
 					return b
 				}
 			}
-		},
-		"zorluk düşürülmüş": func() *Block {
+		}, ErrInsufficientPoW},
+		"zorluk düşürülmüş": {func() *Block {
 			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
-			b.MineBlock(0)
+			if err := b.MineBlock(easierThanLimitBits()); err != nil {
+				t.Fatal(err)
+			}
 			return b
-		},
-		"zaman geçmişte": func() *Block {
+		}, ErrBadDifficulty},
+		"yanlış sürüm": {func() *Block {
+			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
+			b.Version = 2
+			regrind(b) // MineBlock sürümü ezer; geçerli PoW ile yalnızca sürüm hatalı kalsın
+			return b
+		}, ErrBadVersion},
+		"coinbase nonce yükseklik değil": {func() *Block {
+			cb := coinbaseTo(mallory.Address)
+			cb.Nonce = 99
+			return craftBlock(t, bc, []Transaction{cb})
+		}, ErrBadCoinbase},
+		"zaman geçmişte": {func() *Block {
 			prev, _ := bc.GetLatestBlock()
 			b := &Block{Index: prev.Index + 1, Timestamp: prev.Timestamp - 100,
 				Transactions: []Transaction{coinbaseTo(mallory.Address)}, PrevHash: prev.Hash}
-			b.MineBlock(testDifficulty)
+			mineAt(t, bc, b)
 			return b
-		},
-		"zaman çok ileride": func() *Block {
+		}, ErrTimestampOld},
+		"zaman çok ileride": {func() *Block {
 			prev, _ := bc.GetLatestBlock()
 			b := &Block{Index: prev.Index + 1, Timestamp: bc.now() + MaxFutureDrift + 1000,
 				Transactions: []Transaction{coinbaseTo(mallory.Address)}, PrevHash: prev.Hash}
-			b.MineBlock(testDifficulty)
+			mineAt(t, bc, b)
 			return b
-		},
-		"yanlış önceki hash": func() *Block {
+		}, ErrTimestampFuture},
+		"yanlış önceki hash": {func() *Block {
 			b := craftBlock(t, bc, []Transaction{coinbaseTo(mallory.Address)})
-			b.PrevHash = "00" + b.PrevHash[2:]
-			b.MineBlock(testDifficulty)
+			b.PrevHash = strings.Repeat("ab", 32)
+			mineAt(t, bc, b)
 			return b
-		},
+		}, ErrBadPrevHash},
 	}
 	before, _ := bc.GetLatestBlock()
-	for name, mk := range cases {
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if err := bc.AcceptBlock(mk()); err == nil {
-				t.Fatal("geçersiz blok kabul edildi")
+			if err := bc.AcceptBlock(c.mk()); !errors.Is(err, c.want) {
+				t.Fatalf("hata %v, beklenen %v", err, c.want)
 			}
 		})
 	}
@@ -148,7 +166,7 @@ func TestFutureBlockAcceptedWhenClockCatchesUp(t *testing.T) {
 	ts := bc.now() + MaxFutureDrift + 100
 	b := &Block{Index: prev.Index + 1, Timestamp: ts,
 		Transactions: []Transaction{coinbaseTo(miner.Address)}, PrevHash: prev.Hash}
-	b.MineBlock(testDifficulty)
+	mineAt(t, bc, b)
 
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrTimestampFuture) {
 		t.Fatalf("beklenen ErrTimestampFuture, gelen %v", err)
@@ -310,14 +328,37 @@ func TestRejectCache(t *testing.T) {
 		t.Fatalf("tekrar gönderim önbellekten reddedilmeli: %v", err)
 	}
 
-	good := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address)})
-	poison := *good
-	poison.Transactions = []Transaction{coinbaseTo(alice.Address)} // aynı özet, farklı içerik
-	poison.Difficulty = 0
-	if err := bc.AcceptBlock(&poison); err == nil {
-		t.Fatal("zehirli blok kabul edildi")
+	// Dürüst başlık + değiştirilmiş gövde: özet yalnızca başlığı kapsadığı için bu bloklar
+	// dürüst bloğun özetini taşır. Hiçbiri önbelleğe girmemeli; dürüst blok sonra kabul edilmeli.
+	tx := signedTx(t, alice, bob.Address, Coin, 1)
+	good := craftBlock(t, bc, []Transaction{coinbaseTo(bob.Address), tx})
+	extra := signedTx(t, alice, bob.Address, Coin, 2)
+	manyTxs := make([]Transaction, MaxTxPerBlock+2)
+	copy(manyTxs, good.Transactions)
+
+	bodies := map[string][]Transaction{
+		"farklı coinbase":    {coinbaseTo(alice.Address), tx},
+		"fazladan işlem":     {good.Transactions[0], tx, extra},
+		"yer değiştirmiş":    {tx, good.Transactions[0]},
+		"çok fazla işlem":    manyTxs,
+		"boş gövde":          nil,
+		"son işlem kopyalı":  {good.Transactions[0], tx, tx},
+		"imzası bozuk işlem": {good.Transactions[0], func() Transaction { x := tx; x.Signature = nil; return x }()},
 	}
-	poison.Difficulty = good.Difficulty
+	for name, txs := range bodies {
+		t.Run(name, func(t *testing.T) {
+			poison := *good
+			poison.Transactions = txs
+			if err := bc.AcceptBlock(&poison); err == nil {
+				t.Fatal("zehirli blok kabul edildi")
+			}
+			if bc.rejected.has(good.Hash) {
+				t.Fatal("dürüst bloğun özeti zehirli gövdeyle önbelleğe alındı")
+			}
+		})
+	}
+	poison := *good
+	poison.Bits = easierThanLimitBits()
 	if err := bc.AcceptBlock(&poison); err == nil {
 		t.Fatal("zehirli blok kabul edildi")
 	}
@@ -344,9 +385,10 @@ func TestStateViewOverflow(t *testing.T) {
 }
 
 func TestBlockHashFieldSeparation(t *testing.T) {
-	a := &Block{Index: 1, Timestamp: 23, PrevHash: "x"}
-	b := &Block{Index: 12, Timestamp: 3, PrevHash: "x"}
-	if a.CalculateHash() == b.CalculateHash() {
+	h := strings.Repeat("ab", 32)
+	a := &Block{Index: 1, Timestamp: 23, PrevHash: h, MerkleRoot: h}
+	b := &Block{Index: 12, Timestamp: 3, PrevHash: h, MerkleRoot: h}
+	if a.CalculateHash() == "" || a.CalculateHash() == b.CalculateHash() {
 		t.Fatal("farklı başlıklar aynı özeti üretti")
 	}
 }

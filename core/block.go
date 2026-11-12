@@ -1,10 +1,6 @@
 package core
 
 import (
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
-	"strings"
 	"time"
 )
 
@@ -18,58 +14,24 @@ const (
 	MedianTimeSpan       = 11              // Blok zamanı son N bloğun medyanından büyük olmalı
 )
 
+// Block başlık alanları (Version..Nonce) ve işlemlerden oluşur. Hash yalnızca sabit
+// boyutlu başlığın özetidir (bkz. header.go); işlemler MerkleRoot ile bağlanır.
 type Block struct {
+	Version      uint32        `json:"version"`
 	Index        int64         `json:"index"`
 	Timestamp    int64         `json:"timestamp"`
 	Transactions []Transaction `json:"transactions"`
 	PrevHash     string        `json:"prev_hash"`
+	MerkleRoot   string        `json:"merkle_root"`
+	Bits         uint32        `json:"bits"`
+	Nonce        uint64        `json:"nonce"`
 	Hash         string        `json:"hash"`
-	Nonce        int64         `json:"nonce"`
-	Difficulty   int           `json:"difficulty"`
-}
-
-// CalculateHash blok başlığının çift SHA-256 özetini döndürür. Alanlar "|" ile
-// ayrılır; böylece (Index=1, Timestamp=23) ile (Index=12, Timestamp=3) aynı veriyi üretmez.
-func (b *Block) CalculateHash() string {
-	data, err := json.Marshal(b.Transactions)
-	if err != nil {
-		// Bu tiplerle Marshal hata vermez; yine de boş özet hiçbir doğrulamadan geçmez.
-		return ""
-	}
-	record := fmt.Sprintf("%d|%d|%s|%s|%d|%d", b.Index, b.Timestamp, data, b.PrevHash, b.Nonce, b.Difficulty)
-
-	firstHash := sha256.Sum256([]byte(record))
-	secondHash := sha256.Sum256(firstHash[:])
-
-	return fmt.Sprintf("%x", secondHash)
-}
-
-// MeetsTarget özetin zorluk hedefini karşılayıp karşılamadığını kontrol eder.
-func MeetsTarget(hash string, difficulty int) bool {
-	return len(hash) == 64 && strings.HasPrefix(hash, strings.Repeat("0", difficulty))
-}
-
-func (b *Block) MineBlock(difficulty int) {
-	b.Difficulty = difficulty
-
-	fmt.Printf("[...] Blok #%d kazılıyor (Zorluk: %d)... \n", b.Index, difficulty)
-	startTime := time.Now()
-
-	for {
-		b.Hash = b.CalculateHash()
-		if MeetsTarget(b.Hash, difficulty) {
-			break
-		}
-		b.Nonce++
-	}
-
-	elapsed := time.Since(startTime)
-	fmt.Printf("[✓] Blok Kazıldı! Nonce: %d | Süre: %s | Hash: %s\n", b.Nonce, elapsed, b.Hash)
 }
 
 // NewGenesisBlock ilk bloğu oluşturur.
 // DİKKAT: Zaman damgası time.Now() olduğu için her düğüm farklı bir genesis üretir;
-// ağdaki düğümler ortak zincire ancak sabit bir genesis ile anlaşabilir (kullanıcı kararı bekliyor).
+// ağdaki düğümler ortak zincire ancak sabit bir genesis ile anlaşabilir (genesis PR'ı).
+// Genesis PoW doğrulamasından geçmez; yerel ve güvenilir kaynak olarak yazılır.
 func NewGenesisBlock() *Block {
 	genesisTx := Transaction{
 		Sender:     "SYSTEM",
@@ -80,13 +42,14 @@ func NewGenesisBlock() *Block {
 	}
 
 	block := &Block{
+		Version:      BlockVersion,
 		Index:        0,
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{genesisTx},
 		PrevHash:     "0000000000000000000000000000000000000000000000000000000000000000",
-		Nonce:        0,
-		Difficulty:   0,
+		Bits:         bigToCompact(powLimit),
 	}
+	block.MerkleRoot = block.ComputeMerkleRoot()
 	block.Hash = block.CalculateHash()
 	return block
 }

@@ -130,10 +130,13 @@ func TestP2PRejectsForgedCoinbase(t *testing.T) {
 		Timestamp: prev.Timestamp + 1,
 		PrevHash:  prev.Hash,
 		Transactions: []core.Transaction{{
-			Sender: core.CoinbaseSender, Receiver: mallory.Address, Amount: 21_000_000, IsCoinbase: true,
+			Sender: core.CoinbaseSender, Receiver: mallory.Address, Nonce: uint64(prev.Index + 1),
+			Amount: 21_000_000 * core.Coin, IsCoinbase: true,
 		}},
 	}
-	forged.MineBlock(1)
+	if err := forged.MineBlock(bc.Bits()); err != nil {
+		t.Fatal(err)
+	}
 
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
@@ -180,9 +183,12 @@ func TestP2PAcceptsValidBlock(t *testing.T) {
 	prev, _ := dst.GetLatestBlock()
 	b := &core.Block{
 		Index: prev.Index + 1, Timestamp: prev.Timestamp + 1, PrevHash: prev.Hash,
-		Transactions: []core.Transaction{{Sender: core.CoinbaseSender, Receiver: miner.Address, Amount: core.BlockReward, IsCoinbase: true}},
+		Transactions: []core.Transaction{{Sender: core.CoinbaseSender, Receiver: miner.Address, Amount: core.BlockReward,
+			Nonce: uint64(prev.Index + 1), IsCoinbase: true}},
 	}
-	b.MineBlock(1)
+	if err := b.MineBlock(dst.Bits()); err != nil {
+		t.Fatal(err)
+	}
 
 	ps.AddPeer(ln.Addr().String())
 	ps.BroadcastBlock(b)
