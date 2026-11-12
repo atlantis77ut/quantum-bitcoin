@@ -138,7 +138,9 @@ func (ps *P2PServer) handleConnection(conn net.Conn) {
 		ps.log.Warn("eşten gelen blok reddedildi", "remote", remote, "index", incomingBlock.Index, "err", err)
 		return
 	}
-	ps.log.Info("eşten gelen blok zincire eklendi", "remote", remote, "index", incomingBlock.Index)
+	// nil: blok indekse alındı; uç değişmemiş olabilir (eşit ya da az işli yan blok).
+	ps.log.Info("eşten gelen blok kabul edildi", "remote", remote, "index", incomingBlock.Index,
+		"uc", ps.Blockchain.TipHash())
 }
 
 // pendingRetryInterval gelecek tarihli bekleyen blokların yeniden denenme aralığıdır.

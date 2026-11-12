@@ -101,25 +101,25 @@ func (q *pendingBlocks) add(b *Block) bool {
 	return true
 }
 
-// take uca kuyruk üzerinden bağlanamayan blokları atar (zincir başka bir blokla ilerledi ya
-// da ebeveyn tahliye edildi), ardından doğrudan ucun üzerine kurulan ve zamanı gelmiş
+// take blok indeksine (known) kuyruk üzerinden bağlanamayan blokları atar (ebeveyn tahliye
+// edildi ya da hiç gelmedi), ardından ebeveyni indekste olan ve zamanı gelmiş
 // (Timestamp ≤ limit) blokları kuyruktan çıkarıp döndürür.
-func (q *pendingBlocks) take(tip string, limit int64) []*Block {
+func (q *pendingBlocks) take(known func(hash string) bool, limit int64) []*Block {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for h, b := range q.blocks {
 		cur := b
-		for depth := 0; cur != nil && cur.PrevHash != tip && depth <= MaxPendingBlocks; depth++ {
+		for depth := 0; cur != nil && !known(cur.PrevHash) && depth <= MaxPendingBlocks; depth++ {
 			cur = q.blocks[cur.PrevHash]
 		}
-		if cur == nil || cur.PrevHash != tip {
+		if cur == nil || !known(cur.PrevHash) {
 			delete(q.blocks, h)
 			q.dropped.add(h)
 		}
 	}
 	var ready []*Block
 	for h, b := range q.blocks {
-		if b.PrevHash == tip && b.Timestamp <= limit {
+		if known(b.PrevHash) && b.Timestamp <= limit {
 			ready = append(ready, b)
 			delete(q.blocks, h)
 		}
@@ -127,32 +127,35 @@ func (q *pendingBlocks) take(tip string, limit int64) []*Block {
 	return ready
 }
 
-// ProcessPending zamanı gelmiş bekleyen blokları zincire eklemeyi dener ve eklenen blok
-// sayısını döndürür. P2P sunucusu bunu düzenli aralıklarla çağırır. Bir blok eklenince
-// onun kuyruktaki çocukları da aynı çağrıda denenir.
+// ProcessPending zamanı gelmiş bekleyen blokları indekse ekler (gerekirse zincire geçer) ve
+// kabul edilen blok sayısını döndürür. P2P sunucusu bunu düzenli aralıklarla çağırır. Bir blok
+// eklenince onun kuyruktaki çocukları da aynı çağrıda denenir.
 func (bc *Blockchain) ProcessPending() int {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	known := func(h string) bool { _, ok := bc.index[h]; return ok }
 	added := 0
 	for {
-		ready := bc.pending.take(bc.lastHash, bc.now()+MaxFutureDrift)
+		ready := bc.pending.take(known, bc.now()+MaxFutureDrift)
 		if len(ready) == 0 {
 			return added
 		}
 		progressed := false
 		for _, b := range ready {
-			if b.PrevHash != bc.lastHash {
-				continue // aynı ucun üzerindeki başka bir blok önce eklendi
+			// Gövde kuyruğa alınmadan önce doğrulandı. Ebeveyne göre kontroller (yükseklik,
+			// medyan zaman, yan zincir sınırları) ve durum kontrolleri burada yapılır.
+			err := ErrTimestampFuture
+			if b.Timestamp <= bc.now()+MaxFutureDrift {
+				err = bc.storeAndActivateLocked(b)
 			}
-			// Gövde kuyruğa alınmadan önce doğrulandı; durumlu kontroller (zaman dahil) burada.
-			if err := bc.acceptStatefulLocked(b); err != nil {
+			if err != nil {
 				if isTransientPendingErr(err) {
 					bc.pending.add(b) // disk hatası, saat geri gitti vb.: sonraki turda yeniden dene
 				}
 				bc.log.Warn("bekleyen blok eklenemedi", "index", b.Index, "hash", b.Hash, "neden", err)
 				continue
 			}
-			bc.log.Info("bekleyen blok zincire eklendi", "index", b.Index, "hash", b.Hash)
+			bc.log.Info("bekleyen blok kabul edildi", "index", b.Index, "hash", b.Hash)
 			added++
 			progressed = true
 		}
@@ -163,7 +166,13 @@ func (bc *Blockchain) ProcessPending() int {
 }
 
 // isTransientPendingErr, bekleyen bloğun atılmayıp yeniden denenmesi gereken hatalarıdır:
-// kalıcı kural ihlalleri ile yükseklik/ebeveyn uyuşmazlığı dışındaki her şey.
+// kalıcı kural ihlalleri, yükseklik/ebeveyn uyuşmazlığı, bilinen ya da geçersiz blok ve
+// depolama sınırı dışındaki her şey (ör. saatin geri gitmesi, disk hatası).
 func isTransientPendingErr(err error) bool {
-	return !isPermanentStatefulErr(err) && !errors.Is(err, ErrBadIndex) && !errors.Is(err, ErrBadPrevHash)
+	for _, e := range []error{ErrBadIndex, ErrBadPrevHash, ErrKnownBlock, ErrKnownInvalid, ErrSideChainLimit} {
+		if errors.Is(err, e) {
+			return false
+		}
+	}
+	return !isPermanentStatefulErr(err)
 }
