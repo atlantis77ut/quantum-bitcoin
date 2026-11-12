@@ -37,7 +37,7 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 
 - γ = 0 için eşik ≈ %33, γ = 0,5 için %25'tir.
 - γ 1'e yaklaştıkça eşik **sıfıra iner**: ağa iyi bağlı bir saldırgan her büyüklükte kâr edebilir.
-- Optimal stratejiler üzerine sonraki çalışmalar (Sapirshtein vd.) eşiğin bu basit modeldekinden düşük olduğunu, ağ gecikmesi hesaba katıldığında daha da düştüğünü gösterir. İletişimde kesin bir güvenli yüzde verilmemelidir.
+- Optimal stratejiler üzerine sonraki çalışmalar (Sapirshtein vd.) eşiğin bu basit modeldekinden düşük olduğunu gösterir; ağ gecikmesi hesaba katıldığında kârlılık eşiği tamamen ortadan kalkabilir. İletişimde kesin bir güvenli yüzde verilmemelidir.
 
 **Q-BTC'de γ büyük olabilir.**
 - Ağ küçüktür ve eş keşfi yoktur (yalnızca `-peer`). Birçok düğümün yapılandırılmış eşi olan bir havuz operatörü, yarışlarda dürüst düğümlerin çoğuna önce ulaşabilir.
@@ -47,7 +47,7 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 **Eşitlik kuralı işe dayalıdır.**
 - Q-BTC dalları blok sayısıyla değil, birikmiş işle karşılaştırır. Tam eşit işte ilk görülen kalır (core/chain.go).
 - Hedef yalnızca ebeveynin zaman damgasına bağlı olduğundan tam eşitlik pratikte yalnızca kardeş bloklarda oluşur.
-- İki ya da daha uzun eşit uzunluklu dalda hangisinin daha çok iş taşıdığını blokların zaman damgaları belirler. Saldırgan kendi gizli bloklarının damgalarını (MTP ile FTL arasında) seçerek dalına birkaç yüzde fazla iş kazandırabilir. Etki blok başına yaklaşık 2^(Δ/7200)'dür.
+- İki ya da daha uzun eşit uzunluklu dalda hangisinin daha çok iş taşıdığını blokların zaman damgaları belirler. Saldırgan gizli bloklarının damgalarını MTP'ye doğru geriye atarak torunlarını zorlaştırabilir ve dalına birkaç yüzde fazla iş kazandırabilir. İleri, FTL'ye doğru atmak işi azaltır. Etki blok başına yaklaşık 2^(Δ/7200)'dür; Δ, damganın dürüst rakibine göre ne kadar geride olduğudur ve MTP ile sınırlıdır (60 sn'lik blokta birkaç dakika, ~%3–4). Etki birikmez, çünkü her bloğun hedefi yalnızca ebeveyninin damgasına bağlıdır. Kazanç bedava da değildir: daha zor blok orantılı olarak daha fazla hash ister. Kazanç yalnızca aynı blok sayısındaki işe dayalı eşitlik bozmada ortaya çıkar.
 - Bu, ısrarcı (stubborn) türü stratejilere yarar. Nicel etkisi ölçülmemiştir.
 
 **Hızlı DAA'nın etkisi.**
@@ -75,6 +75,8 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 
 - Aynı reorg ile birden çok borsada aynı anda çift harcama yapılabilir. Bu yüzden eşik, tek bir borsadaki yatırıma göre değil, ağdaki olası toplam açığa göre düşünülmelidir.
 - Bekleme süresi ve iş, bu kârın negatif kalacağı kadar olmalıdır. Kârın negatif kalmadığı tutarlarda hiçbir onay eşiği yeterli değildir.
+- Saldırı dalındaki ödüller coinbase olgunluğuna ve saldırı sonrası olası fiyat düşüşüne tabidir. Kendi donanımını kullanan saldırgan için maliyet, kaçırdığı dürüst kazım gelirinin fırsat maliyetidir.
+- Hashrate kirası blok ödülüne yaklaşırsa "hashrate maliyeti − saldırı dalındaki ödüller" derinlikten bağımsız olarak sıfıra yaklaşır. Bu durumda onayı uzatmak saldırıyı pahalılaştırmaz ve güvenli bir bekleme eşiği hiç kurulamayabilir.
 
 **`/confirmations` göstergelerini birlikte kullanın.** Şu alanlar birlikte değerlendirilmelidir:
 - `confirmations`: blok sayısı.
@@ -94,7 +96,7 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 - birden çok düğümde farklı uç görülmesi,
 - reorg sıklığının artması.
 
-**Coinbase olgunluğuna dikkat edin.** Olgunluk 240 bloktur (~4 saat); daha derin bir reorg ertelenmiş madenci ödemelerini de geri alır.
+**Coinbase olgunluğuna dikkat edin.** Olgunluk ~4 saatlik blok sayısıdır (`TargetSpacing`'den: 60 sn'de 240, 30 sn'de 480 blok). Olgunluk derinliğinden derin bir reorg, alacaklandırılmış ertelenmiş madenci ödemelerini de geri alır.
 
 ## Kaynaklar
 
