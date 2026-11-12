@@ -17,7 +17,7 @@ Go ile yazılmış, ML-DSA-65 (liboqs, cgo) imzalı, PoW tabanlı Layer-1 protot
 
 Kapatılanlar (fix/security-hardening): imza ve adres bağı, P2P blok doğrulaması, negatif tutar, aynı blokta çift harcama, replay (hesap nonce'u), atomik yazım, zaman damgası kuralları, P2P başlatma, HTTP sertleştirme, testler + CI.
 
-Kapatılanlar (önkoşul PR'ları): 10^8 taban birim + işlem ücreti (feat/subunit-and-fees); 96 baytlık sabit başlık, SHA256d, Merkle kökü, compact 256 bit hedef (feat/fixed-header); ağ parametreleri (mainnet/testnet/regtest), deterministik genesis, `-network` bayrağı, kimlik ve imza alanının ayrılması (`QBTC-SIG-v3|<ağ>|<genesis özeti>`) (feat/genesis-params); emisyon takvimi `BlockSubsidy`/`SupplyAt` (feat/emission).
+Kapatılanlar (önkoşul PR'ları): 10^8 taban birim + işlem ücreti (feat/subunit-and-fees); 96 baytlık sabit başlık, SHA256d, Merkle kökü, compact 256 bit hedef (feat/fixed-header); ağ parametreleri (mainnet/testnet/regtest), deterministik genesis, `-network` bayrağı, kimlik ve imza alanının ayrılması (`QBTC-SIG-v3|<ağ>|<genesis özeti>`) (feat/genesis-params); emisyon takvimi `BlockSubsidy`/`SupplyAt` (feat/emission); FTL 300 sn, imzadan önce FTL kontrolü, gelecek tarihli bloklar için sınırlı bekleme kuyruğu (feat/timestamp-rules).
 
 Kullanıcının verdiği uzlaşma kararları (2026-11-08, `devils-advocate` sonrası):
 - Premine yok; genesis sıfır değerli coinbase + mesajdır, alıcısı mesaj özetinden türetilir.
@@ -25,17 +25,17 @@ Kullanıcının verdiği uzlaşma kararları (2026-11-08, `devils-advocate` sonr
 - Emisyon değerleri `Params.TargetSpacing`'den türetilir; blok süresi (60 ya da 30 sn) lansmandan önce ölçülüp dondurulur, zincir ortasında değiştirilmez.
 - Blok süresi 60 sn; yayılım + doğrulama ölçümü ≤1–2 sn çıkarsa 30 sn'ye inebilir.
 - PoW: SHA256d, Bitcoin'den farklı başlık düzeni.
+- Zaman: FTL 300 sn mutlak (blok süresinin katı değil), MTP penceresi 11, yalnızca yerel saat (ağ ayarlı zaman yok). LWMA'nın N'si seçilince N·T/20 sınırına göre yeniden sınanır; daha düşük FTL ancak senkronizasyon/reorg geldikten sonra.
 - Zorluk: her blokta LWMA (ASERT kabul edilebilir alternatif), aşağıdaki önkoşullardan sonra.
 - Mainnet genesis'i şimdi sabitlenmez (erken gizli kazım = gizli premine). `MainnetParams` genesis'i boştur ve düğüm mainnet'i reddeder; genesis lansman anında öngörülemez bir mesajla (ör. o anki bir Bitcoin blok özeti) son uzlaşma kararı olarak üretilir.
 
 Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-denetimi` ile; yukarıda kararı verilmemiş bir uzlaşma seçimi çıkarsa uygulamadan önce `devils-advocate` ile sına ve kullanıcıya sor):
-1. **FTL / zaman damgası kuralları** 60 sn blok süresine göre ölçeklenmeli (`MaxFutureDrift` 2 saat = 120 blok); emisyon yüksekliğe bağlı olduğundan zaman bükme emisyonu öne çeker. Hedef ~10–15 dk.
-2. **Lansman adilliği:** mainnet başlangıç hedefi gerçekçi hashrate tahminine göre sert seçilmeli (rampa tek başına yetmez).
-3. **Zincir seçimi / reorg / senkronizasyon yok (YÜKSEK).** Düğüm aynı yükseklikte ilk gördüğü bloğu kalıcı kabul ediyor, eşlerden eksik blokları çekemiyor, aldığı bloğu yaymıyor. Başlık indeksi, en çok birikmiş iş kuralı, onay sayısı ve coinbase olgunluğu gerekli.
-4. **Zorluk ayarlaması yok (KRİTİK).** Hedef ağ parametresinde sabit; LWMA 3'ten sonra. LWMA PR'ına emisyonun takvimden sapma simülasyonu eklenmeli. Bu yapılmadan madencilik döngüsü `main`'e eklenmeyecek.
-5. Madencilik yazma kilidinin dışında yapılmalı (`AddBlock` kazım sırasında zinciri kilitliyor).
-6. DoS: `network/api.go` IPv6 /48 hız sınırı tablosu şişirilebilir; `network/p2p.go` bağlantı yuvaları tüketilebilir.
-7. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek.
+1. **Lansman adilliği:** mainnet başlangıç hedefi gerçekçi hashrate tahminine göre sert seçilmeli (rampa tek başına yetmez).
+2. **Zincir seçimi / reorg / senkronizasyon yok (YÜKSEK).** Düğüm aynı yükseklikte ilk gördüğü bloğu kalıcı kabul ediyor, eşlerden eksik blokları çekemiyor, aldığı bloğu yaymıyor. Başlık indeksi, en çok birikmiş iş kuralı, onay sayısı ve coinbase olgunluğu gerekli. Gelecek tarihli başlık asla "geçersiz" işaretlenmemeli; geçici bekleme kuyruğu (core/pending.go) senkronizasyonla değiştirilmeli.
+3. **Zorluk ayarlaması yok (KRİTİK).** Hedef ağ parametresinde sabit; LWMA 2'den sonra. Negatif çözüm süresi ve önceki bloğa göre geçmiş sınırı LWMA PR'ında karara bağlanmalı. LWMA PR'ına emisyonun takvimden sapma simülasyonu eklenmeli. Bu yapılmadan madencilik döngüsü `main`'e eklenmeyecek.
+4. Madencilik yazma kilidinin dışında yapılmalı (`AddBlock` kazım sırasında zinciri kilitliyor); kazım uzarsa zaman damgası periyodik tazelenmeli, eşler bloğu kabul etmezse madenci uyarılmalı.
+5. DoS: `network/api.go` IPv6 /48 hız sınırı tablosu şişirilebilir; `network/p2p.go` bağlantı yuvaları tüketilebilir.
+6. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek.
 
 Not: şema sürümü değiştiğinde (şu an "3") eski veri dizinleri açılmaz; silinip yeniden başlatılmalı.
 
