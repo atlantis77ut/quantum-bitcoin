@@ -32,6 +32,15 @@ func TestBalanceEndpoint(t *testing.T) {
 	if _, err := bc.AddBlock(nil, kp.Address); err != nil {
 		t.Fatal(err)
 	}
+	other, err := crypto.GenerateQuantumKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < core.RegtestParams.CoinbaseMaturity; i++ { // coinbase olgunlaşsın
+		if _, err := bc.AddBlock(nil, other.Address); err != nil {
+			t.Fatal(err)
+		}
+	}
 	h := NewAPIServer(":0", bc).Handler()
 
 	cases := []struct {

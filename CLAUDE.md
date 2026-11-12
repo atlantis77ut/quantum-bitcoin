@@ -17,7 +17,7 @@ Go ile yazılmış, ML-DSA-65 (liboqs, cgo) imzalı, PoW tabanlı Layer-1 protot
 
 Kapatılanlar (fix/security-hardening): imza ve adres bağı, P2P blok doğrulaması, negatif tutar, aynı blokta çift harcama, replay (hesap nonce'u), atomik yazım, zaman damgası kuralları, P2P başlatma, HTTP sertleştirme, testler + CI.
 
-Kapatılanlar (önkoşul PR'ları): 10^8 taban birim + işlem ücreti (feat/subunit-and-fees); 96 baytlık sabit başlık, SHA256d, Merkle kökü, compact 256 bit hedef (feat/fixed-header); ağ parametreleri (mainnet/testnet/regtest), deterministik genesis, `-network` bayrağı, kimlik ve imza alanının ayrılması (`QBTC-SIG-v3|<ağ>|<genesis özeti>`) (feat/genesis-params); emisyon takvimi `BlockSubsidy`/`SupplyAt` (feat/emission); FTL 300 sn, imzadan önce FTL kontrolü, gelecek tarihli bloklar için sınırlı bekleme kuyruğu (feat/timestamp-rules); blok indeksi, en çok birikmiş iş kuralı, undo kayıtlarıyla atomik reorg, geçersiz dal işaretleme, açılışta kurtarma, derin reorg alarmı (feat/chain-selection).
+Kapatılanlar (önkoşul PR'ları): 10^8 taban birim + işlem ücreti (feat/subunit-and-fees); 96 baytlık sabit başlık, SHA256d, Merkle kökü, compact 256 bit hedef (feat/fixed-header); ağ parametreleri (mainnet/testnet/regtest), deterministik genesis, `-network` bayrağı, kimlik ve imza alanının ayrılması (`QBTC-SIG-v3|<ağ>|<genesis özeti>`) (feat/genesis-params); emisyon takvimi `BlockSubsidy`/`SupplyAt` (feat/emission); FTL 300 sn, imzadan önce FTL kontrolü, gelecek tarihli bloklar için sınırlı bekleme kuyruğu (feat/timestamp-rules); blok indeksi, en çok birikmiş iş kuralı, undo kayıtlarıyla atomik reorg, geçersiz dal işaretleme, açılışta kurtarma, derin reorg alarmı (feat/chain-selection); 240 blok ertelenmiş coinbase ödemesi, olgunlaşan atanın indeksten bulunması (feat/coinbase-maturity).
 
 Kullanıcının verdiği uzlaşma kararları (2026-11-08, `devils-advocate` sonrası):
 - Premine yok; genesis sıfır değerli coinbase + mesajdır, alıcısı mesaj özetinden türetilir.
@@ -34,13 +34,13 @@ Kullanıcının verdiği uzlaşma kararları (2026-11-08, `devils-advocate` sonr
 
 Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-denetimi` ile; yukarıda kararı verilmemiş bir uzlaşma seçimi çıkarsa uygulamadan önce `devils-advocate` ile sına ve kullanıcıya sor):
 1. **Lansman adilliği:** mainnet başlangıç hedefi gerçekçi hashrate tahminine göre sert seçilmeli (rampa tek başına yetmez).
-2. **Coinbase olgunluğu ve senkronizasyon (YÜKSEK).** Zincir seçimi ve reorg kapandı (feat/chain-selection). Kalanlar sırayla: (B) 240 blok ertelenmiş coinbase ödemesi; (C) P2P başlık öncelikli senkronizasyon, blok yayını ve onay sayısı API'si; senkronizasyondan çıkış zaman damgasına bağlı olmamalı. Gelecek tarihli başlık asla "geçersiz" işaretlenmemeli; geçici bekleme kuyruğu (core/pending.go) C ile değiştirilmeli. Sonra işlem süresi alanı.
+2. **Coinbase olgunluğu ve senkronizasyon (YÜKSEK).** Zincir seçimi ve reorg kapandı (feat/chain-selection). Coinbase olgunluğu kapandı (feat/coinbase-maturity; `/balance` yalnızca harcanabilir bakiyeyi gösterir, olgunlaşmamış bakiye API'si yok). Kalan: (C) P2P başlık öncelikli senkronizasyon, blok yayını ve onay sayısı API'si; senkronizasyondan çıkış zaman damgasına bağlı olmamalı. Gelecek tarihli başlık asla "geçersiz" işaretlenmemeli; geçici bekleme kuyruğu (core/pending.go) C ile değiştirilmeli. Sonra işlem süresi alanı.
 3. **Zorluk ayarlaması yok (KRİTİK).** Hedef ağ parametresinde sabit; LWMA 2'den sonra. Negatif çözüm süresi ve önceki bloğa göre geçmiş sınırı LWMA PR'ında karara bağlanmalı. LWMA PR'ına emisyonun takvimden sapma simülasyonu eklenmeli. Bu yapılmadan madencilik döngüsü `main`'e eklenmeyecek.
 4. Madencilik yazma kilidinin dışında yapılmalı (`AddBlock` kazım sırasında zinciri kilitliyor); kazım uzarsa zaman damgası periyodik tazelenmeli, eşler bloğu kabul etmezse madenci uyarılmalı.
 5. DoS: `network/api.go` IPv6 /48 hız sınırı tablosu şişirilebilir; `network/p2p.go` bağlantı yuvaları tüketilebilir.
 6. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek.
 
-Not: şema sürümü değiştiğinde (şu an "4") eski veri dizinleri açılmaz; silinip yeniden başlatılmalı.
+Not: şema sürümü değiştiğinde (şu an "5") eski veri dizinleri açılmaz; silinip yeniden başlatılmalı.
 
 Teknik borç:
 - `/latestblock` tam bloğu döndürüyor (en fazla ~7 MiB); başlık uç noktası ve sayfalama eklenmeli.

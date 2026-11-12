@@ -9,6 +9,8 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
+
+	"quantum-bitcoin/crypto"
 )
 
 // openTestChain dir'de, newTestChain ile aynı saat düzeniyle bir zincir açar.
@@ -46,6 +48,20 @@ func extend(t *testing.T, bc *Blockchain, parent *Block, n int, miner string) []
 		out = append(out, parent)
 	}
 	return out
+}
+
+// prefix genesis üzerine kp'ye bir blok, ardından olgunluk süresince başka adrese boş bloklar
+// kazıp kabul eder: kp'nin ödülü harcanabilir olur. Bloklar replay için döndürülür.
+func prefix(t *testing.T, bc *Blockchain, kp *crypto.KeyPair) []*Block {
+	t.Helper()
+	first := blockOn(t, bc, genesisOf(t, bc), kp.Address)
+	blocks := append([]*Block{first}, extend(t, bc, first, int(bc.params.CoinbaseMaturity), newKey(t).Address)...)
+	mustAccept(t, bc, blocks...)
+	return blocks
+}
+
+func with(pre []*Block, more ...*Block) []*Block {
+	return append(append([]*Block{}, pre...), more...)
 }
 
 func mustAccept(t *testing.T, bc *Blockchain, blocks ...*Block) {
@@ -142,9 +158,9 @@ func TestReorgMatchesReplay(t *testing.T) {
 	dir := t.TempDir()
 	bc := openTestChain(t, dir)
 	alice, bob, carol, dave := newKey(t), newKey(t), newKey(t), newKey(t)
-	g := genesisOf(t, bc)
+	pre := prefix(t, bc, alice)
 
-	a1 := blockOn(t, bc, g, alice.Address)
+	a1 := blockOn(t, bc, pre[len(pre)-1], alice.Address)
 	mustAccept(t, bc, a1)
 	a2 := blockOn(t, bc, a1, alice.Address, signedTxFee(t, alice, bob.Address, 2*Coin, 1, 1))
 	a3 := blockOn(t, bc, a2, carol.Address)
@@ -172,10 +188,11 @@ func TestReorgMatchesReplay(t *testing.T) {
 	if !absent(t, bc, prefixBalance+bob.Address) || !absent(t, bc, prefixBalance+carol.Address) {
 		t.Fatal("kaybeden dalda görünen adres reorg sonrası durumda kaldı")
 	}
-	if n, _ := bc.GetNonce(alice.Address); n != 1 || mustBalance(t, bc, dave.Address) != 3*Coin+3*testReward {
+	// dave'in coinbase'leri henüz olgunlaşmadı; yalnızca aldığı işlem harcanabilir.
+	if n, _ := bc.GetNonce(alice.Address); n != 1 || mustBalance(t, bc, dave.Address) != 3*Coin {
 		t.Fatalf("kazanan dal doğru uygulanmadı (nonce %d)", n)
 	}
-	assertSameState(t, bc, replay(t, bc, a1, b2, b3, b4))
+	assertSameState(t, bc, replay(t, bc, with(pre, a1, b2, b3, b4)...))
 	if bc.DeepReorgAlarm() {
 		t.Fatal("sığ reorg alarm verdi")
 	}
@@ -191,7 +208,7 @@ func TestReorgMatchesReplay(t *testing.T) {
 	if tipHash(t, bc) != a5.Hash || !absent(t, bc, prefixBalance+dave.Address) {
 		t.Fatal("A'ya geri dönülmedi ya da B'nin izi kaldı")
 	}
-	want := replay(t, bc, a1, a2, a3, a4, a5)
+	want := replay(t, bc, with(pre, a1, a2, a3, a4, a5)...)
 	assertSameState(t, bc, want)
 
 	// Yeniden açılış aynı indeksi ve durumu verir.
@@ -208,6 +225,9 @@ func TestReorgMatchesReplay(t *testing.T) {
 	if len(bc2.index) != nIndex || bc2.index[b4.Hash].Status != statusValid || bc2.isMain(bc2.index[b4.Hash]) {
 		t.Fatal("indeks yeniden açılışta korunmadı")
 	}
+	if e := bc2.index[a1.Hash]; e.CbTo != alice.Address || e.CbValue != BlockSubsidy(a1.Index, bc2.params) {
+		t.Fatalf("coinbase bilgisi yeniden açılışta korunmadı: %+v", e)
+	}
 	// Yeniden açılan düğüm zinciri uzatmaya devam edebilir.
 	mustAccept(t, bc2, blockOn(t, bc2, a5, carol.Address))
 }
@@ -216,11 +236,11 @@ func TestReorgMatchesReplay(t *testing.T) {
 func TestLosingBranchTxReincludedOnce(t *testing.T) {
 	bc := newTestChain(t)
 	alice, bob, carol, dave := newKey(t), newKey(t), newKey(t), newKey(t)
-	g := genesisOf(t, bc)
-	a1 := blockOn(t, bc, g, alice.Address)
+	pre := prefix(t, bc, alice)
+	a1 := pre[len(pre)-1]
 	tx := signedTx(t, alice, bob.Address, Coin, 1)
 	a2 := blockOn(t, bc, a1, carol.Address, tx)
-	mustAccept(t, bc, a1, a2)
+	mustAccept(t, bc, a2)
 
 	b2 := blockOn(t, bc, a1, dave.Address, tx)
 	b3 := blockOn(t, bc, b2, dave.Address)
@@ -238,7 +258,7 @@ func TestLosingBranchTxReincludedOnce(t *testing.T) {
 	if tipHash(t, bc) != b3.Hash || mustBalance(t, bc, bob.Address) != Coin {
 		t.Fatal("tekrarlanan işlem durumu değiştirdi")
 	}
-	assertSameState(t, bc, replay(t, bc, a1, b2, b3))
+	assertSameState(t, bc, replay(t, bc, with(pre, b2, b3)...))
 }
 
 // Yeni dalın ortasındaki blok durum kuralını ihlal ederse o blok ve torunları geçersiz
@@ -572,4 +592,124 @@ func TestInvalidBlocksFreeHeightSlots(t *testing.T) {
 	for i := 1; i < MaxBlocksPerHeight; i++ {
 		mustAccept(t, bc, blockOn(t, bc, a1, newKey(t).Address))
 	}
+}
+
+// Olgunluk sınırı: H bloğunun coinbase'i H+M−1'de harcanamaz, H+M'de işlemlerden önce
+// alacaklandırılır ve aynı blokta harcanabilir (ağdan gelen blokta ve yerel madencilikte).
+// Genesis hiçbir zaman alacaklandırılmaz.
+func TestCoinbaseMaturityBoundary(t *testing.T) {
+	m := RegtestParams.CoinbaseMaturity
+	for _, local := range []bool{false, true} {
+		bc := newTestChain(t)
+		miner, bob, other := newKey(t), newKey(t), newKey(t)
+		g := genesisOf(t, bc)
+		b1 := blockOn(t, bc, g, miner.Address)
+		mustAccept(t, bc, b1)
+		tip := b1
+		for _, b := range extend(t, bc, b1, int(m-2), other.Address) {
+			mustAccept(t, bc, b)
+			tip = b
+		}
+		// H+M−1: ödül henüz harcanamaz.
+		early := blockOn(t, bc, tip, other.Address, signedTx(t, miner, bob.Address, Coin, 1))
+		if err := bc.AcceptBlock(early); !errors.Is(err, ErrInsufficientBal) {
+			t.Fatalf("olgunlaşmamış coinbase harcandı: %v", err)
+		}
+		tip = blockOn(t, bc, tip, other.Address)
+		mustAccept(t, bc, tip)
+		if tip.Index != m || !absent(t, bc, prefixBalance+miner.Address) {
+			t.Fatalf("yükseklik %d: coinbase olgunlaşmadan alacaklandırıldı", tip.Index)
+		}
+		spend := signedTx(t, miner, bob.Address, Coin, 1)
+		if local {
+			mined, err := bc.AddBlock([]Transaction{spend}, other.Address)
+			if err != nil || len(mined.Transactions) != 2 {
+				t.Fatalf("yerel madenci olgunlaşan parayı harcayan işlemi almadı: %v", err)
+			}
+		} else {
+			mustAccept(t, bc, blockOn(t, bc, tip, other.Address, spend))
+		}
+		if mustBalance(t, bc, miner.Address) != BlockSubsidy(1, bc.params)-Coin || mustBalance(t, bc, bob.Address) != Coin {
+			t.Fatal("olgunlaşan coinbase doğru alacaklandırılmadı")
+		}
+		if !absent(t, bc, prefixBalance+RegtestParams.GenesisReceiver()) {
+			t.Fatal("genesis alıcısına bakiye yazıldı")
+		}
+	}
+}
+
+// Olgunluk sınırını aşan reorg: çatal H'nin altında; yeni dalın H bloğunu başka madenci
+// kazdı. Olgunlaşan ödül kazanan dalın madencisine gider, kaybedeninki geri alınır; geri
+// dönüşte tersi olur. Ata bc.main'den değil indeksten bulunmalı (aksi halde yanlış madenci).
+func TestReorgAcrossMaturity(t *testing.T) {
+	bc := newTestChain(t)
+	m := int(bc.params.CoinbaseMaturity)
+	minerA, minerB, other := newKey(t), newKey(t), newKey(t)
+	g := genesisOf(t, bc)
+
+	a := []*Block{blockOn(t, bc, g, minerA.Address)}
+	a = append(a, extend(t, bc, a[0], m, other.Address)...) // yükseklik m+1: A1 olgun
+	mustAccept(t, bc, a...)
+	reward := BlockSubsidy(1, bc.params)
+	if mustBalance(t, bc, minerA.Address) != reward {
+		t.Fatal("A1 olgunlaşmadı")
+	}
+
+	b := []*Block{blockOn(t, bc, g, minerB.Address)}
+	b = append(b, extend(t, bc, b[0], m+1, other.Address)...) // bir blok daha uzun
+	mustAccept(t, bc, b...)
+	if tipHash(t, bc) != b[len(b)-1].Hash {
+		t.Fatal("B dalına geçilmedi")
+	}
+	if !absent(t, bc, prefixBalance+minerA.Address) || mustBalance(t, bc, minerB.Address) != reward {
+		t.Fatal("olgunlaşan ödül reorg'da doğru madenciye geçmedi")
+	}
+	assertSameState(t, bc, replay(t, bc, b...))
+
+	a = append(a, extend(t, bc, a[len(a)-1], 2, other.Address)...)
+	mustAccept(t, bc, a[len(a)-2:]...)
+	if tipHash(t, bc) != a[len(a)-1].Hash || mustBalance(t, bc, minerA.Address) != reward ||
+		!absent(t, bc, prefixBalance+minerB.Address) {
+		t.Fatal("A'ya geri dönüşte olgun ödül geri alınmadı")
+	}
+	assertSameState(t, bc, replay(t, bc, a...))
+}
+
+// Yalnızca H+M bloğunu geri saran reorg olgunluk alacağını geri alır: yeni dalda aynı
+// yükseklik yeniden alacaklandırır, öncesinde ise bakiye yoktur.
+func TestMaturityCreditRolledBack(t *testing.T) {
+	bc := newTestChain(t)
+	m := int(bc.params.CoinbaseMaturity)
+	miner := newKey(t)
+	g := genesisOf(t, bc)
+	main := []*Block{blockOn(t, bc, g, miner.Address)}
+	main = append(main, extend(t, bc, main[0], m, newKey(t).Address)...) // son blok A1'i olgunlaştırır
+	mustAccept(t, bc, main...)
+	fork := main[m-1] // yükseklik m: A1 henüz olgun değil
+
+	bc.mu.Lock()
+	ov := newOverlay(bc)
+	for _, u := range mustUndo(t, bc, main[m].Hash) {
+		ov.set(u.Key, u.Prev)
+	}
+	bc.mu.Unlock()
+	if _, ok, _ := ov.getRaw(prefixBalance + miner.Address); ok {
+		t.Fatal("H+M bloğunun undo kaydı olgunluk alacağını geri almıyor")
+	}
+
+	alt := extend(t, bc, fork, 2, newKey(t).Address)
+	mustAccept(t, bc, alt...)
+	if tipHash(t, bc) != alt[1].Hash || mustBalance(t, bc, miner.Address) != BlockSubsidy(1, bc.params) {
+		t.Fatal("yeni dal olgun ödülü bir kez alacaklandırmadı")
+	}
+	assertSameState(t, bc, replay(t, bc, with(main[:m], alt...)...))
+}
+
+func mustUndo(t *testing.T, bc *Blockchain, hash string) []undoItem {
+	t.Helper()
+	u, err := bc.loadUndo(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }

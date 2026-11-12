@@ -25,6 +25,10 @@ type Params struct {
 	TailSubsidy     int64 // kuyruk emisyonu: yarılanmış ödülün altına inemeyeceği taban
 	HalvingInterval int64 // yarılanma aralığı, blok
 	SlowStartBlocks int64 // ödülün 0'dan InitialSubsidy'ye doğrusal yükseldiği ilk blok sayısı
+
+	// CoinbaseMaturity: H bloğunun ödülü + ücretleri H+CoinbaseMaturity bloğu bağlanırken
+	// alacaklandırılır (ertelenmiş ödeme). Değer TargetSpacing'den türetilir (~4 saat).
+	CoinbaseMaturity int64
 }
 
 // 60 sn blok süresi için emisyon (kullanıcı kararı, 2026-11-08): 5 QBTC ilk ödül,
@@ -38,6 +42,9 @@ const (
 	referenceTailSubsidy     int64 = Coin / 10
 	referenceHalvingInterval int64 = 2_100_000
 	referenceSlowStartBlocks int64 = 20_000
+
+	// Coinbase olgunluğu (kullanıcı kararı, 2026-11-08): 60 sn'de 240 blok (~4 saat).
+	referenceCoinbaseMaturity int64 = 240
 )
 
 // withEmission emisyon değerlerini p.TargetSpacing'den türetir. Ölçekleme tam bölünmüyorsa
@@ -47,13 +54,15 @@ func withEmission(p *Params) *Params {
 	if s <= 0 || referenceInitialSubsidy*s%referenceSpacing != 0 ||
 		referenceTailSubsidy*s%referenceSpacing != 0 ||
 		referenceHalvingInterval*referenceSpacing%s != 0 ||
-		referenceSlowStartBlocks*referenceSpacing%s != 0 {
+		referenceSlowStartBlocks*referenceSpacing%s != 0 ||
+		referenceCoinbaseMaturity*referenceSpacing%s != 0 {
 		panic(fmt.Sprintf("%s: blok süresi %d sn emisyonu tam ölçeklemiyor", p.Name, s))
 	}
 	p.InitialSubsidy = referenceInitialSubsidy * s / referenceSpacing
 	p.TailSubsidy = referenceTailSubsidy * s / referenceSpacing
 	p.HalvingInterval = referenceHalvingInterval * referenceSpacing / s
 	p.SlowStartBlocks = referenceSlowStartBlocks * referenceSpacing / s
+	p.CoinbaseMaturity = referenceCoinbaseMaturity * referenceSpacing / s
 	return p
 }
 
@@ -76,6 +85,8 @@ func (p *Params) Validate() error {
 		return fmt.Errorf("%w: %s yarılanma aralığı %d", ErrBadParams, p.Name, p.HalvingInterval)
 	case p.SlowStartBlocks < 0 || p.SlowStartBlocks > maxSlowStart || p.SlowStartBlocks >= p.HalvingInterval:
 		return fmt.Errorf("%w: %s başlangıç rampası %d", ErrBadParams, p.Name, p.SlowStartBlocks)
+	case p.CoinbaseMaturity < 1:
+		return fmt.Errorf("%w: %s coinbase olgunluğu %d", ErrBadParams, p.Name, p.CoinbaseMaturity)
 	}
 	return nil
 }
@@ -103,7 +114,8 @@ var (
 	// RegtestParams: yerel geliştirme ve testler için en kolay hedef (powLimit'e yakın).
 	// Yalnızca testler içindir: ilk ödül 50 QBTC (mevcut tutar testleri bu ölçekte yazılı),
 	// yarılanma 150 blokta bir ve rampa yok; testler dönem ve kuyruk geçişlerini (1350.
-	// blok) kısa zincirde görebilsin. Mainnet/testnet emisyonu bundan etkilenmez.
+	// blok) kısa zincirde görebilsin. Coinbase olgunluğu 3 blok: testler sınırı ve olgunluğu
+	// aşan reorg'ları kısa zincirde sınayabilsin. Mainnet/testnet bundan etkilenmez.
 	RegtestParams = regtestEmission(withEmission(&Params{
 		Name:             "regtest",
 		Bits:             0x200fffff,
@@ -119,6 +131,7 @@ func regtestEmission(p *Params) *Params {
 	p.InitialSubsidy = 50 * Coin
 	p.HalvingInterval = 150
 	p.SlowStartBlocks = 0
+	p.CoinbaseMaturity = 3
 	return p
 }
 

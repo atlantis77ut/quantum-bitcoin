@@ -27,6 +27,10 @@ func TestFeeGoesToMiner(t *testing.T) {
 	if got := mustBalance(t, bc, bob.Address); got != 10*Coin {
 		t.Fatalf("bob bakiyesi %d", got)
 	}
+	if got := mustBalance(t, bc, miner.Address); got != 0 {
+		t.Fatalf("olgunlaşmamış madenci bakiyesi %d", got)
+	}
+	mature(t, bc)
 	if got := mustBalance(t, bc, miner.Address); got != testReward+fee {
 		t.Fatalf("madenci bakiyesi %d", got)
 	}
@@ -47,6 +51,7 @@ func TestAcceptsBlockWithCorrectFeeClaim(t *testing.T) {
 	if err := bc.AcceptBlock(b); err != nil {
 		t.Fatalf("geçerli blok reddedildi: %v", err)
 	}
+	mature(t, bc)
 	if got := mustBalance(t, bc, miner.Address); got != testReward+5 {
 		t.Fatalf("madenci bakiyesi %d", got)
 	}

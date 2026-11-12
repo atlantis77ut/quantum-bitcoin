@@ -107,7 +107,7 @@ func TestSubsidyMonotonicWithTailFloor(t *testing.T) {
 func TestEmissionParams(t *testing.T) {
 	for _, p := range []*Params{MainnetParams, TestnetParams} {
 		if p.TargetSpacing != 60 || p.InitialSubsidy != 5*Coin || p.TailSubsidy != Coin/10 ||
-			p.HalvingInterval != 2_100_000 || p.SlowStartBlocks != 20_000 {
+			p.HalvingInterval != 2_100_000 || p.SlowStartBlocks != 20_000 || p.CoinbaseMaturity != 240 {
 			t.Errorf("%s emisyonu kararla uyuşmuyor: %+v", p.Name, p)
 		}
 	}
@@ -120,7 +120,7 @@ func TestEmissionParams(t *testing.T) {
 	// 30 sn: ödüller yarıya, aralıklar iki katına; zamana göre eğri aynı kalır.
 	p30 := withEmission(&Params{Name: "p30", TargetSpacing: 30})
 	if p30.InitialSubsidy != 5*Coin/2 || p30.TailSubsidy != Coin/20 ||
-		p30.HalvingInterval != 4_200_000 || p30.SlowStartBlocks != 40_000 {
+		p30.HalvingInterval != 4_200_000 || p30.SlowStartBlocks != 40_000 || p30.CoinbaseMaturity != 480 {
 		t.Errorf("30 sn türetimi: %+v", p30)
 	}
 	func() {
@@ -141,6 +141,7 @@ func TestEmissionParams(t *testing.T) {
 		func(p *Params) { p.SlowStartBlocks = -1 },
 		func(p *Params) { p.SlowStartBlocks = p.HalvingInterval },
 		func(p *Params) { p.TargetSpacing = 0 },
+		func(p *Params) { p.CoinbaseMaturity = 0 },
 	}
 	for i, mut := range bad {
 		p := *RegtestParams
@@ -178,9 +179,10 @@ func TestChainFollowsSchedule(t *testing.T) {
 			t.Fatalf("h=%d coinbase %d, beklenen %d", h, b.Transactions[0].Amount, BlockSubsidy(h, &p))
 		}
 	}
-	want, _ := SupplyAt(30, &p)
+	// Harcanabilir toplam: olgunlaşmış bloklarınki (son CoinbaseMaturity blok henüz değil).
+	want, _ := SupplyAt(30-p.CoinbaseMaturity, &p)
 	if got := mustBalance(t, bc, miner.Address); got != want {
-		t.Fatalf("toplam arz %d, beklenen %d", got, want)
+		t.Fatalf("olgun arz %d, beklenen %d", got, want)
 	}
 
 	// Yükseklik 31 üçüncü dönemde (ödül InitialSubsidy/4): ilk dönem ödülünü isteyen blok.
