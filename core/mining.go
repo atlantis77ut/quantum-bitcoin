@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 
 	"quantum-bitcoin/crypto"
 )
@@ -24,8 +23,8 @@ var (
 	ErrMiningStopped = errors.New("kazım durduruldu")
 )
 
-// mineChunk zaman damgası tazelenmeden, durdurma ve uç değişimi denetlenmeden önce
-// denenen nonce sayısıdır (~birkaç ms; testler küçültür).
+// mineChunk zaman damgası tazelenmeden, durdurma ve uç değişimi denetlenmeden önce her
+// iş parçacığının denediği nonce sayısıdır (~birkaç ms; testler küçültür).
 const mineChunk = 1 << 16
 
 // Template ucun üzerine kurulmuş, kazılmaya hazır bir bloktur.
@@ -123,9 +122,11 @@ func (bc *Blockchain) minerTime(mtp int64, warn bool) int64 {
 	return ts
 }
 
-// Mine şablonu zincir kilidi tutmadan kazar. Her mineChunk denemede bir durdurma ve uç
-// değişimi denetlenir ve zaman damgası yerel saate tazelenir: uzun kazımda blok eskimiş
-// damgayla (eşlerin medyanına göre geride) üretilmez. stop nil olabilir.
+// Mine şablonu zincir kilidi tutmadan, mineWorkerCount iş parçacığıyla kazar. Her turda
+// parçacıklar ardışık mineChunk'lık nonce dilimlerini tarar; turlar arasında koordinatör
+// parçacık durdurmayı ve uç değişimini denetler ve zaman damgasını yerel saate tazeler: uzun
+// kazımda blok eskimiş damgayla (eşlerin medyanına göre geride) üretilmez. Bir turdaki tüm
+// parçacıklar aynı damgayla kazar ve tur bitmeden dönülmez. stop nil olabilir.
 func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
 	b := *t.Block // şablon değişmez; tekrar kazılabilir
 	target, err := TargetFromBits(b.Bits)
@@ -136,11 +137,13 @@ func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
 	if !ok {
 		return nil, ErrBadHash
 	}
-	v := new(big.Int)
+	tgt := targetBytes(target)
 	chunk := bc.mineChunk
 	if chunk <= 0 {
 		chunk = mineChunk
 	}
+	workers := bc.mineWorkerCount()
+	round := uint64(chunk) * uint64(workers)
 	for nonce, first := uint64(0), true; ; first = false {
 		if bc.mineHook != nil {
 			bc.mineHook()
@@ -159,16 +162,13 @@ func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
 			b.Timestamp = ts
 			binary.BigEndian.PutUint64(hdr[20:28], uint64(ts))
 		}
-		for end := nonce + uint64(chunk); nonce != end; nonce++ {
-			binary.BigEndian.PutUint64(hdr[0:8], nonce)
-			h := hashHeader(hdr[:])
-			if v.SetBytes(h[:]).Cmp(target) <= 0 {
-				b.Nonce = nonce
-				b.Hash = hex.EncodeToString(h[:])
-				return &b, nil
-			}
+		if n, h, ok := mineRound(hdr, nonce, uint64(chunk), workers, &tgt); ok {
+			b.Nonce = n
+			b.Hash = hex.EncodeToString(h[:])
+			return &b, nil
 		}
-		if nonce == 0 { // 2^64 nonce tükendi: yeni zaman damgası beklenir
+		var more bool
+		if nonce, more = nextRound(nonce, round); !more { // 2^64 nonce tükendi
 			return nil, ErrStaleTemplate
 		}
 	}

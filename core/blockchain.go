@@ -86,9 +86,10 @@ type Blockchain struct {
 	deepReorg *DeepReorgRecord    // nil değilse kalıcı derin reorg alarmı (bkz. reorgalarm.go)
 	syncAllow map[string]struct{} // yan zincir sınırı uygulanmayacak bloklar (bkz. sync.go)
 
-	mineChunk  int          // kazımda denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
-	mineHook   func()       // testler için: her nonce diliminden önce çağrılır
-	bodyChecks atomic.Int64 // checkBody çağrı sayısı; testler imza doğrulamasının tekrarlanmadığını ölçer
+	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
+	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır
+	mineWorkers atomic.Int64 // kazım iş parçacığı sayısı; 0 ise DefaultMineWorkers (bkz. minerworkers.go)
+	bodyChecks  atomic.Int64 // checkBody çağrı sayısı; testler imza doğrulamasının tekrarlanmadığını ölçer
 }
 
 // NewBlockchain verilen ağ için veritabanını açar; zincir boşsa ağın sabit genesis bloğunu

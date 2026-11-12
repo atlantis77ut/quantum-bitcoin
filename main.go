@@ -29,6 +29,8 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
 	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
 	clearAlarm := flag.Bool("clear-reorg-alarm", false, "Kalıcı derin reorg alarmını temizler ve çıkar (olay incelendikten sonra)")
+	mineThreads := flag.Int("mine-threads", 0, "Kazım iş parçacığı sayısı (0: tüm çekirdekler)")
+	benchHashrate := flag.Duration("bench-hashrate", 0, "Q-BTC başlığında hashrate'i bu süre ölçer, yazdırır ve çıkar (ör. 30s)")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -44,6 +46,29 @@ func main() {
 		slog.Error("ağ seçilemedi", "err", err)
 		os.Exit(2)
 	}
+	threads := *mineThreads
+	if threads == 0 {
+		threads = core.DefaultMineWorkers()
+	}
+	if threads < 1 || threads > core.MaxMineWorkers {
+		slog.Error("geçersiz kazım iş parçacığı sayısı", "mine-threads", *mineThreads, "en_cok", core.MaxMineWorkers)
+		os.Exit(2)
+	}
+	if *benchHashrate != 0 {
+		// Ölçüm kazımla aynı döngüyü kullanır; zincir açılmaz. Lansmanda açıklanan hashrate
+		// aynı komutla yeniden üretilebilir (docs/MAINNET-ONCESI.md madde 6a).
+		rate, err := core.MeasureHashrate(threads, *benchHashrate)
+		if err != nil {
+			slog.Error("hashrate ölçülemedi", "err", err)
+			os.Exit(2)
+		}
+		args := []any{"network", params.Name, "is_parcacigi", threads, "sure", benchHashrate.String(), "hash_per_sn", rate}
+		if bits, err := core.BitsForHashrate(rate, params.TargetSpacing, params.PowLimitBits); err == nil {
+			args = append(args, "bu_hashrate_icin_bits", fmt.Sprintf("0x%08x", bits))
+		}
+		slog.Info("hashrate ölçümü", args...)
+		return
+	}
 	if *dbPath == "" {
 		*dbPath = "qbtc_" + params.Name + "_db"
 	}
@@ -57,6 +82,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer bc.Close()
+	if err := bc.SetMineWorkers(threads); err != nil {
+		slog.Error("kazım iş parçacığı sayısı ayarlanamadı", "err", err)
+		os.Exit(2)
+	}
 	if *clearAlarm {
 		rec, err := bc.ClearDeepReorgAlarm()
 		if err != nil {
@@ -99,7 +128,7 @@ func main() {
 			slog.Error("geçersiz kazım adresi", "address", *mineTo)
 			os.Exit(2)
 		}
-		slog.Info("kazım başlıyor", "address", *mineTo, "network", params.Name)
+		slog.Info("kazım başlıyor", "address", *mineTo, "network", params.Name, "is_parcacigi", threads)
 		go miner.Run(stopMining)
 	}
 
