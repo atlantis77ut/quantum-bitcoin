@@ -76,13 +76,13 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 - Aynı reorg ile birden çok borsada aynı anda çift harcama yapılabilir. Bu yüzden eşik, tek bir borsadaki yatırıma göre değil, ağdaki olası toplam açığa göre düşünülmelidir.
 - Bekleme süresi ve iş, bu kârın negatif kalacağı kadar olmalıdır. Kârın negatif kalmadığı tutarlarda hiçbir onay eşiği yeterli değildir.
 
-**`/confirmations` göstergelerini birlikte kullanın.** Dört alan birlikte değerlendirilmelidir:
+**`/confirmations` göstergelerini birlikte kullanın.** Şu alanlar birlikte değerlendirilmelidir:
 - `confirmations`: blok sayısı.
 - `work` / `work_in_start_blocks`: birikmiş iş.
 - `elapsed_seconds`: medyan zamanla geçen süre. Son 11 bloğun çoğunu kazan biri bu değeri en çok 300 sn şişirebilir.
 
 **Alarmları doğru okuyun.** `deep_reorg_alarm` ya da `below_min_chain_work` true ise hiçbir onaya güvenmeyin. Ama **alarmın false olması güvenli olduğunuz anlamına gelmez**:
-- Derin reorg alarmı 120 bloktan (hedef blok süresinde ~2 saat) derin reorg'da kalıcı olarak açılır. Eşik süreye değil blok sayısına bağlıdır: hashrate çökerse 120 blok çok daha uzun sürer, taban zorluğunda bir blok selinde dakikalar içinde dolar.
+- Derin reorg alarmı ~2 saatlik blok sayısından (`TargetSpacing`'den: 60 sn'de 120, 30 sn'de 240 blok) derin reorg'da kalıcı olarak açılır. Eşik süreye değil blok sayısına bağlıdır: hashrate çökerse bu kadar blok çok daha uzun sürer, taban zorluğunda bir blok selinde dakikalar içinde dolar.
 - Tipik bir çift harcama yalnızca borsanın onay derinliğini geri sarar, bu yüzden alarmı hiç tetiklemez.
 - Eşiğin altındaki art arda reorg'lar sayılmaz.
 - Alarm saldırıdan sonra çalar, saldırıyı önlemez.
