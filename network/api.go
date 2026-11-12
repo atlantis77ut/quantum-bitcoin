@@ -35,6 +35,11 @@ const (
 	// sayar, bayt saymaz, yanıt boyutunu bu sınır belirler).
 	defaultHeadersCount = 100
 	maxHeadersCount     = 500
+
+	// /block işlem sayfası: varsayılan ve en çok (ML-DSA-65 işlemi JSON'da ~7,5 KiB;
+	// 200 işlem ~1,5 MiB).
+	defaultBlockTxLimit = 50
+	maxBlockTxLimit     = 200
 )
 
 type APIServer struct {
@@ -87,6 +92,10 @@ func (api *APIServer) Handler() http.Handler {
 	// Ana zincir başlıkları, yükseklik sırasıyla sayfalı.
 	// Kullanım: GET /headers?from=<yükseklik>[&count=<1..500, varsayılan 100>]
 	mux.HandleFunc("/headers", getOnly(api.handleHeaders))
+	// Ana zincirdeki bir bloğun başlığı ve işlemleri, sayfalı; txid verilirse yalnızca o işlem.
+	// Kullanım: GET /block?hash=<64 hex> | ?height=<yükseklik>
+	//           [&offset=<0..>][&limit=<1..200, varsayılan 50>] | [&txid=<64 hex>]
+	mux.HandleFunc("/block", getOnly(api.handleBlock))
 	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm true ise onaylara
 	// güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
@@ -224,6 +233,109 @@ func (api *APIServer) handleHeaders(w http.ResponseWriter, r *http.Request) {
 		"tip_height": tipHeight,
 		"tip_hash":   tipHash,
 		"headers":    hdrs,
+	})
+}
+
+// blockTx bir bloktaki işlemin kimliği ve blok içi sırasıyla birlikte gösterimidir.
+type blockTx struct {
+	TxID  string `json:"txid"`
+	Index int    `json:"index"`
+	core.Transaction
+}
+
+// handleBlock ana zincirdeki bir bloğun başlığını ve işlemlerinin bir sayfasını döndürür.
+// Blok hash ya da height ile (ikisi birden değil) seçilir. confirmations blokla aynı anlık
+// görüntüdendir; sayfalar arasında reorg olabilir: istemci her sayfada header.hash'in
+// değişmediğini denetlemeli (height ile sorguda özellikle) ve yatırım onayı için
+// /confirmations kullanmalıdır. offset işlem sayısından büyükse liste boştur. txid verilirse
+// yalnızca o işlem döner (blokta yoksa 404). Blok her istekte diskten okunur.
+func (api *APIServer) handleBlock(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	hash, heightStr := q.Get("hash"), q.Get("height")
+	if (hash == "") == (heightStr == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hash ya da height parametrelerinden tam biri verilmeli"})
+		return
+	}
+	offset, limit := 0, defaultBlockTxLimit
+	if s := q.Get("offset"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz offset parametresi"})
+			return
+		}
+		offset = n
+	}
+	if s := q.Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > maxBlockTxLimit {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit 1 ile 200 arasında olmalı"})
+			return
+		}
+		limit = n
+	}
+	txid := q.Get("txid")
+	if txid != "" && !core.IsHashHex(txid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz txid parametresi"})
+		return
+	}
+	if txid != "" && (q.Get("offset") != "" || q.Get("limit") != "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "txid, offset/limit ile birlikte verilemez"})
+		return
+	}
+
+	var b *core.Block
+	var confirmations int64
+	var err error
+	if hash != "" {
+		if !core.IsHashHex(hash) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz hash parametresi"})
+			return
+		}
+		b, confirmations, err = api.Blockchain.MainBlockByHash(hash)
+	} else {
+		height, perr := strconv.ParseInt(heightStr, 10, 64)
+		if perr != nil || height < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz height parametresi"})
+			return
+		}
+		b, confirmations, err = api.Blockchain.MainBlockByHeight(height)
+	}
+	if errors.Is(err, core.ErrUnknownBlock) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "blok ana zincirde değil"})
+		return
+	}
+	if err != nil {
+		api.log.Error("blok okunamadı", "hash", hash, "height", heightStr, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+
+	txs := []blockTx{} // JSON'da null değil []
+	if txid != "" {
+		for i := range b.Transactions {
+			if id := b.Transactions[i].ID(); id == txid {
+				txs = append(txs, blockTx{TxID: id, Index: i, Transaction: b.Transactions[i]})
+				break
+			}
+		}
+		if len(txs) == 0 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "işlem bu blokta değil"})
+			return
+		}
+		offset = txs[0].Index
+	} else {
+		for i := offset; i < len(b.Transactions) && len(txs) < limit; i++ {
+			txs = append(txs, blockTx{TxID: b.Transactions[i].ID(), Index: i, Transaction: b.Transactions[i]})
+		}
+	}
+	header := core.BlockHeader{Version: b.Version, Index: b.Index, Timestamp: b.Timestamp, PrevHash: b.PrevHash,
+		MerkleRoot: b.MerkleRoot, Bits: b.Bits, Nonce: b.Nonce, Hash: b.Hash}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"header":        header,
+		"confirmations": confirmations,
+		"tx_count":      len(b.Transactions),
+		"offset":        offset,
+		"transactions":  txs,
 	})
 }
 
