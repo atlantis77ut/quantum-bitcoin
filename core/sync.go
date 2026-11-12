@@ -228,7 +228,7 @@ func (bc *Blockchain) MainBlockByHeight(height int64) (*Block, int64, error) {
 }
 
 func (bc *Blockchain) mainBlockLocked(e *indexEntry) (*Block, int64, error) {
-	b, err := bc.getBlock(e.Hash)
+	b, err := bc.cachedBlockLocked(e.Hash) // gövde önbellekten olabilir; salt okunur
 	if err != nil {
 		return nil, 0, err
 	}

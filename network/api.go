@@ -246,7 +246,8 @@ type blockTx struct {
 // görüntüdendir; sayfalar arasında reorg olabilir: istemci her sayfada header.hash'in
 // değişmediğini denetlemeli (height ile sorguda özellikle) ve yatırım onayı için
 // /confirmations kullanmalıdır. offset işlem sayısından büyükse liste boştur. txid verilirse
-// yalnızca o işlem döner (blokta yoksa 404). Blok her istekte diskten okunur.
+// yalnızca o işlem döner (blokta yoksa 404). Gövde son blokların önbelleğinden ya da diskten
+// okunur (core/blockcache.go).
 func (api *APIServer) handleBlock(w http.ResponseWriter, r *http.Request) {
 	api.serveBlock(w, r, false)
 }
