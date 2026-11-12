@@ -356,6 +356,7 @@ func (bc *Blockchain) activateLocked(target *indexEntry) error {
 	invalid := new(leveldb.Batch) // geçersizlik işaretleri, geçiş olsa da olmasa da yazılır
 	newTip := fork
 	var connected []*indexEntry
+	var txPuts []txIndexPut // bağlanan blokların işlem indeksi kayıtları (txindex.go)
 	var failErr error
 	for _, e := range branch {
 		b, err := bc.getBlock(e.Hash)
@@ -386,6 +387,11 @@ func (bc *Blockchain) activateLocked(target *indexEntry) error {
 			return err
 		}
 		batch.Put([]byte(prefixUndo+e.Hash), data)
+		puts, err := blockTxPuts(b)
+		if err != nil {
+			return err
+		}
+		txPuts = append(txPuts, puts...)
 		connected = append(connected, e)
 		newTip = e
 	}
@@ -405,6 +411,18 @@ func (bc *Blockchain) activateLocked(target *indexEntry) error {
 	}
 	for h := newTip.Height + 1; h <= bc.tip.Height; h++ {
 		batch.Delete([]byte(heightKey(h)))
+	}
+	// İşlem indeksi: önce geri sarılanlar silinir, sonra bağlananlar yazılır (iki dalda da
+	// bulunan işlemde yeni dal kazanır; txindex.go).
+	for _, e := range disconnected {
+		b, err := bc.getBlock(e.Hash)
+		if err != nil {
+			return err
+		}
+		deleteBlockTxs(batch, b)
+	}
+	for _, p := range txPuts {
+		batch.Put(p.key, p.value)
 	}
 	for _, e := range connected {
 		batch.Put([]byte(heightKey(e.Height)), []byte(e.Hash))

@@ -96,6 +96,11 @@ func (api *APIServer) Handler() http.Handler {
 	// Kullanım: GET /block?hash=<64 hex> | ?height=<yükseklik>
 	//           [&offset=<0..>][&limit=<1..200, varsayılan 50>] | [&txid=<64 hex>]
 	mux.HandleFunc("/block", getOnly(api.handleBlock))
+	// Ana zincirdeki bir işlem, blok özeti, yüksekliği, blok içi sırası ve onay sayısıyla. Yatırım
+	// onayı için block_hash ile /confirmations kullanılmalıdır (iş ve zaman eşikleri, reorg
+	// alarmı). Havuzdaki (onaylanmamış) işlemler burada görünmez.
+	// Kullanım: GET /transaction?id=<64 hex işlem kimliği>
+	mux.HandleFunc("/transaction", getOnly(api.handleTransaction))
 	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm true ise onaylara
 	// güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
@@ -348,6 +353,33 @@ func (api *APIServer) serveBlock(w http.ResponseWriter, r *http.Request, latest 
 		"tx_count":      len(b.Transactions),
 		"offset":        offset,
 		"transactions":  txs,
+	})
+}
+
+// handleTransaction ana zincirdeki bir işlemi işlem indeksinden döndürür (core/txindex.go).
+func (api *APIServer) handleTransaction(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if !core.IsHashHex(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik id parametresi"})
+		return
+	}
+	b, pos, confirmations, err := api.Blockchain.TxByID(id)
+	if errors.Is(err, core.ErrUnknownTx) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "işlem ana zincirde değil"})
+		return
+	}
+	if err != nil {
+		api.log.Error("işlem okunamadı", "txid", id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"txid":          id,
+		"block_hash":    b.Hash,
+		"height":        b.Index,
+		"index":         pos,
+		"confirmations": confirmations,
+		"transaction":   b.Transactions[pos],
 	})
 }
 

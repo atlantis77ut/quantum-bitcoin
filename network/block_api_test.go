@@ -195,3 +195,64 @@ func TestLatestBlockEndpoint(t *testing.T) {
 		t.Fatalf("yeni uç %+v", q.Header)
 	}
 }
+
+// /transaction ana zincirdeki işlemi blok özeti, yükseklik, sıra ve onay sayısıyla döndürür.
+func TestTransactionEndpoint(t *testing.T) {
+	bc := newChain(t)
+	from := fundKey(t, bc)
+	ps := NewP2PServer(":0", bc)
+	tx := policyTx(t, ps.Mempool, from, 7)
+	if _, err := ps.Mempool.Add(tx); err != nil {
+		t.Fatal(err)
+	}
+	txs, err := ps.Mempool.Select(core.MaxTxPerBlock)
+	if err != nil || len(txs) != 1 {
+		t.Fatalf("havuz seçimi: %d %v", len(txs), err)
+	}
+	blk, err := bc.AddBlock(txs, minerAddr(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mineN(t, bc, 1)
+
+	h := NewAPIServer(":0", bc).Handler()
+	get := func(url string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))
+		return rec
+	}
+	var got struct {
+		TxID          string           `json:"txid"`
+		BlockHash     string           `json:"block_hash"`
+		Height        int64            `json:"height"`
+		Index         int              `json:"index"`
+		Confirmations int64            `json:"confirmations"`
+		Transaction   core.Transaction `json:"transaction"`
+	}
+	rec := get("/transaction?id=" + tx.ID())
+	if rec.Code != http.StatusOK || json.NewDecoder(rec.Body).Decode(&got) != nil {
+		t.Fatalf("işlem = %d %s", rec.Code, rec.Body.String())
+	}
+	if got.TxID != tx.ID() || got.BlockHash != blk.Hash || got.Height != blk.Index || got.Index != 1 ||
+		got.Confirmations != 2 || got.Transaction.ID() != tx.ID() || got.Transaction.Amount != 7 {
+		t.Fatalf("işlem yanıtı %+v", got)
+	}
+	for _, c := range []struct {
+		url  string
+		code int
+	}{
+		{"/transaction", http.StatusBadRequest},
+		{"/transaction?id=zz", http.StatusBadRequest},
+		{"/transaction?id=" + strings.ToUpper(tx.ID()), http.StatusBadRequest},
+		{"/transaction?id=" + strings.Repeat("0", 64), http.StatusNotFound},
+	} {
+		if rec := get(c.url); rec.Code != c.code {
+			t.Errorf("%s = %d, beklenen %d", c.url, rec.Code, c.code)
+		}
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/transaction?id="+tx.ID(), nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /transaction = %d", rec.Code)
+	}
+}
