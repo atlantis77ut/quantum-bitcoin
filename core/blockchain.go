@@ -76,6 +76,8 @@ type Blockchain struct {
 	log      *slog.Logger
 	now      func() int64 // testlerde saat sabitlemek için
 	rejected rejectCache
+	// blockCache yalnızca API'nin gövde okumaları içindir (bkz. blockcache.go); kendi kilidi vardır.
+	blockCache *blockCache
 
 	// Blok indeksi (bkz. chain.go). Hepsi mu ile korunur.
 	index     map[string]*indexEntry // özet → indeks kaydı (ana ve yan bloklar)
@@ -124,6 +126,8 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 		perHeight: map[int64]int{},
 		main:      map[int64]string{},
 		syncAllow: map[string]struct{}{},
+
+		blockCache: newBlockCache(blockCacheMaxEntries, blockCacheMaxBytes),
 	}
 	// Kodda üretilen genesis, sabitlenmiş özete eşit, kendi hedefine kazılmış ve biçimce
 	// geçerli olmalı; aksi halde kodlama sessizce değişmiş demektir (ağ bölünmesi).
@@ -231,11 +235,11 @@ func (bc *Blockchain) GetNonce(address string) (uint64, error) {
 	return uint64(v), err
 }
 
-// GetLatestBlock zincirin ucundaki bloğu döndürür.
+// GetLatestBlock zincirin ucundaki bloğu döndürür (önbellekten olabilir; salt okunur).
 func (bc *Blockchain) GetLatestBlock() (*Block, error) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
-	return bc.getBlock(bc.lastHash)
+	return bc.cachedBlockLocked(bc.lastHash)
 }
 
 // AddBlock işlemlerden bir blok şablonu kurar, onu zincir kilidi tutulmadan kazar ve
