@@ -32,7 +32,8 @@ const (
 	// 4: blok indeksi (birikmiş iş), ana zincir yükseklik tablosu, blok başına undo kayıtları.
 	// 5: ertelenmiş coinbase ödemesi (olgunluk), indekste coinbase alıcısı ve tutarı.
 	// 6: indekste tam başlık (sürüm, Merkle kökü, nonce): başlıklar diskten okunmadan sunulur.
-	schemaVersion = "6"
+	// 7: işlem son kullanma yüksekliği (zaman damgası yerine), imza alanı v4, yeni genesis.
+	schemaVersion = "7"
 )
 
 var (
@@ -243,6 +244,11 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 			break
 		}
 		tx := transactions[i]
+		// Süresi dolmuş işlem atlanır: bloğa girerse kendi bloğumuz doğrulamada düşerdi.
+		if err := tx.CheckExpiry(prev.Index + 1); err != nil {
+			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
+			continue
+		}
 		if err := tx.VerifyStateless(bc.params); err != nil {
 			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
 			continue
@@ -419,11 +425,23 @@ func (bc *Blockchain) checkBody(b *Block) error {
 	cb := &b.Transactions[0]
 	if !cb.IsCoinbase || cb.Sender != CoinbaseSender || cb.Fee != 0 ||
 		!crypto.IsValidAddress(cb.Receiver) || cb.Nonce != uint64(b.Index) ||
-		len(cb.PublicKey) != 0 || len(cb.Signature) != 0 {
+		len(cb.PublicKey) != 0 || len(cb.Signature) != 0 || cb.ExpiryHeight != 0 {
 		return ErrBadCoinbase
 	}
+	// İki geçiş: önce bütün ucuz kontroller (biçim, son kullanma), sonra bütün ML-DSA
+	// doğrulamaları. Tek geçişte 999 geçerli imzanın ardına konan tek bir süresi dolmuş
+	// işlem, blok reddedilmeden önce 999 imza doğrulaması yaptırırdı.
 	for i := 1; i < len(b.Transactions); i++ {
-		if err := b.Transactions[i].VerifyStateless(bc.params); err != nil {
+		tx := &b.Transactions[i]
+		if err := tx.checkFormat(); err != nil {
+			return fmt.Errorf("işlem %d: %w", i, err)
+		}
+		if err := tx.CheckExpiry(b.Index); err != nil {
+			return fmt.Errorf("işlem %d: %w", i, err)
+		}
+	}
+	for i := 1; i < len(b.Transactions); i++ {
+		if err := b.Transactions[i].verifySignature(bc.params); err != nil {
 			return fmt.Errorf("işlem %d: %w", i, err)
 		}
 	}

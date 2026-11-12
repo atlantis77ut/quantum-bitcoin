@@ -92,7 +92,7 @@ func (p *Params) Validate() error {
 }
 
 // sigTag imza alanının sürüm etiketidir.
-const sigTag = "QBTC-SIG-v3"
+const sigTag = "QBTC-SIG-v4"
 
 var (
 	// MainnetParams: genesis kasıtlı olarak tanımsızdır. Genesis bugünden sabitlenirse onu bilen
@@ -106,8 +106,8 @@ var (
 		Bits:             0x1f00ffff,
 		GenesisTimestamp: 1794096000, // 2026-11-08T00:00:00Z
 		GenesisMessage:   "Q-BTC testnet genesis 2026-11-08",
-		GenesisNonce:     129686,
-		GenesisHash:      "00004fb2d4e92c6947ed1d8b9c039fd4ea0d23f2dd48babeeded9082f7e6b0ae",
+		GenesisNonce:     19141,
+		GenesisHash:      "0000f47b1643fb44236004eadf3a39b5e1999ccfa4f6cb941f14975ee07b1be0",
 		TargetSpacing:    60,
 	})
 
@@ -121,8 +121,8 @@ var (
 		Bits:             0x200fffff,
 		GenesisTimestamp: 1794096000,
 		GenesisMessage:   "Q-BTC regtest genesis",
-		GenesisNonce:     6,
-		GenesisHash:      "02f739de53b008231b18af8ef6c028edf6f6f80e560895994577bfbdf9986157",
+		GenesisNonce:     10,
+		GenesisHash:      "0c361f2df64b66a48865cda689233554a7faa517a584dd034ce882a987d20eef",
 		TargetSpacing:    60,
 	}))
 )

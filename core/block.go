@@ -43,7 +43,6 @@ func NewGenesisBlock(p *Params) (*Block, error) {
 		Sender:     CoinbaseSender,
 		Receiver:   p.GenesisReceiver(),
 		Amount:     0,
-		Timestamp:  p.GenesisTimestamp,
 		Nonce:      0, // yükseklik
 		IsCoinbase: true,
 	}

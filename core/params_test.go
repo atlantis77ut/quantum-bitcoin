@@ -22,18 +22,18 @@ var genesisVectors = []struct {
 	{
 		p:        RegtestParams,
 		receiver: "QBTC4e6964f9e432957c47b419629131c28aea8f3e6e",
-		txid:     "54f085cebb3fa821023f53b81ae03b730da4c70f3e95231ee827fe3b16989902",
-		merkle:   "841387cd49373b33bccb11744eb190571afcf9981cd24c5976f2552c152ebd28",
-		nonce:    6,
-		hash:     "02f739de53b008231b18af8ef6c028edf6f6f80e560895994577bfbdf9986157",
+		txid:     "682fafb80b27cd1a85943b5696646041a8a2755eafa8a11cadce9b88bf143ec8",
+		merkle:   "d00f872bbd9209465309226f74f0dcabd89b55f9a0ab8684457e16e108d219e4",
+		nonce:    10,
+		hash:     "0c361f2df64b66a48865cda689233554a7faa517a584dd034ce882a987d20eef",
 	},
 	{
 		p:        TestnetParams,
 		receiver: "QBTCd3a378937e0e43e9baf18c21b24dd539e398f1bf",
-		txid:     "bafcc5b0d453c1cc5a1dcfe347e8143930231ae19e09e2f9fe6d472537608978",
-		merkle:   "c1482363f3671350bc86ca85065248afbd8c2be5e22093565c357845aee6ea88",
-		nonce:    129686,
-		hash:     "00004fb2d4e92c6947ed1d8b9c039fd4ea0d23f2dd48babeeded9082f7e6b0ae",
+		txid:     "ee2a1aeeebaa6321ca9da0a84065e0e1445301b400855bebc6ec896e9d6bb478",
+		merkle:   "564a54cc73968328cd201c00030c47e68aac18f42c81f8de96b8a87929e09c70",
+		nonce:    19141,
+		hash:     "0000f47b1643fb44236004eadf3a39b5e1999ccfa4f6cb941f14975ee07b1be0",
 	},
 }
 
@@ -112,25 +112,25 @@ func katTx() Transaction {
 		sig[i] = 0xAB
 	}
 	return Transaction{
-		Sender:    "QBTC" + "1111111111111111111111111111111111111111",
-		Receiver:  "QBTC" + "2222222222222222222222222222222222222222",
-		Amount:    123456789,
-		Fee:       1000,
-		Timestamp: 1700000000,
-		Nonce:     7,
-		PublicKey: pub,
-		Signature: sig,
+		Sender:       "QBTC" + "1111111111111111111111111111111111111111",
+		Receiver:     "QBTC" + "2222222222222222222222222222222222222222",
+		Amount:       123456789,
+		Fee:          1000,
+		ExpiryHeight: 500000,
+		Nonce:        7,
+		PublicKey:    pub,
+		Signature:    sig,
 	}
 }
 
 func TestTransactionKAT(t *testing.T) {
 	tx := katTx()
-	if id := tx.ID(); id != "e46583615df3337b28a3270c9b2111d0ff7e7a177044186401caaa28f343925e" {
+	if id := tx.ID(); id != "6e2d6d43c9f199651188a98063ca1730567b503a67c273691c6adbfc68129445" {
 		t.Fatalf("işlem kimliği %s", id)
 	}
 	want := map[*Params]string{
-		RegtestParams: "649a103137cb25d30faae55a48f3b326cd5011435559322e4a37e8f6e19f5fb1",
-		TestnetParams: "2dcd83e9241e9b5c3bbfae0185efe05cee7dd5261d48f6b4de5e26e6ee69ce93",
+		RegtestParams: "ccbc6fbacceccc15bd08cdf514aa55fbf75d5ec1db8389e3ffd80eb1fe17855a",
+		TestnetParams: "60a95f866d91661e7d8c7fcba7ede1275e62a71de4836ca47424b532bf2fa1f7",
 	}
 	for p, w := range want {
 		d, err := p.SigDomain()
@@ -147,7 +147,7 @@ func TestTransactionKAT(t *testing.T) {
 // İmza ağa ve genesis'e bağlıdır: başka ağın veya eski alan etiketlerinin imzası geçersizdir.
 func TestSignatureBoundToNetwork(t *testing.T) {
 	alice, bob := newKey(t), newKey(t)
-	tx := Transaction{Receiver: bob.Address, Amount: Coin, Fee: 7, Timestamp: 1, Nonce: 1}
+	tx := Transaction{Receiver: bob.Address, Amount: Coin, Fee: 7, ExpiryHeight: testExpiry, Nonce: 1}
 	if err := tx.Sign(alice, TestnetParams); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,8 @@ func TestSignatureBoundToNetwork(t *testing.T) {
 		t.Fatal("imza mesajı ağdan bağımsız")
 	}
 
-	for _, old := range []string{"QBTC-TX-v1|qbtc-mainnet", "QBTC-TX-v2|qbtc-mainnet"} {
+	dt3 := "QBTC-SIG-v3|testnet|" + TestnetParams.GenesisHash // v3 gövdesiyle bayt düzeyinde çakışabilirdi
+	for _, old := range []string{"QBTC-TX-v1|qbtc-mainnet", "QBTC-TX-v2|qbtc-mainnet", dt3} {
 		legacy := tx
 		sig, err := crypto.Sign(alice.SecretKey, legacy.SigningBytes(old))
 		if err != nil {
@@ -189,7 +190,7 @@ func TestMainnetRefusedBeforeLaunch(t *testing.T) {
 		t.Fatalf("NewGenesisBlock: %v", err)
 	}
 	alice, bob := newKey(t), newKey(t)
-	tx := Transaction{Receiver: bob.Address, Amount: Coin, Timestamp: 1, Nonce: 1}
+	tx := Transaction{Receiver: bob.Address, Amount: Coin, ExpiryHeight: testExpiry, Nonce: 1}
 	if err := tx.Sign(alice, MainnetParams); !errors.Is(err, ErrNoGenesis) {
 		t.Fatalf("Sign: %v", err)
 	}

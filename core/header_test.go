@@ -147,15 +147,15 @@ func TestEveryFieldIsCommitted(t *testing.T) {
 
 	r0 := base.ComputeMerkleRoot()
 	txMut := map[string]func(tx *Transaction){
-		"Sender":     func(tx *Transaction) { tx.Sender = bob.Address },
-		"Receiver":   func(tx *Transaction) { tx.Receiver = alice.Address },
-		"Amount":     func(tx *Transaction) { tx.Amount++ },
-		"Fee":        func(tx *Transaction) { tx.Fee++ },
-		"Timestamp":  func(tx *Transaction) { tx.Timestamp++ },
-		"Nonce":      func(tx *Transaction) { tx.Nonce++ },
-		"PublicKey":  func(tx *Transaction) { tx.PublicKey = flipFirst(tx.PublicKey) },
-		"Signature":  func(tx *Transaction) { tx.Signature = flipFirst(tx.Signature) },
-		"IsCoinbase": func(tx *Transaction) { tx.IsCoinbase = !tx.IsCoinbase },
+		"Sender":       func(tx *Transaction) { tx.Sender = bob.Address },
+		"Receiver":     func(tx *Transaction) { tx.Receiver = alice.Address },
+		"Amount":       func(tx *Transaction) { tx.Amount++ },
+		"Fee":          func(tx *Transaction) { tx.Fee++ },
+		"ExpiryHeight": func(tx *Transaction) { tx.ExpiryHeight++ },
+		"Nonce":        func(tx *Transaction) { tx.Nonce++ },
+		"PublicKey":    func(tx *Transaction) { tx.PublicKey = flipFirst(tx.PublicKey) },
+		"Signature":    func(tx *Transaction) { tx.Signature = flipFirst(tx.Signature) },
+		"IsCoinbase":   func(tx *Transaction) { tx.IsCoinbase = !tx.IsCoinbase },
 	}
 	for name, mut := range txMut {
 		b := *base
