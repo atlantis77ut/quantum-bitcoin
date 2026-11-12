@@ -25,7 +25,7 @@ Dondurulmuş uzlaşma kararları (kullanıcı, `devils-advocate` sonrası; deği
 - Zincir seçimi: saf en çok birikmiş iş, reorg derinliğine uzlaşma sınırı yok, eşit işte ilk görülen kalır; derin reorg alarmı ~2 saat (`TargetSpacing`'den), kalıcı, yalnızca `-clear-reorg-alarm` temizler.
 - Coinbase olgunluğu 240 blok, ertelenmiş ödeme.
 - İşlem süresi: `ExpiryHeight` zorunlu (>= 1), kapsayıcı, coinbase'de 0; uzlaşmada azami ufuk yok (politika mempool/cüzdanda).
-- Zorluk: her blokta ASERT (aserti3-2d), yarı ömür 2 saat, çapa 1. blok, hedef yalnızca ebeveyne bağlı; ağ başına `PowLimitBits` tabanı, mainnet başlangıç hedefi ve tabanı lansmanda.
+- Zorluk: her blokta ASERT (aserti3-2d), yarı ömür 2 saat, çapa 1. blok, hedef yalnızca ebeveyne bağlı; ağ başına `PowLimitBits` tabanı, mainnet başlangıç hedefi ve tabanı lansmanda, hedef cinsinden taban = min(başlangıç · 2^16, 0x1d00ffff ≈ 2^224); referans donanım ölçülmüş açık kaynak GPU kazıcısı (ASIC değil).
 - Düğüm politikaları (uzlaşma kuralı değil): `MinChainWork`, mempool kuralları, yan blok saklama sınırları, eş kotaları.
 
 Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-denetimi` ile; yukarıda kararı verilmemiş bir uzlaşma seçimi çıkarsa uygulamadan önce `devils-advocate` ile sına ve kullanıcıya sor). Madde 1–5 kapandı, kalanları docs dosyasında:
@@ -34,7 +34,7 @@ Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-de
 3. Zorluk ayarlaması (yapılandırılmış eş erteleme başına bir tam başlık doğrulaması harcatabilir; selfish mining/%51 iletişim notu: [docs/GUVENLIK-VARSAYIMLARI.md](docs/GUVENLIK-VARSAYIMLARI.md)).
 4. Kilitsiz kazım.
 5. Eş başına kotalar ve korunan gruplara ayrılmış yuvalar (eş kimliği/puanlama yok).
-6. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek. Lansman kontrol listesi: (a) başlatıcı genesis'i ve 1.–2. bloğu aynı donanımla kazar, hashrate'ini kamuya açıklar; başlangıç hedefi `BitsForHashrate` ile bu hashrate'ten, taban ona oranla seçilir; (b) T_g ≥ genesis mesajındaki Bitcoin bloğunun zamanı ve yayın anı − T_g ≤ birkaç dakika (1. blok T_g+1'e damgalanabilir; boşluk 3. bloktan itibaren 2^(boşluk/2 sa) kat kolaylaşma ve ~boşluk/60 hızlı blok verir), bağımsız test vektörü bu şartları da sabitler.
+6. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek. Lansman kontrol listesi: (a) lansmandan önce açık kaynak, Q-BTC başlığında ölçülmüş GPU ve çok çekirdekli CPU kazıcısı yayımlanır; başlatıcı genesis'i ve 1.–2. bloğu yalnızca GPU kazıcısıyla ve aynı donanımla kazar, yeniden üretilebilir hashrate'ini kamuya açıklar; başlangıç hedefi `BitsForHashrate` ile bu hashrate'ten, taban hedef cinsinden min(başlangıç · 2^16, 0x1d00ffff ≈ 2^224) seçilir; (b) T_g ≥ genesis mesajındaki Bitcoin bloğunun zamanı ve yayın anı − T_g ≤ birkaç dakika (1. blok T_g+1'e damgalanabilir; boşluk 3. bloktan itibaren 2^(boşluk/2 sa) kat kolaylaşma ve ~boşluk/60 hızlı blok verir), bağımsız test vektörü bu şartları da sabitler.
 
 Teknik borç (ayrıntı docs dosyasında): `/latestblock` tam blok döndürür, blok gövdesi/işlem sorgusu için sayfalı uç nokta yok; mempool yalnızca bellekte, yer değiştirme spam'ine sınır yok, ceza ve hız sınırı adres grubuna bağlı.
 
