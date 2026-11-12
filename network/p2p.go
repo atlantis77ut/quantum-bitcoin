@@ -83,10 +83,12 @@ type P2PServer struct {
 	mu    sync.RWMutex
 	peers []string
 
-	sem       chan struct{}
-	decodeSem chan struct{}
-	serveSem  chan struct{}
-	log       *slog.Logger
+	// Ortak yuva havuzları; her birinin bir payı korunan gruplara ayrılmıştır (peers.go).
+	conns   *slotPool
+	decodes *slotPool
+	serves  *slotPool
+	prot    *protection
+	log     *slog.Logger
 
 	// Adres grubu başına kotalar (quota.go).
 	connQuota   *groupQuota
@@ -119,9 +121,10 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		ListenAddr: listenAddr,
 		Blockchain: bc,
 		Mempool:    core.NewMempool(bc),
-		sem:        make(chan struct{}, maxConcurrentConns),
-		decodeSem:  make(chan struct{}, maxConcurrentDecodes),
-		serveSem:   make(chan struct{}, maxConcurrentServes),
+		conns:      newSlotPool(maxConcurrentConns, reservedConns),
+		decodes:    newSlotPool(maxConcurrentDecodes, reservedDecodes),
+		serves:     newSlotPool(maxConcurrentServes, reservedServes),
+		prot:       newProtection(),
 		log:        slog.Default().With("component", "p2p"),
 		syncEvery:  syncInterval,
 		syncWindow: core.MaxSyncHeaders,
@@ -137,16 +140,18 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 	}
 }
 
-// AddPeer yayın ve senkronizasyon listesine bir eş ekler.
+// AddPeer yayın ve senkronizasyon listesine bir eş ekler; eşin adres grubu korunur (peers.go).
 func (ps *P2PServer) AddPeer(addr string) {
 	ps.mu.Lock()
-	defer ps.mu.Unlock()
 	for _, p := range ps.peers {
 		if p == addr {
+			ps.mu.Unlock()
 			return
 		}
 	}
 	ps.peers = append(ps.peers, addr)
+	ps.mu.Unlock()
+	ps.protectPeer(addr)
 }
 
 // Peers eş listesinin bir kopyasını döndürür.
@@ -187,21 +192,27 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 			return err
 		}
 		group := groupOf(conn.RemoteAddr())
+		if ps.prot.isDiscouraged(group) {
+			ps.log.Debug("geri çevrilen grup, bağlantı kapatıldı", "remote", conn.RemoteAddr().String())
+			conn.Close()
+			continue
+		}
 		if !ps.connQuota.tryAcquire(group) {
 			// Debug: kota aşımı saldırgan denetimindedir, log taşkını olmasın.
 			ps.log.Debug("adres grubu başına bağlantı sınırı aşıldı", "remote", conn.RemoteAddr().String())
 			conn.Close()
 			continue
 		}
-		select {
-		case ps.sem <- struct{}{}:
+		lvl := ps.prot.levelOf(group)
+		if ps.conns.tryAcquire(lvl) {
 			go func() {
-				defer func() { <-ps.sem; ps.connQuota.release(group) }()
+				defer func() { ps.conns.release(lvl); ps.connQuota.release(group) }()
 				ps.handleConnection(conn, group)
 			}()
-		default:
+		} else {
 			ps.connQuota.release(group)
-			ps.log.Warn("bağlantı sınırı dolu, bağlantı reddedildi", "remote", conn.RemoteAddr().String())
+			// Debug: korunmayan pay saldırgan denetiminde dolabilir, log taşkını olmasın.
+			ps.log.Debug("bağlantı sınırı dolu, bağlantı reddedildi", "remote", conn.RemoteAddr().String(), "duzey", int(lvl))
 			conn.Close()
 		}
 	}
@@ -210,9 +221,6 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
-	if err := conn.SetReadDeadline(time.Now().Add(connReadTimeout)); err != nil {
-		return
-	}
 
 	// Bellek tavanı: aynı anda en fazla maxConcurrentDecodes mesaj çözümlenir; tek bir adres
 	// grubu bunların en çok decodesPerGroup kadarını tutar (yavaş gönderen eş, okuma süresi
@@ -221,25 +229,33 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 		ps.log.Debug("adres grubu başına çözümleme sınırı aşıldı", "remote", remote)
 		return
 	}
-	select {
-	case ps.decodeSem <- struct{}{}:
-	case <-time.After(connReadTimeout):
+	lvl := ps.prot.levelOf(group)
+	if !ps.decodes.acquire(lvl, connReadTimeout) {
 		ps.decodeQuota.release(group)
 		return
 	}
+	// Okuma süresi yuva alındıktan sonra başlar: yuva beklemesi okuma bütçesini yemez.
 	var msg message
-	err := json.NewDecoder(io.LimitReader(conn, maxBlockMessageBytes)).Decode(&msg)
-	<-ps.decodeSem
+	err := conn.SetReadDeadline(time.Now().Add(connReadTimeout))
+	if err == nil {
+		err = json.NewDecoder(io.LimitReader(conn, maxBlockMessageBytes)).Decode(&msg)
+	}
+	ps.decodes.release(lvl)
 	ps.decodeQuota.release(group)
 	if err != nil {
-		ps.log.Warn("eş mesajı okunamadı", "remote", remote, "err", err)
+		if malformedMessage(err) {
+			ps.prot.discourage(group)
+			ps.log.Debug("bozuk mesaj; grup geri çevriliyor", "remote", remote, "err", err)
+			return
+		}
+		ps.log.Debug("eş mesajı okunamadı", "remote", remote, "err", err)
 		return
 	}
 
 	switch msg.Type {
 	case msgBlock:
 		if msg.Block != nil {
-			ps.handleBlock(remote, msg.Block)
+			ps.handleBlock(remote, group, msg.Block)
 		}
 	case msgGetHeaders:
 		ps.serveHeaders(conn, remote, group, msg.Locator)
@@ -255,7 +271,10 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 // handleBlock duyurulan bloğu doğrular; uç olduysa eşlere yayar. Ebeveyni bilinmiyorsa
 // senkronizasyonu tetikler: gelen bağlantının eşine geri bağlanılamaz, eksik atalar
 // yapılandırılmış eşlerden çekilir.
-func (ps *P2PServer) handleBlock(remote string, b *core.Block) {
+//
+// Ucumuzu uzatan yeni bir bloğu getiren grup korunanlara girer; durumdan bağımsız geçersiz
+// blok gönderen grup geri çevrilir (peers.go).
+func (ps *P2PServer) handleBlock(remote, group string, b *core.Block) {
 	// Yeni düğüme sahte düşük işli zincir blok blok yutturulamasın (bkz. core/minwork.go);
 	// gerçek zincir eşikten geçen başlık zinciriyle senkronizasyondan gelir.
 	if ps.Blockchain.RelayBelowMinWork(b) {
@@ -264,11 +283,15 @@ func (ps *P2PServer) handleBlock(remote string, b *core.Block) {
 	}
 	// Tüm uzlaşma kuralları (PoW, coinbase, imzalar, bakiye, nonce, zaman) burada uygulanır.
 	err := ps.Blockchain.AcceptBlock(b)
+	if neverHonestBlock(err) {
+		ps.prot.discourage(group)
+	}
 	switch {
 	case err == nil:
 		tip := ps.Blockchain.TipHash()
 		ps.log.Info("eşten gelen blok kabul edildi", "remote", remote, "index", b.Index, "uc", tip)
 		if tip == b.Hash {
+			ps.prot.noteBlock(group)
 			ps.relay(b)
 		}
 	case errors.Is(err, core.ErrBadPrevHash):
@@ -390,23 +413,25 @@ func (ps *P2PServer) serveHeaders(conn net.Conn, remote, group string, locator [
 			return
 		}
 	}
-	if !ps.acquireServe(group) {
+	ok, lvl := ps.acquireServe(group)
+	if !ok {
 		return
 	}
-	defer ps.releaseServe(group)
+	defer ps.releaseServe(group, lvl)
 	ps.reply(conn, remote, message{Type: msgHeaders, Headers: ps.Blockchain.HeadersAfter(locator, core.MaxHeadersPerMsg)})
 }
 
-// serveBlock indeksteki bir bloğu sunar; eşzamanlı sunum serveSem ile sınırlıdır.
+// serveBlock indeksteki bir bloğu sunar; eşzamanlı sunum serves havuzuyla sınırlıdır.
 func (ps *P2PServer) serveBlock(conn net.Conn, remote, group, hash string) {
 	if !core.IsHashHex(hash) {
 		ps.log.Debug("geçersiz özet", "remote", remote)
 		return
 	}
-	if !ps.acquireServe(group) {
+	ok, lvl := ps.acquireServe(group)
+	if !ok {
 		return
 	}
-	defer ps.releaseServe(group)
+	defer ps.releaseServe(group, lvl)
 	b, err := ps.Blockchain.BlockByHash(hash)
 	if err != nil {
 		ps.reply(conn, remote, message{Type: msgBlock})
@@ -417,22 +442,22 @@ func (ps *P2PServer) serveBlock(conn net.Conn, remote, group, hash string) {
 
 // acquireServe önce adres grubunun, sonra ortak sunum yuvalarından birini alır; yuva kısa
 // sürede boşalmazsa istek yanıtsız kapanır.
-func (ps *P2PServer) acquireServe(group string) bool {
+// İkinci değer, yuvanın hangi korunma düzeyiyle alındığıdır (releaseServe'e verilir).
+func (ps *P2PServer) acquireServe(group string) (bool, level) {
 	if !ps.serveQuota.acquire(group, quotaWait) {
 		ps.log.Debug("adres grubu başına sunum sınırı aşıldı", "group", group)
-		return false
+		return false, levelNone
 	}
-	select {
-	case ps.serveSem <- struct{}{}:
-		return true
-	case <-time.After(quotaWait):
+	lvl := ps.prot.levelOf(group)
+	if !ps.serves.acquire(lvl, quotaWait) {
 		ps.serveQuota.release(group)
-		return false
+		return false, levelNone
 	}
+	return true, lvl
 }
 
-func (ps *P2PServer) releaseServe(group string) {
-	<-ps.serveSem
+func (ps *P2PServer) releaseServe(group string, lvl level) {
+	ps.serves.release(lvl)
 	ps.serveQuota.release(group)
 }
 
