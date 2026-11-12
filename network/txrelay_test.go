@@ -58,7 +58,7 @@ func TestHandleTxs(t *testing.T) {
 	bad.Amount = 2 * core.Coin // imza artık tutmaz
 
 	ps.handleTxs("eş", "kötü", []core.Transaction{bad, good})
-	if n := mempoolLen(t, ps.Mempool); n != 0 || len(ps.txRelayCh) != 0 {
+	if n := mempoolLen(t, ps.Mempool); n != 0 || len(ps.txRelayCh) != 0 || ps.txOverflow.len() != 0 {
 		t.Fatalf("geçersiz işlemden sonra grup işlendi: havuz %d, kuyruk %d", n, len(ps.txRelayCh))
 	}
 	ps.handleTxs("eş", "kötü", []core.Transaction{good}) // ceza süresinde
@@ -75,7 +75,7 @@ func TestHandleTxs(t *testing.T) {
 	}
 	ps.handleTxs("eş", "iyi", []core.Transaction{good})
 	ps.handleTxs("eş", "iyi", []core.Transaction{good}) // yineleme: yeniden yayılmaz
-	if n := mempoolLen(t, ps.Mempool); n != 1 || len(ps.txRelayCh) != 1 {
+	if n := mempoolLen(t, ps.Mempool); n != 1 || len(ps.txRelayCh) != 1 || ps.txOverflow.len() != 0 {
 		t.Fatalf("havuz %d, kuyruk %d; beklenen 1, 1", n, len(ps.txRelayCh))
 	}
 }

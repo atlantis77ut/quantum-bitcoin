@@ -35,7 +35,7 @@ func TestMempoolPullFromPeer(t *testing.T) {
 	if got := ps.Mempool.Get([]string{tx.ID()}); len(got) != 1 {
 		t.Fatal("çekilen işlem havuzda değil")
 	}
-	if len(ps.txRelayCh) != 0 {
+	if len(ps.txRelayCh) != 0 || ps.txOverflow.len() != 0 {
 		t.Fatal("çekilen işlem yeniden yayın kuyruğuna girdi")
 	}
 }
