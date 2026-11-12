@@ -54,7 +54,8 @@ func TestTxIndexConnectAndReopen(t *testing.T) {
 	if b, pos, conf := mustTx(t, re, tx.ID()); b.Hash != blk.Hash || pos != 1 || conf != 3 {
 		t.Fatalf("yeniden açılış: blok %s sıra %d onay %d", b.Hash, pos, conf)
 	}
-	missingTx(t, re, signedTx(t, alice, bob.Address, Coin, 2).ID())
+	unmined := signedTx(t, alice, bob.Address, Coin, 2)
+	missingTx(t, re, unmined.ID())
 	if _, _, _, err := re.TxByID("lh"); !errors.Is(err, ErrUnknownTx) {
 		t.Fatalf("geçersiz kimlik: %v", err)
 	}
