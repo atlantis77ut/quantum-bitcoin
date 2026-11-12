@@ -26,7 +26,75 @@ const MaxMineWorkers = 1024
 // scanCheck iş parçacığının başka bir parçacığın bulduğunu kaç denemede bir denetlediğidir.
 const scanCheck = 1 << 10
 
-var errBadMeasure = errors.New("geçersiz hashrate ölçümü parametresi")
+var (
+	errBadMeasure = errors.New("geçersiz hashrate ölçümü parametresi")
+	errZeroRound  = errors.New("kazım arka ucunun tur boyu sıfır")
+)
+
+// MineBackend nonce aramasını CPU dışında (ör. GPU) yapan arka uçtur. Mine onu yalnızca
+// koordinatör parçacığından çağırır; durdurma, uç değişimi ve zaman damgası denetimleri
+// turlar arasında aynen sürer. Bulunan her nonce CPU'da yeniden doğrulanır; hata ya da
+// doğrulanamayan sonuç arka ucu kalıcı olarak devre dışı bırakır.
+type MineBackend interface {
+	// Scan başlığı [start, start+count) nonce'larıyla (taşma sarar) dener ve hedefi
+	// (büyük-endian, özet <= hedef) karşılayan bir nonce bulursa döndürür.
+	Scan(header [HeaderSize]byte, target [32]byte, start, count uint64) (nonce uint64, found bool, err error)
+	// RoundSize bir Scan çağrısındaki nonce sayısıdır (~50–200 ms'lik iş).
+	RoundSize() uint64
+	// Name loglar içindir.
+	Name() string
+}
+
+type backendBox struct{ b MineBackend }
+
+// SetMineBackend kazımda CPU yerine kullanılacak arka ucu ayarlar; nil CPU'ya döner.
+func (bc *Blockchain) SetMineBackend(b MineBackend) {
+	if b == nil {
+		bc.mineBackend.Store(nil)
+		return
+	}
+	bc.mineBackend.Store(&backendBox{b})
+}
+
+// MineBackendActive arka ucun hâlâ kullanımda olup olmadığını söyler (hata sonrası false).
+func (bc *Blockchain) MineBackendActive() bool {
+	return bc.mineBackend.Load() != nil
+}
+
+// checkNonce nonce'u başlığa yazıp CPU'da özetler ve hedefi karşılayıp karşılamadığını söyler.
+func checkNonce(hdr [HeaderSize]byte, nonce uint64, tgt *[32]byte) ([32]byte, bool) {
+	binary.BigEndian.PutUint64(hdr[0:8], nonce)
+	h := hashHeader(hdr[:])
+	return h, meetsTargetBytes(&h, tgt)
+}
+
+// MeasureBackendHashrate arka ucu en az d süre boyunca kazımla aynı turlarla çalıştırır ve
+// saniyedeki özet sayısını döndürür.
+func MeasureBackendHashrate(be MineBackend, d time.Duration) (float64, error) {
+	if be == nil || d <= 0 {
+		return 0, errBadMeasure
+	}
+	count := be.RoundSize()
+	if count == 0 {
+		return 0, errZeroRound
+	}
+	var hdr [HeaderSize]byte
+	var tgt [32]byte // sıfır hedef: pratikte hiçbir özet karşılamaz
+	var nonce, total uint64
+	begin := time.Now()
+	for time.Since(begin) < d {
+		if _, _, err := be.Scan(hdr, tgt, nonce, count); err != nil {
+			return 0, err
+		}
+		nonce += count
+		total += count
+	}
+	elapsed := time.Since(begin).Seconds()
+	if elapsed <= 0 {
+		return 0, errBadMeasure
+	}
+	return float64(total) / elapsed, nil
+}
 
 // DefaultMineWorkers varsayılan kazım iş parçacığı sayısıdır: tüm çekirdekler.
 func DefaultMineWorkers() int {
