@@ -77,6 +77,11 @@ jobs:
           go vet -tags opencl ./...
           go test -tags opencl -race -count=1 ./gpu/... ./core/...
 
+      - name: GPU çekirdeği üreteci (Python'da SHA256d doğrulaması + depodakiyle aynı mı)
+        run: |
+          python3 gpu/gen/genkernel.py /tmp/sha256d.cl
+          diff -u gpu/sha256d.cl /tmp/sha256d.cl
+
       - name: GPU çekirdeği hızı (pocl, yalnızca bilgi; gerçek GPU ölçümü değil)
         run: |
           export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
