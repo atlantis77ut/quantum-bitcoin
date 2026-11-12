@@ -164,7 +164,7 @@ func (api *APIServer) withRateLimit(next http.Handler) http.Handler {
 		if err != nil {
 			ip = r.RemoteAddr
 		}
-		if !api.limiter.allow(clientKey(ip)) {
+		if !api.limiter.allowHost(ip) {
 			w.Header().Set("Retry-After", "1")
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "çok fazla istek"})
 			return
@@ -186,34 +186,69 @@ func clientKey(host string) string {
 	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
-// maxBuckets oran sınırlayıcının tutacağı en fazla istemci kaydıdır (bellek tavanı).
-const maxBuckets = 100_000
+// prefix48 IPv6 adresinin /48 önekidir (bir son kullanıcı ya da kurumun tipik tahsisi);
+// IPv4 ve çözülemeyen adreslerde boştur.
+func prefix48(host string) string {
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() != nil {
+		return ""
+	}
+	return ip.Mask(net.CIDRMask(48, 128)).String() + "/48"
+}
 
-// ipRateLimiter IP başına basit bir token bucket'tır (harici bağımlılık yok).
+const (
+	// maxBuckets oran sınırlayıcının tutacağı en fazla istemci kaydıdır (bellek tavanı).
+	maxBuckets = 100_000
+
+	// maxKeysPerPrefix bir IPv6 /48 önekinin alabileceği en fazla ayrı /64 kaydıdır. Fazlası
+	// önekin ortak kovasını paylaşır: tek bir /48 (65.536 adet /64) tabloyu dolduramaz.
+	maxKeysPerPrefix = 16
+
+	// overflowFactor tablo doluyken yeni istemcilerin paylaştığı taşma kovasının, tek bir
+	// istemcinin hızına oranıdır.
+	overflowFactor = 10
+)
+
+// ipRateLimiter IP başına basit bir token bucket'tır (harici bağımlılık yok). Tablo
+// dolduğunda yeni istemciler reddedilmez, ortak bir taşma kovasını paylaşır: tabloyu
+// dolduran saldırgan mevcut istemcileri etkilemez, yeni istemcileri yalnızca yavaşlatır.
 type ipRateLimiter struct {
-	mu      sync.Mutex
-	rate    float64
-	burst   float64
-	buckets map[string]*bucket
-	now     func() time.Time
-	lastGC  time.Time
+	mu        sync.Mutex
+	rate      float64
+	burst     float64
+	maxKeys   int
+	perPrefix int
+	buckets   map[string]*bucket
+	prefixes  map[string]int // /48 öneki başına ayrı /64 kaydı sayısı
+	overflow  bucket
+	now       func() time.Time
+	lastGC    time.Time
 }
 
 type bucket struct {
 	tokens float64
 	last   time.Time
+	prefix string // kaydı sayan /48 öneki (yoksa boş)
 }
 
 func newIPRateLimiter(perSec, burst int) *ipRateLimiter {
 	return &ipRateLimiter{
-		rate:    float64(perSec),
-		burst:   float64(burst),
-		buckets: map[string]*bucket{},
-		now:     time.Now,
+		rate:      float64(perSec),
+		burst:     float64(burst),
+		maxKeys:   maxBuckets,
+		perPrefix: maxKeysPerPrefix,
+		buckets:   map[string]*bucket{},
+		prefixes:  map[string]int{},
+		now:       time.Now,
 	}
 }
 
-func (l *ipRateLimiter) allow(ip string) bool {
+// allowHost istemci adresine göre bir isteğe izin verir.
+func (l *ipRateLimiter) allowHost(host string) bool {
+	return l.allow(clientKey(host), prefix48(host))
+}
+
+func (l *ipRateLimiter) allow(key, prefix string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -222,23 +257,53 @@ func (l *ipRateLimiter) allow(ip string) bool {
 	if now.Sub(l.lastGC) > time.Minute {
 		for k, b := range l.buckets {
 			if now.Sub(b.last) > 5*time.Minute {
-				delete(l.buckets, k)
+				l.remove(k, b)
 			}
 		}
 		l.lastGC = now
 	}
 
-	b, ok := l.buckets[ip]
-	if !ok {
-		if len(l.buckets) >= maxBuckets {
-			return false // tablo dolu: yeni istemcileri geçici olarak reddet (fail-closed)
-		}
-		b = &bucket{tokens: l.burst, last: now}
-		l.buckets[ip] = b
+	b, ok := l.buckets[key]
+	if !ok && prefix != "" && l.prefixes[prefix] >= l.perPrefix {
+		key = prefix // önekin kota dışı /64'leri önekin ortak kovasını paylaşır
+		b, ok = l.buckets[key]
+		prefix = ""
 	}
-	b.tokens += now.Sub(b.last).Seconds() * l.rate
-	if b.tokens > l.burst {
-		b.tokens = l.burst
+	if !ok {
+		if len(l.buckets) >= l.maxKeys {
+			return l.take(&l.overflow, now, overflowFactor)
+		}
+		b = &bucket{tokens: l.burst, last: now, prefix: prefix}
+		l.buckets[key] = b
+		if prefix != "" {
+			l.prefixes[prefix]++
+		}
+	}
+	return l.take(b, now, 1)
+}
+
+func (l *ipRateLimiter) remove(key string, b *bucket) {
+	delete(l.buckets, key)
+	if b.prefix == "" {
+		return
+	}
+	if l.prefixes[b.prefix] <= 1 {
+		delete(l.prefixes, b.prefix)
+	} else {
+		l.prefixes[b.prefix]--
+	}
+}
+
+// take kovayı factor katı hızla doldurup bir jeton harcar.
+func (l *ipRateLimiter) take(b *bucket, now time.Time, factor float64) bool {
+	burst := l.burst * factor
+	if b.last.IsZero() {
+		b.tokens = burst
+	} else {
+		b.tokens += now.Sub(b.last).Seconds() * l.rate * factor
+	}
+	if b.tokens > burst {
+		b.tokens = burst
 	}
 	b.last = now
 	if b.tokens < 1 {
