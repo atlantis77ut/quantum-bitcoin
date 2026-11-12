@@ -165,7 +165,8 @@ func TestMempoolTemplateOrderAndReplacement(t *testing.T) {
 	}
 }
 
-// Yer değiştiren işlem bakiyeyi tüketirse gönderenin sonraki işlemleri düşer.
+// Yer değiştiren işlem bakiyeyi tüketirse gönderenin sonraki işlemleri düşer; yeni ücret
+// düşenlerin ücretlerini de karşılamalıdır, yetmezse havuz hiç değişmez.
 func TestMempoolReplacementDropsUnaffordable(t *testing.T) {
 	bc := newTestChain(t)
 	m := NewMempool(bc)
@@ -173,13 +174,97 @@ func TestMempoolReplacementDropsUnaffordable(t *testing.T) {
 	fund(t, bc, alice, 1) // 50 QBTC
 	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 20*Coin, MempoolMinFee, 1))
 	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 20*Coin, MempoolMinFee, 2))
-	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 40*Coin, 2*MempoolMinFee, 1))
+	before := inventory(t, m)
+	gen := m.gen
+	// Eski ücret 1.000 → artış 1.000; düşecek nonce 2'nin ücreti 1.000: gereken 3.000.
+	if _, err := m.Add(mpTx(t, bc, alice, bob.Address, 40*Coin, 3*MempoolMinFee-1, 1)); !errors.Is(err, ErrReplaceFee) {
+		t.Fatalf("düşenleri karşılamayan ücret: %v", err)
+	}
+	if got := inventory(t, m); len(got) != 2 || got[0] != before[0] || got[1] != before[1] || m.gen != gen {
+		t.Fatalf("reddedilen yer değiştirme havuzu değiştirdi: %v", got)
+	}
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 40*Coin, 3*MempoolMinFee, 1))
 	if n := poolLen(t, m); n != 1 {
 		t.Fatalf("havuzda %d işlem, beklenen 1", n)
 	}
 	if p, err := m.Policy(alice.Address); err != nil || p.NextNonce != 2 {
 		t.Fatalf("politika %+v, %v", p, err)
 	}
+}
+
+// Kısmi düşüşte yalnızca düşen işlemlerin ücretleri sayılır; kalanlar havuzda kalır. Hiçbir şey
+// düşmüyorsa yalnızca eski artış yeter.
+func TestMempoolReplacementPaysOnlyDropped(t *testing.T) {
+	bc := newTestChain(t)
+	m := NewMempool(bc)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1) // 50 QBTC
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 10*Coin, MempoolMinFee, 1))
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 10*Coin, 2*MempoolMinFee, 2))
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 20*Coin, 7*MempoolMinFee, 3))
+	// Düşüş yok: nonce 2'nin artışı 1.000 → 3.000 yeter.
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 10*Coin, 3*MempoolMinFee, 2))
+	// nonce 1 → 25 QBTC: 1+2 (35 QBTC) kalır, 3 (20 QBTC) düşer. Gereken 2.000 + 7.000.
+	if _, err := m.Add(mpTx(t, bc, alice, bob.Address, 25*Coin, 9*MempoolMinFee-1, 1)); !errors.Is(err, ErrReplaceFee) {
+		t.Fatalf("kısmi düşüş, yetersiz ücret: %v", err)
+	}
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, 25*Coin, 9*MempoolMinFee, 1))
+	if p, err := m.Policy(alice.Address); err != nil || p.NextNonce != 3 {
+		t.Fatalf("politika %+v, %v (beklenen nonce 2 kalır, 3 düşer)", p, err)
+	}
+}
+
+// Gereken ücret bakiyeyi aşabilir: düşecek işlemin büyük ücreti karşılanamıyorsa yer değiştirme
+// reddedilir. Toplamın int64 taşması bakiye sınırı yüzünden pratikte oluşmaz; savunma amaçlı
+// denetimin parçası olan replaceFee taşması ayrıca sınanır.
+func TestMempoolReplacementLargeDroppedFee(t *testing.T) {
+	bc := newTestChain(t)
+	m := NewMempool(bc)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+	big := mustBalance(t, bc, alice.Address) - 2*Coin - 2*MempoolMinFee
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, MempoolMinFee, 1))
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, big, 2))
+	// nonce 1'i bakiyeyi tüketecek biçimde değiştirmek nonce 2'yi düşürür: gereken 2.000 + big,
+	// gönderilen big bunun altında kalır.
+	if _, err := m.Add(mpTx(t, bc, alice, bob.Address, 2*Coin, big, 1)); !errors.Is(err, ErrReplaceFee) {
+		t.Fatalf("bakiyeyi aşan gereken ücret: %v", err)
+	}
+	if _, ok := replaceFee(math.MaxInt64); ok {
+		t.Fatal("en büyük ücretin artışı taşmadı")
+	}
+}
+
+// Bir nonce yuvası en çok MempoolMaxReplacements kez değiştirilebilir; sayaç yuva havuzdan çıkınca
+// sıfırlanır ve uç değişince korunur.
+func TestMempoolReplacementLimit(t *testing.T) {
+	bc := newTestChain(t)
+	m := NewMempool(bc)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+	fee := MempoolMinFee
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, fee, 1))
+	for i := 1; i <= MempoolMaxReplacements; i++ {
+		need, _ := replaceFee(fee)
+		fee = need
+		mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, fee, 1))
+		if i == MempoolMaxReplacements/2 { // boş blok: uç değişir, sayaç korunmalı
+			if _, err := bc.AddBlock(nil, newKey(t).Address); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	need, _ := replaceFee(fee)
+	if _, err := m.Add(mpTx(t, bc, alice, bob.Address, Coin, need, 1)); !errors.Is(err, ErrReplaceLimit) {
+		t.Fatalf("%d. yer değiştirme: %v, beklenen ErrReplaceLimit", MempoolMaxReplacements+1, err)
+	}
+	if _, err := m.Add(mpTx(t, bc, alice, bob.Address, Coin, MempoolMinFee, 2)); err != nil {
+		t.Fatalf("sonraki nonce kotadan etkilenmemeli: %v", err)
+	}
+	mineFromPool(t, bc, m) // yuvalar onaylanır, sayaç havuzla birlikte gider
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, MempoolMinFee, 3))
+	need, _ = replaceFee(MempoolMinFee)
+	mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, need, 3))
 }
 
 // Süresi dolan işlem uç+1'e göre düşer ve gönderenin sonraki işlemleri de onunla düşer.

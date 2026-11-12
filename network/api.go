@@ -410,7 +410,7 @@ func (api *APIServer) handleSubmitTx(w http.ResponseWriter, r *http.Request) {
 // yineleme 409, dolu havuz 503; bilinmeyen hata (ör. okuma hatası) 500 olur ve ayrıntısı
 // istemciye gönderilmez.
 func txRejectStatus(err error) int {
-	for _, e := range []error{core.ErrTxKnown, core.ErrBadNonce, core.ErrNonceGap, core.ErrReplaceFee, core.ErrSenderLimit} {
+	for _, e := range []error{core.ErrTxKnown, core.ErrBadNonce, core.ErrNonceGap, core.ErrReplaceFee, core.ErrReplaceLimit, core.ErrSenderLimit} {
 		if errors.Is(err, e) {
 			return http.StatusConflict
 		}
