@@ -30,7 +30,7 @@ Dondurulmuş uzlaşma kararları (kullanıcı, `devils-advocate` sonrası; deği
 
 Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-denetimi` ile; yukarıda kararı verilmemiş bir uzlaşma seçimi çıkarsa uygulamadan önce `devils-advocate` ile sına ve kullanıcıya sor). Madde 1–5 kapandı, kalanları docs dosyasında:
 1. Zorluk tabanı, en az zincir işi, başlık ön-senkronizasyonu, iş/zaman onay göstergesi.
-2. Senkronizasyon (eş keşfi yok, olgunlaşmamış bakiye API'si yok).
+2. Senkronizasyon (eş keşfi yok).
 3. Zorluk ayarlaması (yapılandırılmış eş erteleme başına bir tam başlık doğrulaması harcatabilir; selfish mining/%51 iletişim notu: [docs/GUVENLIK-VARSAYIMLARI.md](docs/GUVENLIK-VARSAYIMLARI.md)).
 4. Kilitsiz kazım.
 5. Eş başına kotalar ve korunan gruplara ayrılmış yuvalar (eş kimliği/puanlama yok).
