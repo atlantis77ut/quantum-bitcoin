@@ -28,6 +28,8 @@ jobs:
       - name: Denetim talimatlarını hedef daldan al
         run: |
           git checkout "${{ github.event.pull_request.base.sha }}" -- CLAUDE.md .claude 2>/dev/null || true
+          # Ayrı adım: hedef dalda yoksa (dosyayı ekleyen PR) toplu checkout bozulmasın, PR'ın sürümü de okunmasın.
+          git checkout "${{ github.event.pull_request.base.sha }}" -- docs/MAINNET-ONCESI.md 2>/dev/null || rm -f docs/MAINNET-ONCESI.md
 
       - uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe # v1
         with:
@@ -36,7 +38,8 @@ jobs:
             REPO: ${{ github.repository }}
             PR: #${{ github.event.pull_request.number }}
 
-            Bu PR'ı CLAUDE.md kurallarına ve .claude/agents/guvenlik-denetimi.md kontrol listesine göre incele.
+            Bu PR'ı CLAUDE.md kurallarına, docs/MAINNET-ONCESI.md'deki uzlaşma kararlarına ve bilinen
+            açık kalanlara, ve .claude/agents/guvenlik-denetimi.md kontrol listesine göre incele.
             Q-BTC bir finansal sistemdir; finans kurumu ve DORA standardında değerlendir.
 
             Odak:
