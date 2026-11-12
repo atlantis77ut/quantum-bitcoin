@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -110,6 +111,10 @@ func (api *APIServer) Handler() http.Handler {
 	// güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
 	mux.HandleFunc("/confirmations", getOnly(api.handleConfirmations))
+	// Kazım izleme özeti: son N bloğun işi, MTP'ye dayalı süresi, tahmini hashrate, zorluk ve bu
+	// düğümün sakladığı yan blok sayısı (yaklaşık), reorg alarmı (core/mininginfo.go).
+	// Kullanım: GET /mininginfo[?blocks=<1..10080, varsayılan 120>]
+	mux.HandleFunc("/mininginfo", getOnly(api.handleMiningInfo))
 	// İmzalı işlem gönderimi (mempool politikası: core/mempool.go).
 	// Kullanım: POST /tx, gövde core.Transaction JSON'u; yanıt {"txid": ...}
 	mux.HandleFunc("/tx", postOnly(api.handleSubmitTx))
@@ -493,6 +498,51 @@ func (api *APIServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Next != "" {
 		resp["next"] = h.Next
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMiningInfo kazım izleme özetini döndürür. hashrate ve mean_block_seconds yalnızca
+// pencere en az 11 blok ve MTP süresi pozitifse verilir; son blokların çoğunu kazan biri damgalarla
+// tahmini iki yöne de oynatabilir. stale_blocks bu düğümün o an sakladığı ana zincir dışı
+// bloklardır (yaklaşık; senkronizasyonda geçici fazla sayım), ağın yetim oranı değildir.
+func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
+	blocks := int64(core.MiningInfoDefaultBlocks)
+	if s := r.URL.Query().Get("blocks"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n < 1 || n > core.MiningInfoMaxBlocks {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "blocks 1 ile 10080 arasında olmalı"})
+			return
+		}
+		blocks = n
+	}
+	m, err := api.Blockchain.MiningInfo(blocks)
+	if err != nil {
+		api.log.Error("kazım özeti okunamadı", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+	resp := map[string]interface{}{
+		"tip_height":           m.TipHeight,
+		"tip_hash":             m.TipHash,
+		"tip_bits":             fmt.Sprintf("%08x", m.TipBits),
+		"next_bits":            fmt.Sprintf("%08x", m.NextBits),
+		"difficulty":           m.Difficulty,
+		"window_blocks":        m.WindowBlocks,
+		"work":                 m.Work.String(), // ondalık; JSON sayısı 2^53'ü aşabilir
+		"work_in_start_blocks": api.Blockchain.WorkInBlocks(m.Work),
+		"elapsed_seconds":      m.ElapsedSeconds,
+		"stale_blocks":         m.StaleBlocks,
+		"target_spacing":       m.TargetSpacing,
+		"deep_reorg_alarm":     m.DeepReorg,
+		"below_min_chain_work": m.BelowMinWork,
+	}
+	if m.WindowBlocks > 0 {
+		resp["stale_rate"] = float64(m.StaleBlocks) / float64(m.WindowBlocks)
+	}
+	if m.HasRate {
+		resp["hashrate"] = m.Hashrate
+		resp["mean_block_seconds"] = m.MeanBlockSeconds
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
