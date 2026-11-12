@@ -65,6 +65,10 @@ type indexEntry struct {
 	MerkleRoot string `json:"merkle_root"`
 	Nonce      uint64 `json:"nonce"`
 
+	// AnchorTime bu bloğun zincirindeki 1. bloğun zamanıdır (ASERT çapası, bkz. asert.go):
+	// zorluk her blokta ata yürümeden hesaplanır. Genesis'te 0.
+	AnchorTime int64 `json:"anchor_time"`
+
 	// Coinbase alıcısı ve tutarı (ödül + ücretler): olgunlaşınca gövde okunmadan
 	// alacaklandırılır. Yalnızca gövdesi doğrulanıp saklanan bloklar için anlamlıdır.
 	CbTo    string `json:"cb_to,omitempty"`
@@ -83,15 +87,23 @@ func blockWork(bits uint32) (*big.Int, error) {
 	return num.Div(num, new(big.Int).Add(t, big.NewInt(1))), nil
 }
 
-func newIndexEntry(b *Block, parentWork *big.Int) (*indexEntry, error) {
+// newIndexEntry bloğun indeks kaydını kurar; parent nil ise blok genesis'tir.
+func newIndexEntry(b *Block, parent *indexEntry) (*indexEntry, error) {
 	w, err := blockWork(b.Bits)
 	if err != nil {
 		return nil, err
+	}
+	parentWork, parentAnchor := new(big.Int), int64(0)
+	if parent != nil {
+		parentWork, parentAnchor = parent.work, parent.AnchorTime
 	}
 	total := new(big.Int).Add(parentWork, w)
 	e := &indexEntry{Hash: b.Hash, Prev: b.PrevHash, Height: b.Index, Bits: b.Bits,
 		Timestamp: b.Timestamp, Work: total.Text(16), Status: statusStored, work: total,
 		Version: b.Version, MerkleRoot: b.MerkleRoot, Nonce: b.Nonce}
+	if parent != nil {
+		e.AnchorTime = childAnchorTime(b.Index, b.Timestamp, parentAnchor)
+	}
 	if len(b.Transactions) > 0 {
 		e.CbTo, e.CbValue = b.Transactions[0].Receiver, b.Transactions[0].Amount
 	}
@@ -189,7 +201,8 @@ func (bc *Blockchain) forkPoint(e *indexEntry) (*indexEntry, error) {
 }
 
 // precheckLocked imza doğrulamasından önce ebeveyne göre yapılan ucuz kontrollerdir:
-// bilinen blok, geçersiz ebeveyn, yükseklik, medyan zaman ve yan zincir depolama sınırları.
+// bilinen blok, geçersiz ebeveyn, yükseklik, zorluk, medyan zaman ve yan zincir depolama
+// sınırları.
 // Okuma ya da yazma kilidi altında çağrılır.
 func (bc *Blockchain) precheckLocked(b *Block) (*indexEntry, error) {
 	if _, ok := bc.index[b.Hash]; ok {
@@ -207,11 +220,17 @@ func (bc *Blockchain) precheckLocked(b *Block) (*indexEntry, error) {
 		bc.rejected.add(b.Hash) // yükseklik ve ebeveyn özete bağlı: kalıcı
 		return nil, ErrBadIndex
 	}
+	// Zorluk yalnızca ebeveyne bağlıdır ve hedef özete bağlıdır: ret kalıcıdır. Yine de
+	// önbelleğe alınmaz; kolay hedefle neredeyse bedava kazılan bloklar önbelleği doldurup
+	// gerçek kayıtları dışarı itmesin (kontrol yalnızca indekse bakar, ucuzdur).
+	if want := bc.params.nextBits(parent.Height, parent.Timestamp, parent.AnchorTime); b.Bits != want {
+		return nil, ErrBadDifficulty
+	}
 	// Yan zincir sınırı yalnızca bellekteki indekse bakar: sınıra takılan blok önbelleğe
 	// alınmadığından tekrar tekrar gönderilebilir, bu yolun ucuz kalması gerekir. Başlıkları
 	// doğrulanmış, ucun işini aşan bir zincirin blokları (syncAllow) sınıra takılmaz.
 	if _, allowed := bc.syncAllow[b.Hash]; !allowed && parent.Hash != bc.tip.Hash {
-		e, err := newIndexEntry(b, parent.work)
+		e, err := newIndexEntry(b, parent)
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +262,7 @@ func (bc *Blockchain) storeAndActivateLocked(b *Block) error {
 	if err != nil {
 		return err
 	}
-	e, err := newIndexEntry(b, parent.work)
+	e, err := newIndexEntry(b, parent)
 	if err != nil {
 		return err
 	}

@@ -13,7 +13,7 @@ import (
 // Genesis değerleri sabittir ve GenesisHash testlerde bağımsız (Python) vektörlerle sabitlenir.
 type Params struct {
 	Name             string
-	Bits             uint32 // başlangıç hedefi (yeniden hedefleme ayrı bir PR'da)
+	Bits             uint32 // başlangıç hedefi: 1. ve 2. blok bunu taşır, ASERT çapasıdır
 	GenesisTimestamp int64
 	GenesisMessage   string // genesis'in bu andan önce bilinemeyeceğini gösteren taahhüt
 	GenesisNonce     uint64
@@ -29,6 +29,11 @@ type Params struct {
 	// CoinbaseMaturity: H bloğunun ödülü + ücretleri H+CoinbaseMaturity bloğu bağlanırken
 	// alacaklandırılır (ertelenmiş ödeme). Değer TargetSpacing'den türetilir (~4 saat).
 	CoinbaseMaturity int64
+
+	// Zorluk (bkz. asert.go): HalfLife ASERT yarı ömrüdür (saniye). NoRetarget yalnızca
+	// regtest içindir: hedef Bits'te sabit kalır, testler hızlı ve öngörülebilir olsun.
+	HalfLife   int64
+	NoRetarget bool
 }
 
 // 60 sn blok süresi için emisyon (kullanıcı kararı, 2026-11-08): 5 QBTC ilk ödül,
@@ -63,6 +68,7 @@ func withEmission(p *Params) *Params {
 	p.HalvingInterval = referenceHalvingInterval * referenceSpacing / s
 	p.SlowStartBlocks = referenceSlowStartBlocks * referenceSpacing / s
 	p.CoinbaseMaturity = referenceCoinbaseMaturity * referenceSpacing / s
+	p.HalfLife = referenceHalfLife
 	return p
 }
 
@@ -87,6 +93,15 @@ func (p *Params) Validate() error {
 		return fmt.Errorf("%w: %s başlangıç rampası %d", ErrBadParams, p.Name, p.SlowStartBlocks)
 	case p.CoinbaseMaturity < 1:
 		return fmt.Errorf("%w: %s coinbase olgunluğu %d", ErrBadParams, p.Name, p.CoinbaseMaturity)
+	case p.HalfLife < minHalfLifePerFTL*MaxFutureDrift:
+		// Tek bloğun zaman damgasını FTL kadar ileri atmanın kazancı 2^(FTL/yarı ömür) − 1.
+		return fmt.Errorf("%w: %s yarı ömür %d sn, FTL için en az %d", ErrBadParams, p.Name,
+			p.HalfLife, minHalfLifePerFTL*MaxFutureDrift)
+	case p.NoRetarget && p.Name != "regtest":
+		return fmt.Errorf("%w: %s yeniden hedeflemesiz olamaz", ErrBadParams, p.Name)
+	}
+	if _, err := TargetFromBits(p.Bits); err != nil {
+		return fmt.Errorf("%w: %s başlangıç hedefi %08x", ErrBadParams, p.Name, p.Bits)
 	}
 	return nil
 }
@@ -115,7 +130,8 @@ var (
 	// Yalnızca testler içindir: ilk ödül 50 QBTC (mevcut tutar testleri bu ölçekte yazılı),
 	// yarılanma 150 blokta bir ve rampa yok; testler dönem ve kuyruk geçişlerini (1350.
 	// blok) kısa zincirde görebilsin. Coinbase olgunluğu 3 blok: testler sınırı ve olgunluğu
-	// aşan reorg'ları kısa zincirde sınayabilsin. Mainnet/testnet bundan etkilenmez.
+	// aşan reorg'ları kısa zincirde sınayabilsin. Hedef sabittir (NoRetarget); ASERT testleri
+	// yeniden hedeflemeli bir kopya kullanır. Mainnet/testnet bundan etkilenmez.
 	RegtestParams = regtestEmission(withEmission(&Params{
 		Name:             "regtest",
 		Bits:             0x200fffff,
@@ -132,6 +148,7 @@ func regtestEmission(p *Params) *Params {
 	p.HalvingInterval = 150
 	p.SlowStartBlocks = 0
 	p.CoinbaseMaturity = 3
+	p.NoRetarget = true
 	return p
 }
 

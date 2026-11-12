@@ -114,13 +114,18 @@ func regrind(b *Block) {
 	}
 }
 
-// mineAt coinbase nonce'u boşsa bloğun yüksekliğine ayarlar ve bloğu zincir hedefiyle kazar.
+// mineAt coinbase nonce'u boşsa bloğun yüksekliğine ayarlar ve bloğu ebeveynine göre
+// beklenen hedefle (ebeveyn bilinmiyorsa ucun hedefiyle) kazar.
 func mineAt(t *testing.T, bc *Blockchain, b *Block) {
 	t.Helper()
 	if len(b.Transactions) > 0 && b.Transactions[0].IsCoinbase && b.Transactions[0].Nonce == 0 {
 		b.Transactions[0].Nonce = uint64(b.Index)
 	}
-	if err := b.MineBlock(bc.Bits()); err != nil {
+	bits, err := bc.BitsAfter(b.PrevHash)
+	if err != nil {
+		bits = bc.Bits()
+	}
+	if err := b.MineBlock(bits); err != nil {
 		t.Fatal(err)
 	}
 }

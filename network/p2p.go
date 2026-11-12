@@ -225,7 +225,8 @@ func (ps *P2PServer) handleBlock(remote string, b *core.Block) {
 		ps.TriggerSync()
 	case errors.Is(err, core.ErrKnownBlock):
 	case errors.Is(err, core.ErrTimestampFuture), errors.Is(err, core.ErrSideChainLimit),
-		errors.Is(err, core.ErrKnownInvalid):
+		errors.Is(err, core.ErrKnownInvalid), errors.Is(err, core.ErrBadDifficulty),
+		errors.Is(err, core.ErrOrphanTooEasy):
 		// Önbelleğe alınmayan ya da ucuz ret yolları: aynı blokla tekrar tekrar tetiklenebilir,
 		// log taşkını olmasın diye Debug.
 		ps.log.Debug("eşten gelen blok reddedildi", "remote", remote, "index", b.Index, "err", err)
