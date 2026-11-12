@@ -151,7 +151,7 @@ func TestP2PRejectsForgedCoinbase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.NewEncoder(conn).Encode(forged); err != nil {
+	if err := json.NewEncoder(conn).Encode(message{Type: msgBlock, Block: forged}); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close()
