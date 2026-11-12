@@ -128,8 +128,8 @@ func TestASERTNextBits(t *testing.T) {
 	if ratio(late, two) > 1e-4 || ratio(early, half) > 1e-4 {
 		t.Fatalf("yarı ömür: geç %s (beklenen ~%s), erken %s (beklenen ~%s)", late, two, early, half)
 	}
-	if got := target(p.nextBits(500, onTime(500)+1000*p.HalfLife, anchor)); got.Cmp(powLimit) > 0 {
-		t.Fatal("hedef powLimit'i aştı")
+	if got := target(p.nextBits(500, onTime(500)+1000*p.HalfLife, anchor)); got.Cmp(p.powLimitTarget()) > 0 {
+		t.Fatal("hedef ağ tabanını aştı")
 	}
 	if got := target(p.nextBits(500, onTime(500)-1000*p.HalfLife, anchor)); got.Sign() <= 0 {
 		t.Fatal("hedef sıfıra indi")
@@ -233,7 +233,12 @@ func TestASERTOnChain(t *testing.T) {
 // uyar. ASERT çapaya göre mutlak olduğundan yükseklik ideal takvimden en fazla
 // (yarı ömür/T)·|log2(hashrate oranı)| kadar sapar; sapma birikmez.
 func TestASERTEmissionDrift(t *testing.T) {
-	p := TestnetParams
+	// ASERT'in kendisi sınanır: testnet tabanı (başlangıcın 2^8 katı) "1000 kat zor" senaryoyu
+	// kırpmasın diye taban gevşetilir. Taban davranışı powlimit_test.go'dadır; gerçek testnet'te
+	// hashrate başlangıcın 1/256'sının altındaysa bloklar tabanda kalır ve takvime dönülmez.
+	pp := *TestnetParams
+	pp.PowLimitBits = RegtestParams.PowLimitBits
+	p := &pp
 	T := float64(p.TargetSpacing)
 	hl := float64(p.HalfLife) / T // yarı ömür, blok
 	startWork := workOf(t, p.Bits)

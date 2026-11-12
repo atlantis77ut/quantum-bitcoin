@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"quantum-bitcoin/crypto"
 )
@@ -14,6 +15,7 @@ import (
 type Params struct {
 	Name             string
 	Bits             uint32 // başlangıç hedefi: 1. ve 2. blok bunu taşır, ASERT çapasıdır
+	PowLimitBits     uint32 // ağın en kolay hedefi (taban): ASERT buna kırpar; Bits bundan kolay olamaz
 	GenesisTimestamp int64
 	GenesisMessage   string // genesis'in bu andan önce bilinemeyeceğini gösteren taahhüt
 	GenesisNonce     uint64
@@ -100,11 +102,45 @@ func (p *Params) Validate() error {
 	case p.NoRetarget && p.Name != "regtest":
 		return fmt.Errorf("%w: %s yeniden hedeflemesiz olamaz", ErrBadParams, p.Name)
 	}
-	if _, err := TargetFromBits(p.Bits); err != nil {
+	start, err := TargetFromBits(p.Bits)
+	if err != nil {
 		return fmt.Errorf("%w: %s başlangıç hedefi %08x", ErrBadParams, p.Name, p.Bits)
+	}
+	limit, err := TargetFromBits(p.PowLimitBits)
+	if err != nil {
+		return fmt.Errorf("%w: %s zorluk tabanı %08x", ErrBadParams, p.Name, p.PowLimitBits)
+	}
+	if start.Cmp(limit) > 0 {
+		return fmt.Errorf("%w: %s başlangıç hedefi %08x tabandan (%08x) kolay", ErrBadParams, p.Name,
+			p.Bits, p.PowLimitBits)
+	}
+	if p.Name == "mainnet" {
+		if maxT, _ := TargetFromBits(mainnetMaxPowLimitBits); limit.Cmp(maxT) > 0 {
+			return fmt.Errorf("%w: mainnet tabanı %08x, en kolay %08x", ErrBadParams, p.PowLimitBits,
+				mainnetMaxPowLimitBits)
+		}
 	}
 	return nil
 }
+
+// powLimitTarget ağın zorluk tabanıdır (Validate geçerliliğini denetler).
+func (p *Params) powLimitTarget() *big.Int {
+	t, err := TargetFromBits(p.PowLimitBits)
+	if err != nil {
+		return new(big.Int).Set(powLimit) // Validate'ten geçmiş parametrelerde gelinmez
+	}
+	return t
+}
+
+// mainnetMaxPowLimitBits mainnet tabanının olabileceği en kolay hedeftir: 2^224 (Bitcoin
+// zorluk 1, blok başına ~2^32 özet). Kullanıcı kararı (2026-11-08): mainnet tabanı lansmanda,
+// başlangıç hedefiyle birlikte ona oranla seçilir (başlangıçtan 2^12–2^16 kat kolay, ama
+// 2^224'ten kolay değil ve tabanın gerektirdiği hashrate tek ucuz bir ASIC'in, ~10 TH/s,
+// altında kalacak düzeyde). Taban düşük zorluklu başlık spam'ine ya da uzun menzilli yeniden
+// yazıma karşı savunma DEĞİLDİR (2^224 bir ASIC için bedavadır); onlara karşı en az zincir
+// işi / başlık ön-senkronizasyonu gerekir. Taban yalnızca duraklama sonrası hedefin ne kadar
+// kolaylaşabileceğini sınırlar. Mutlak ASERT kırpılınca açığı silmez, biriktirir.
+const mainnetMaxPowLimitBits = 0x1d00ffff
 
 // sigTag imza alanının sürüm etiketidir.
 const sigTag = "QBTC-SIG-v4"
@@ -113,12 +149,17 @@ var (
 	// MainnetParams: genesis kasıtlı olarak tanımsızdır. Genesis bugünden sabitlenirse onu bilen
 	// herkes lansmana kadar gizlice zincir kazıp "premine yok" vaadini delebilir. Mainnet genesis'i
 	// lansman anında öngörülemez bir mesajla (ör. o anki bir Bitcoin blok özeti) üretilecektir.
-	MainnetParams = withEmission(&Params{Name: "mainnet", Bits: 0x1f00ffff, TargetSpacing: 60})
+	// Başlangıç hedefi ve taban da genesis'le birlikte lansmanda seçilir (BitsForHashrate);
+	// buradaki değerler yer tutucudur.
+	MainnetParams = withEmission(&Params{Name: "mainnet", Bits: 0x1d00ffff, PowLimitBits: 0x1d00ffff,
+		TargetSpacing: 60})
 
-	// TestnetParams: herkese açık test ağı (hedef eski zorluk 4'e eşdeğer).
+	// TestnetParams: herkese açık test ağı (hedef eski zorluk 4'e eşdeğer). Taban başlangıçtan
+	// 2^8 kat kolaydır: kırpma ve başlangıcın altına kolaylaşma yolu testnette sınanır.
 	TestnetParams = withEmission(&Params{
 		Name:             "testnet",
 		Bits:             0x1f00ffff,
+		PowLimitBits:     0x2000ffff,
 		GenesisTimestamp: 1794096000, // 2026-11-08T00:00:00Z
 		GenesisMessage:   "Q-BTC testnet genesis 2026-11-08",
 		GenesisNonce:     19141,
@@ -135,6 +176,7 @@ var (
 	RegtestParams = regtestEmission(withEmission(&Params{
 		Name:             "regtest",
 		Bits:             0x200fffff,
+		PowLimitBits:     0x200fffff,
 		GenesisTimestamp: 1794096000,
 		GenesisMessage:   "Q-BTC regtest genesis",
 		GenesisNonce:     10,
