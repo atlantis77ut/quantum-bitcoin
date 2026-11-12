@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,6 +30,11 @@ const (
 
 	// maxTxBodyBytes POST /tx gövde sınırıdır: ML-DSA-65 işlemi JSON'da ~7,5 KiB.
 	maxTxBodyBytes = 16 << 10
+
+	// /headers sayfa boyutu: varsayılan ve en çok (500 başlık ~165 KB; oran sınırı istek
+	// sayar, bayt saymaz, yanıt boyutunu bu sınır belirler).
+	defaultHeadersCount = 100
+	maxHeadersCount     = 500
 )
 
 type APIServer struct {
@@ -71,9 +77,16 @@ func (api *APIServer) Handler() http.Handler {
 	// Bakiye sorgulama (borsalar kullanıcı bakiyelerini bununla doğrular)
 	// Kullanım: GET /balance?address=QBTC...
 	mux.HandleFunc("/balance", getOnly(api.handleGetBalance))
-	// Son blok (borsalar ağı senkronize etmek için)
+	// Son blok, işlemleriyle birlikte (en fazla ~7 MiB; uyumluluk için korunur). Zinciri izlemek
+	// için /header ve /headers kullanılmalıdır.
 	// Kullanım: GET /latestblock
 	mux.HandleFunc("/latestblock", getOnly(api.handleGetLatestBlock))
+	// Ana zincirdeki bir bloğun başlığı; hash verilmezse uç. Ana zincirde olmayan özet 404.
+	// Kullanım: GET /header[?hash=<64 hex blok özeti>]
+	mux.HandleFunc("/header", getOnly(api.handleHeader))
+	// Ana zincir başlıkları, yükseklik sırasıyla sayfalı.
+	// Kullanım: GET /headers?from=<yükseklik>[&count=<1..500, varsayılan 100>]
+	mux.HandleFunc("/headers", getOnly(api.handleHeaders))
 	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm true ise onaylara
 	// güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
@@ -162,6 +175,56 @@ func (api *APIServer) handleGetLatestBlock(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, latestBlock)
+}
+
+// handleHeader ana zincirdeki bir başlığı (hash yoksa ucu) döndürür.
+func (api *APIServer) handleHeader(w http.ResponseWriter, r *http.Request) {
+	hash := r.URL.Query().Get("hash")
+	if hash == "" {
+		writeJSON(w, http.StatusOK, api.Blockchain.TipHeader())
+		return
+	}
+	if !core.IsHashHex(hash) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz hash parametresi"})
+		return
+	}
+	h, ok := api.Blockchain.HeaderByHash(hash)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "blok ana zincirde değil"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h)
+}
+
+// handleHeaders from yüksekliğinden başlayan ana zincir başlıklarını döndürür. Sayfa ve uç
+// aynı anlık görüntüden gelir; sayfalar arasında reorg olabilir: istemci her sayfanın ilk
+// başlığının prev_hash'ini önceki sayfanın son hash'iyle karşılaştırmalı, tutmazsa geri
+// sarıp yeniden istemelidir. from uçtan büyükse liste boştur.
+func (api *APIServer) handleHeaders(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, err := strconv.ParseInt(q.Get("from"), 10, 64)
+	if err != nil || from < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik from parametresi"})
+		return
+	}
+	count := defaultHeadersCount
+	if s := q.Get("count"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > maxHeadersCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "count 1 ile 500 arasında olmalı"})
+			return
+		}
+		count = n
+	}
+	hdrs, tipHeight, tipHash := api.Blockchain.HeadersRange(from, count)
+	if hdrs == nil {
+		hdrs = []core.BlockHeader{} // JSON'da null değil []
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tip_height": tipHeight,
+		"tip_hash":   tipHash,
+		"headers":    hdrs,
+	})
 }
 
 // handleConfirmations blok sayısının yanında iş ve zamana dayalı onay bilgisini döndürür

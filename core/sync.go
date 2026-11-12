@@ -147,6 +147,47 @@ func (bc *Blockchain) HeadersAfter(locator []string, max int) []BlockHeader {
 	return out
 }
 
+// HeaderByHash ana zincirdeki bir bloğun başlığını indeksten (disk okuması olmadan)
+// döndürür; ikinci değer, blok ana zincirde değilse (bilinmeyen, yan dal, yalnızca başlığı
+// bilinen ya da geçersiz) false'tur.
+func (bc *Blockchain) HeaderByHash(hash string) (BlockHeader, bool) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	e, ok := bc.index[hash]
+	if !ok || !bc.isMain(e) {
+		return BlockHeader{}, false
+	}
+	return e.header(), true
+}
+
+// TipHeader ana zincirin ucundaki başlığı döndürür.
+func (bc *Blockchain) TipHeader() BlockHeader {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.tip.header()
+}
+
+// HeadersRange from yüksekliğinden başlayarak en çok count (en çok MaxHeadersPerMsg) ana
+// zincir başlığını artan sırayla ve aynı anlık görüntüdeki ucun yüksekliği ile özetini
+// döndürür. from uçtan büyükse ya da count <= 0 ise liste boştur.
+func (bc *Blockchain) HeadersRange(from int64, count int) ([]BlockHeader, int64, string) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	tipHeight := bc.tip.Height
+	if from < 0 || from > tipHeight || count <= 0 {
+		return nil, tipHeight, bc.tip.Hash
+	}
+	n := int64(min(count, MaxHeadersPerMsg))
+	if n > tipHeight-from+1 { // from+n taşmasın diye çıkarma ile karşılaştırılır
+		n = tipHeight - from + 1
+	}
+	out := make([]BlockHeader, 0, n)
+	for h := from; h < from+n; h++ {
+		out = append(out, bc.index[bc.main[h]].header())
+	}
+	return out, tipHeight, bc.tip.Hash
+}
+
 // BlockByHash indeksteki bir bloğun gövdesini döndürür. Özet indekste değilse veritabanı
 // okunmaz (ağdan gelen özetle rastgele anahtar okunamasın).
 func (bc *Blockchain) BlockByHash(hash string) (*Block, error) {
