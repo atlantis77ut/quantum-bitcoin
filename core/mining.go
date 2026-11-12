@@ -162,6 +162,37 @@ func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
 			b.Timestamp = ts
 			binary.BigEndian.PutUint64(hdr[20:28], uint64(ts))
 		}
+		if box := bc.mineBackend.Load(); box != nil {
+			be := box.b
+			var n uint64
+			var found bool
+			var err error
+			count := be.RoundSize()
+			if count == 0 {
+				err = errZeroRound
+			} else {
+				n, found, err = be.Scan(hdr, tgt, nonce, count)
+			}
+			if err == nil && !found {
+				var more bool
+				if nonce, more = nextRound(nonce, count); !more { // 2^64 nonce tükendi
+					return nil, ErrStaleTemplate
+				}
+				continue
+			}
+			if err == nil {
+				// Arka ucun sonucuna güvenilmez: aynı başlık CPU'da yeniden özetlenir.
+				if h, ok := checkNonce(hdr, n, &tgt); ok {
+					b.Nonce = n
+					b.Hash = hex.EncodeToString(h[:])
+					return &b, nil
+				}
+				err = fmt.Errorf("bulunan nonce %d CPU doğrulamasından geçmedi", n)
+			}
+			// Hatalı arka uç bir daha kullanılmaz; bu tur CPU ile taranır.
+			bc.mineBackend.CompareAndSwap(box, nil)
+			bc.log.Error("kazım arka ucu devre dışı bırakıldı; CPU ile devam ediliyor", "arka_uc", be.Name(), "err", err)
+		}
 		if n, h, ok := mineRound(hdr, nonce, uint64(chunk), workers, &tgt); ok {
 			b.Nonce = n
 			b.Hash = hex.EncodeToString(h[:])

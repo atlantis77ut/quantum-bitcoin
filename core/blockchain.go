@@ -90,6 +90,10 @@ type Blockchain struct {
 	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır
 	mineWorkers atomic.Int64 // kazım iş parçacığı sayısı; 0 ise DefaultMineWorkers (bkz. minerworkers.go)
 	bodyChecks  atomic.Int64 // checkBody çağrı sayısı; testler imza doğrulamasının tekrarlanmadığını ölçer
+
+	// mineBackend nonce aramasını CPU yerine yapan arka uçtur (ör. GPU); nil ise CPU
+	// (bkz. minerworkers.go). Hata ya da doğrulanamayan sonuçta kalıcı olarak nil'e döner.
+	mineBackend atomic.Pointer[backendBox]
 }
 
 // NewBlockchain verilen ağ için veritabanını açar; zincir boşsa ağın sabit genesis bloğunu

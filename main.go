@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"quantum-bitcoin/core"
+	"quantum-bitcoin/gpu"
 	"quantum-bitcoin/network"
 )
 
@@ -31,6 +32,10 @@ func main() {
 	clearAlarm := flag.Bool("clear-reorg-alarm", false, "Kalıcı derin reorg alarmını temizler ve çıkar (olay incelendikten sonra)")
 	mineThreads := flag.Int("mine-threads", 0, "Kazım iş parçacığı sayısı (0: tüm çekirdekler)")
 	benchHashrate := flag.Duration("bench-hashrate", 0, "Q-BTC başlığında hashrate'i bu süre ölçer, yazdırır ve çıkar (ör. 30s)")
+	mineGPU := flag.Bool("mine-gpu", false, "Kazımı OpenCL aygıtında yapar (-tags opencl ile derlenmiş olmalı)")
+	gpuDevice := flag.Int("gpu-device", 0, "Kazım için OpenCL aygıtı (-gpu-list ile listelenir)")
+	gpuBatch := flag.Uint64("gpu-batch", 0, "GPU turundaki nonce sayısı (0: ~100 ms'ye ölçülerek seçilir)")
+	gpuList := flag.Bool("gpu-list", false, "OpenCL aygıtlarını listeler ve çıkar")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -54,20 +59,56 @@ func main() {
 		slog.Error("geçersiz kazım iş parçacığı sayısı", "mine-threads", *mineThreads, "en_cok", core.MaxMineWorkers)
 		os.Exit(2)
 	}
-	if *benchHashrate != 0 {
-		// Ölçüm kazımla aynı döngüyü kullanır; zincir açılmaz. Lansmanda açıklanan hashrate
-		// aynı komutla yeniden üretilebilir (docs/MAINNET-ONCESI.md madde 6a).
-		rate, err := core.MeasureHashrate(threads, *benchHashrate)
+	if *gpuList {
+		devs, err := gpu.Devices()
 		if err != nil {
-			slog.Error("hashrate ölçülemedi", "err", err)
+			slog.Error("OpenCL aygıtları listelenemedi", "err", err)
 			os.Exit(2)
 		}
-		args := []any{"network", params.Name, "is_parcacigi", threads, "sure", benchHashrate.String(), "hash_per_sn", rate}
+		if len(devs) == 0 {
+			fmt.Println("OpenCL aygıtı yok")
+		}
+		for _, d := range devs {
+			fmt.Printf("%d\t%s\n", d.Index, d.Name)
+		}
+		return
+	}
+	var backend gpu.Backend
+	if *mineGPU {
+		backend, err = gpu.Open(*gpuDevice, *gpuBatch)
+		if err != nil {
+			slog.Error("GPU kazıcısı açılamadı", "err", err)
+			os.Exit(2)
+		}
+		defer backend.Close()
+		slog.Info("GPU kazıcısı hazır", "aygit", backend.Name(), "tur", backend.RoundSize())
+	}
+	if *benchHashrate != 0 {
+		// Ölçüm kazımla aynı turları kullanır; zincir açılmaz. Lansmanda açıklanan hashrate
+		// aynı komutla yeniden üretilebilir (docs/MAINNET-ONCESI.md madde 6a).
+		var rate float64
+		args := []any{"network", params.Name, "sure", benchHashrate.String()}
+		if backend != nil {
+			rate, err = core.MeasureBackendHashrate(backend, *benchHashrate)
+			args = append(args, "aygit", backend.Name(), "tur", backend.RoundSize())
+		} else {
+			rate, err = core.MeasureHashrate(threads, *benchHashrate)
+			args = append(args, "is_parcacigi", threads)
+		}
+		if err != nil {
+			slog.Error("hashrate ölçülemedi", "err", err)
+			backendClose(backend)
+			os.Exit(2)
+		}
+		args = append(args, "hash_per_sn", rate)
 		if bits, err := core.BitsForHashrate(rate, params.TargetSpacing, params.PowLimitBits); err == nil {
 			args = append(args, "bu_hashrate_icin_bits", fmt.Sprintf("0x%08x", bits))
 		}
 		slog.Info("hashrate ölçümü", args...)
 		return
+	}
+	if backend != nil && *mineTo == "" {
+		slog.Warn("-mine-gpu verildi ama -mine yok: kazım yapılmayacak")
 	}
 	if *dbPath == "" {
 		*dbPath = "qbtc_" + params.Name + "_db"
@@ -85,6 +126,9 @@ func main() {
 	if err := bc.SetMineWorkers(threads); err != nil {
 		slog.Error("kazım iş parçacığı sayısı ayarlanamadı", "err", err)
 		os.Exit(2)
+	}
+	if backend != nil {
+		bc.SetMineBackend(backend)
 	}
 	if *clearAlarm {
 		rec, err := bc.ClearDeepReorgAlarm()
@@ -147,5 +191,12 @@ func main() {
 	defer cancel()
 	if err := apiServer.Shutdown(ctx); err != nil {
 		slog.Error("API düzgün kapatılamadı", "err", err)
+	}
+}
+
+// backendClose os.Exit'ten önce (ertelenmiş çağrılar çalışmaz) GPU kaynaklarını bırakır.
+func backendClose(b gpu.Backend) {
+	if b != nil {
+		b.Close()
 	}
 }
