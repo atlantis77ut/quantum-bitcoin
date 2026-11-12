@@ -284,9 +284,8 @@ func openSource(device int, batch uint64, source string) (Backend, error) {
 		return nil, fmt.Errorf("OpenCL aygıtı %d açılamadı (hata %d): %s", device, int(rc), C.GoString(&log[0]))
 	}
 	m.open = true
-	var buf [256]C.char
-	if C.qb_device_name(C.int(device), &buf[0], C.size_t(len(buf))) == C.CL_SUCCESS {
-		m.name = fmt.Sprintf("OpenCL aygıtı %d (%s)", device, C.GoString(&buf[0]))
+	if name := deviceInfo(device, false, C.CL_DEVICE_NAME); name != "?" {
+		m.name = fmt.Sprintf("OpenCL aygıtı %d (%s)", device, name)
 	}
 	m.batch = batch
 	if batch == 0 {
