@@ -83,6 +83,11 @@ type P2PServer struct {
 
 	syncEvery time.Duration
 
+	// syncWindow oturum başına bellekteki en fazla yeni başlıktır (core.MaxSyncHeaders;
+	// testler küçültür). presyncs yalnızca senkronizasyon döngüsünden erişilir.
+	syncWindow int
+	presyncs   map[string]*peerPresync
+
 	// syncCh senkronizasyonu hemen tetikler; tek yuvalıdır, bekleyen tetikler birleşir.
 	syncCh  chan struct{}
 	relayCh chan *core.Block
@@ -100,6 +105,8 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		serveSem:   make(chan struct{}, maxConcurrentServes),
 		log:        slog.Default().With("component", "p2p"),
 		syncEvery:  syncInterval,
+		syncWindow: core.MaxSyncHeaders,
+		presyncs:   map[string]*peerPresync{},
 		syncCh:     make(chan struct{}, 1),
 		relayCh:    make(chan *core.Block, relayQueueLen),
 
@@ -389,14 +396,169 @@ func (ps *P2PServer) syncFrom(peer string, stop <-chan struct{}) error {
 			return false
 		}
 	}
+	if st := ps.presyncs[peer]; st != nil {
+		return ps.continuePresync(peer, st, stopped)
+	}
 	s := bc.NewHeaderSync()
-	herr := ps.syncHeaders(peer, s, stopped)
+	s.SetLimit(ps.syncWindow)
+	herr := ps.syncHeaders(peer, s, bc.Locator(), stopped)
 	if !s.MoreWork() {
+		if s.Full() {
+			// Pencere doldu ama zincir eşiği geçmedi: daha derin bir dal ya da düşük işli spam.
+			// Başlıklar saklanmadan sabit bellekte sayılır (core/presync.go).
+			st := &peerPresync{p: bc.NewPresync(ps.syncWindow)}
+			ps.presyncs[peer] = st
+			ps.log.Info("başlık penceresi doldu, ön-senkronizasyon başlıyor", "peer", peer)
+			return ps.continuePresync(peer, st, stopped)
+		}
 		return herr
 	}
+	if err := ps.downloadBodies(peer, s, stopped); err != nil {
+		return err
+	}
+	return herr
+}
 
+// peerPresync bir eşle süren ön-senkronizasyonun turlar arası durumudur: sabit boyutludur
+// (kontrol noktaları hariç) ve eş başına tektir; süre bütçesi dolan tur kaldığı yerden sürer.
+type peerPresync struct {
+	p      *core.Presync
+	resume string // yeniden indirmede gövdeleri indirilmiş son yetkili başlık
+	fails  int    // art arda başarısız gövde indirme turu
+}
+
+// maxPresyncFails art arda bu kadar turda gövdeleri indirilemeyen ön-senkronizasyon bırakılır.
+const maxPresyncFails = 3
+
+var (
+	errPresyncEnd     = errors.New("eşin zinciri ön-senkronizasyon eşiğine ulaşmadan bitti")
+	errPresyncInvalid = errors.New("ön-senkronizasyonda geçersiz başlık")
+)
+
+// continuePresync ön-senkronizasyonu sürdürür; eşik geçildiyse başlıkları parça parça
+// yeniden indirir ve yalnızca kontrol noktalarıyla eşleşen önekin gövdelerini indirir.
+// Durum yalnızca kalıcı başarısızlıkta (eşin zinciri eşiğe ulaşmadan bitti, geçersiz
+// başlık, kontrol noktası tutmadı, yetki düştü) ya da son başlığa ulaşılınca silinir.
+func (ps *P2PServer) continuePresync(peer string, st *peerPresync, stopped func() bool) error {
+	bc := ps.Blockchain
+	if !st.p.Done() {
+		err := ps.presyncHeaders(peer, st.p, stopped)
+		if !st.p.Done() {
+			if errors.Is(err, errPresyncEnd) || errors.Is(err, errPresyncInvalid) {
+				delete(ps.presyncs, peer)
+				ps.log.Info("ön-senkronizasyon bırakıldı", "peer", peer, "dogrulanan", st.p.Count(), "neden", err)
+			}
+			return err
+		}
+		ps.log.Info("ön-senkronizasyon eşiği geçti, başlıklar yeniden indiriliyor", "peer", peer, "dogrulanan", st.p.Count())
+	}
+	deadline := time.Now().Add(syncPeerBudget)
+	for !stopped() && time.Now().Before(deadline) {
+		s := bc.NewProvenSync(st.p, ps.syncWindow)
+		loc := bc.Locator()
+		if st.resume != "" {
+			loc = withFirst(st.resume, loc)
+		}
+		herr := ps.syncHeaders(peer, s, loc, stopped)
+		if !s.MoreWork() {
+			delete(ps.presyncs, peer) // uç ön-senkronizasyonun işini geçti: olağan senkronizasyon sürer
+			return herr
+		}
+		if s.AuthorizedTip() == "" {
+			if herr == nil || headerRejected(herr) {
+				delete(ps.presyncs, peer) // eş ön-senkronizasyondaki zinciri vermiyor
+				return fmt.Errorf("ön-senkronizasyon yeniden indirmesi ilerlemedi: %v", herr)
+			}
+			return herr // geçici (ağ, süre): sonraki tur
+		}
+		if s.AuthorizedTip() == st.resume {
+			delete(ps.presyncs, peer) // eş ilerleme vermiyor (yalnızca bilinen önek)
+			return fmt.Errorf("ön-senkronizasyon yeniden indirmesi ilerlemedi: %v", herr)
+		}
+		if err := ps.downloadBodies(peer, s, stopped); err != nil {
+			if st.fails++; st.fails >= maxPresyncFails {
+				delete(ps.presyncs, peer) // eş gövdeleri vermiyor ya da geçersiz veriyor
+			}
+			return err
+		}
+		st.fails = 0
+		st.resume = s.AuthorizedTip()
+		if s.ReachedFinal() || headerRejected(herr) {
+			// Son başlığa ulaşıldı (kalan iş olağan senkronizasyonla gelir) ya da eş yetkili
+			// önekten sonra tutarsızlaştı (yetkili kısım indirildi, gerisi bırakıldı).
+			delete(ps.presyncs, peer)
+			return herr
+		}
+	}
+	return errSyncBudget
+}
+
+// presyncHeaders ön-senkronizasyona başlık yanıtları besler; süre bütçesi dolarsa durum
+// korunur ve sonraki turda sürer.
+func (ps *P2PServer) presyncHeaders(peer string, p *core.Presync, stopped func() bool) error {
+	bc := ps.Blockchain
+	deadline := time.Now().Add(syncPeerBudget)
+	for {
+		if stopped() || time.Now().After(deadline) {
+			return errSyncBudget
+		}
+		loc := bc.Locator()
+		if p.Last() != "" {
+			loc = withFirst(p.Last(), loc)
+		}
+		resp, err := ps.request(peer, message{Type: msgGetHeaders, Locator: loc}, maxHeadersMessageBytes)
+		if err != nil {
+			return err
+		}
+		if resp.Type != msgHeaders {
+			return errBadResponse
+		}
+		if len(resp.Headers) == 0 {
+			return errPresyncEnd
+		}
+		if _, err := p.Add(resp.Headers); err != nil {
+			if errors.Is(err, core.ErrTimestampFuture) {
+				return nil // geçici: kalan başlıklar sonraki turda
+			}
+			return fmt.Errorf("%w: %v", errPresyncInvalid, err)
+		}
+		if p.Done() {
+			return nil
+		}
+		if len(resp.Headers) < core.MaxHeadersPerMsg {
+			return errPresyncEnd
+		}
+	}
+}
+
+// headerRejected başlık zincirinin kalıcı olarak reddedildiğini söyler (geçici ağ ya da
+// süre hatalarının tersine): ön-senkronizasyon durumu bırakılır.
+func headerRejected(err error) bool {
+	for _, e := range []error{core.ErrBadHeaders, core.ErrKnownInvalid, core.ErrBadPrevHash,
+		core.ErrBadDifficulty, core.ErrInsufficientPoW, core.ErrBadHash, core.ErrBadIndex,
+		core.ErrTimestampOld, core.ErrBadVersion} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
+// withFirst konum belirleyicinin başına bir özet ekler ve boyutu sınırlar.
+func withFirst(h string, loc []string) []string {
+	out := append([]string{h}, loc...)
+	if len(out) > core.MaxLocatorHashes {
+		out = out[:core.MaxLocatorHashes]
+	}
+	return out
+}
+
+// downloadBodies oturumun yetkili eksik gövdelerini sırayla indirip doğrular; kısmi
+// ilerleme de duyurulur.
+func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped func() bool) error {
+	bc := ps.Blockchain
 	before := bc.TipHash()
-	defer func() { // kısmi ilerleme de duyurulur
+	defer func() {
 		if tip := bc.TipHash(); tip != before {
 			ps.log.Info("eşle senkronize olundu", "peer", peer, "uc", tip)
 			if b, err := bc.BlockByHash(tip); err == nil {
@@ -420,7 +582,7 @@ func (ps *P2PServer) syncFrom(peer string, stop <-chan struct{}) error {
 			return fmt.Errorf("blok %d: %w", resp.Block.Index, err)
 		}
 	}
-	return herr
+	return nil
 }
 
 // syncHeaders eşten başlıkları oturuma toplar. Dönen hata bilgi amaçlıdır: oturumdaki
@@ -430,10 +592,9 @@ func (ps *P2PServer) syncFrom(peer string, stop <-chan struct{}) error {
 // Tur sınırı yalnızca yeni başlık ekleyen yanıtları sayar: zaten indekste olan başlıklar
 // (ör. yarım kalmış derin bir reorg'un indirilmiş kısmı) indekste kesin artan yükseklikte
 // ilerlediğinden sayıları indeksle sınırlıdır ve süre bütçesine tabidir.
-func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, stopped func() bool) error {
+func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, loc []string, stopped func() bool) error {
 	bc := ps.Blockchain
 	deadline := time.Now().Add(syncPeerBudget)
-	loc := bc.Locator()
 	for rounds := 0; rounds < maxHeaderRounds; {
 		if stopped() || time.Now().After(deadline) {
 			return errSyncBudget
@@ -461,10 +622,7 @@ func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, stopped func()
 		if len(resp.Headers) < core.MaxHeadersPerMsg {
 			return nil
 		}
-		loc = append([]string{s.Last()}, bc.Locator()...)
-		if len(loc) > core.MaxLocatorHashes {
-			loc = loc[:core.MaxLocatorHashes]
-		}
+		loc = withFirst(s.Last(), bc.Locator())
 	}
 	return errSyncBudget
 }

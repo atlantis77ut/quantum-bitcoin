@@ -13,11 +13,9 @@ import "math/big"
 // yazılır ve değer bağımsız bir ikinci kişi tarafından kendi düğümünden doğrulanır.
 // Lansmanda ve henüz değer belirlenmemiş ağlarda 0'dır (kapı kapalı).
 //
-// UYARI: başlık ön-senkronizasyonu gelene kadar değer, genesis'ten itibaren MaxSyncHeaders
-// (100.000) başlıkla ulaşılabilen işi aşmamalıdır. Bir oturum en çok o kadar başlık toplar;
-// toplanan başlıkların işi eşiğin altındaysa gövde indirilmez, uç ilerlemez ve yeni düğüm
-// her turda aynı başlıkları yeniden indirip senkronize olamaz. 60 sn blokla bu ~69 günlük
-// zincir demektir; ön-senkronizasyon bu sınırı kaldırır.
+// Ön-senkronizasyon (presync.go) sayesinde eşiğin oturum penceresinin (MaxSyncHeaders)
+// ötesinde olması senkronizasyonu kilitlemez: başlıklar sabit bellekte sayılır, eşik
+// geçilince parça parça yeniden indirilir.
 //
 // Kapılar: senkronizasyonda gövde indirme (HeaderSync.MoreWork/Missing) ve ağdan duyurulan
 // bloklar (RelayBelowMinWork). AcceptBlock'ta kapı YOKTUR: senkronizasyonla indirilen gerçek
