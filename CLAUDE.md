@@ -31,7 +31,7 @@ Dondurulmuş uzlaşma kararları (kullanıcı, `devils-advocate` sonrası; deği
 Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-denetimi` ile; yukarıda kararı verilmemiş bir uzlaşma seçimi çıkarsa uygulamadan önce `devils-advocate` ile sına ve kullanıcıya sor). Madde 1–5 kapandı, kalanları docs dosyasında:
 1. Zorluk tabanı, en az zincir işi, başlık ön-senkronizasyonu, iş/zaman onay göstergesi.
 2. Senkronizasyon (eş keşfi yok, olgunlaşmamış bakiye API'si yok).
-3. Zorluk ayarlaması (yapılandırılmış eşin `syncPeerBudget` kadar CPU harcatması).
+3. Zorluk ayarlaması (yapılandırılmış eş erteleme başına bir tam başlık doğrulaması harcatabilir; selfish mining/%51 iletişim notu: [docs/GUVENLIK-VARSAYIMLARI.md](docs/GUVENLIK-VARSAYIMLARI.md)).
 4. Kilitsiz kazım.
 5. Eş başına kotalar ve korunan gruplara ayrılmış yuvalar (eş kimliği/puanlama yok).
 6. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek. Lansman kontrol listesi: (a) başlatıcı genesis'i ve 1.–2. bloğu aynı donanımla kazar, hashrate'ini kamuya açıklar; başlangıç hedefi `BitsForHashrate` ile bu hashrate'ten, taban ona oranla seçilir; (b) T_g ≥ genesis mesajındaki Bitcoin bloğunun zamanı ve yayın anı − T_g ≤ birkaç dakika (1. blok T_g+1'e damgalanabilir; boşluk 3. bloktan itibaren 2^(boşluk/2 sa) kat kolaylaşma ve ~boşluk/60 hızlı blok verir), bağımsız test vektörü bu şartları da sabitler.
