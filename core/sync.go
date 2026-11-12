@@ -199,6 +199,42 @@ func (bc *Blockchain) BlockByHash(hash string) (*Block, error) {
 	return bc.getBlock(hash)
 }
 
+// MainBlockByHash ana zincirdeki bir bloğu gövdesiyle ve aynı anlık görüntüdeki onay
+// sayısıyla (uç = 1) döndürür. Blok ana zincirde değilse (bilinmeyen, yan dal, geçersiz)
+// ErrUnknownBlock döner ve veritabanı okunmaz.
+func (bc *Blockchain) MainBlockByHash(hash string) (*Block, int64, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	e, ok := bc.index[hash]
+	if !ok || !bc.isMain(e) {
+		return nil, 0, ErrUnknownBlock
+	}
+	return bc.mainBlockLocked(e)
+}
+
+// MainBlockByHeight ana zincirde height yüksekliğindeki bloğu MainBlockByHash gibi döndürür;
+// yükseklik [0, uç] dışındaysa ErrUnknownBlock.
+func (bc *Blockchain) MainBlockByHeight(height int64) (*Block, int64, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	if height < 0 || height > bc.tip.Height {
+		return nil, 0, ErrUnknownBlock
+	}
+	e, ok := bc.index[bc.main[height]]
+	if !ok {
+		return nil, 0, ErrUnknownBlock
+	}
+	return bc.mainBlockLocked(e)
+}
+
+func (bc *Blockchain) mainBlockLocked(e *indexEntry) (*Block, int64, error) {
+	b, err := bc.getBlock(e.Hash)
+	if err != nil {
+		return nil, 0, err
+	}
+	return b, bc.tip.Height - e.Height + 1, nil
+}
+
 // Confirmations ana zincirdeki bir bloğun onay sayısını (uç = 1) döndürür; blok ana zincirde
 // değilse 0. İkinci değer derin reorg alarmıdır: true ise onaylara güvenilmemelidir.
 func (bc *Blockchain) Confirmations(hash string) (int64, bool) {
