@@ -79,7 +79,8 @@ func NewAPIServer(listenAddr string, bc *core.Blockchain) *APIServer {
 // Handler kendi ServeMux'ı ile rotaları döndürür (http.DefaultServeMux kullanılmaz).
 func (api *APIServer) Handler() http.Handler {
 	mux := http.NewServeMux()
-	// Bakiye sorgulama (borsalar kullanıcı bakiyelerini bununla doğrular)
+	// Bakiye sorgulama (borsalar kullanıcı bakiyelerini bununla doğrular): onaylı bakiye,
+	// olgunlaşmamış coinbase'ler ve (havuz açıksa) bekleyen giden/gelen ve harcanabilir tutar.
 	// Kullanım: GET /balance?address=QBTC...
 	mux.HandleFunc("/balance", getOnly(api.handleGetBalance))
 	// Uçtaki blok, /block ile aynı biçimde ve sayfalı (başlık, tx_count, işlemlerin bir sayfası).
@@ -166,19 +167,62 @@ func (api *APIServer) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	balance, err := api.Blockchain.GetBalance(address)
+	// Havuz varsa bekleyen tutarlar da aynı anlık görüntüden gelir.
+	var (
+		info core.BalanceInfo
+		pool *core.PoolBalance
+		err  error
+	)
+	if api.Mempool != nil {
+		var pb core.PoolBalance
+		if pb, err = api.Mempool.Balance(address); err == nil {
+			info, pool = pb.BalanceInfo, &pb
+		}
+	} else {
+		info, err = api.Blockchain.Balance(address)
+	}
 	if err != nil {
 		api.log.Error("bakiye okunamadı", "address", address, "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
 		return
 	}
-	// balance taban birim cinsindendir (1 QBTC = 10^decimals); balance_qbtc gösterim içindir.
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"address":      address,
-		"balance":      balance,
-		"balance_qbtc": core.FormatAmount(balance),
-		"decimals":     core.AmountDecimals,
-	})
+	immature := make([]map[string]interface{}, 0, len(info.ImmatureCoinbases))
+	for _, c := range info.ImmatureCoinbases {
+		immature = append(immature, map[string]interface{}{
+			"height":            c.Height,
+			"block_hash":        c.BlockHash,
+			"amount":            c.Amount,
+			"amount_qbtc":       core.FormatAmount(c.Amount),
+			"matures_at":        c.MaturesAt,
+			"spendable_in_pool": c.MaturesAt == info.TipHeight+1,
+		})
+	}
+	// Tutarlar taban birim cinsindendir (1 QBTC = 10^decimals); *_qbtc gösterim içindir.
+	// balance onaylı ve harcanabilir bakiyedir; immature henüz olgunlaşmamış coinbase'lerdir
+	// (her biri matures_at yüksekliğindeki blokla balance'a geçer).
+	resp := map[string]interface{}{
+		"address":            address,
+		"balance":            info.Balance,
+		"balance_qbtc":       core.FormatAmount(info.Balance),
+		"decimals":           core.AmountDecimals,
+		"tip_height":         info.TipHeight,
+		"tip_hash":           info.TipHash,
+		"immature":           info.Immature,
+		"immature_qbtc":      core.FormatAmount(info.Immature),
+		"immature_coinbases": immature,
+	}
+	// spendable havuzun yeni işlemi kabul ederken kullandığı bakiyedir: balance + uç+1'de
+	// olgunlaşan coinbase (spendable_in_pool) − pending_outgoing. pending_incoming onaylanana
+	// kadar harcanamaz.
+	if pool != nil {
+		resp["pending_outgoing"] = pool.PendingOutgoing
+		resp["pending_outgoing_qbtc"] = core.FormatAmount(pool.PendingOutgoing)
+		resp["pending_incoming"] = pool.PendingIncoming
+		resp["pending_incoming_qbtc"] = core.FormatAmount(pool.PendingIncoming)
+		resp["spendable"] = pool.Spendable
+		resp["spendable_qbtc"] = core.FormatAmount(pool.Spendable)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetLatestBlock uçtaki bloğu /block biçiminde, sayfalı döndürür (hash/height verilmez).
