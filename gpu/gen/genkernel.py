@@ -1,7 +1,6 @@
 # Açılmış SHA256d çekirdeğini (gpu/sha256d.cl) üretir ve aynı işlem dizisini Python'da
-# hashlib'e karşı doğrular. Kullanım: python3 gpu/gen/genkernel.py gpu/testdata/sha256d_unrolled.cl
-# Çıktı yalnızca A/B karşılaştırması içindir (gpu/opencl_test.go, TestKernelAB); kazıcı
-# gpu/sha256d.cl'deki döngülü çekirdeği kullanır.
+# hashlib'e karşı doğrular. Kullanım: python3 gpu/gen/genkernel.py gpu/sha256d.cl
+# Döngülü karşılaştırma çekirdeği gpu/testdata/sha256d_loop.cl'dedir (TestKernelAB).
 import hashlib, os, struct, sys
 
 K = [
@@ -108,7 +107,7 @@ def cmp(k):
         return "hs7 <= tgt[7]"
     return "hs%d < tgt[%d] || (hs%d == tgt[%d] && (%s))" % (k, k, k, k, cmp(k + 1))
 
-HEAD = """// Q-BTC başlığı için açılmış SHA256d tarama çekirdeği (OpenCL 1.2); yalnızca A/B testi içindir.
+HEAD = """// Q-BTC başlığı için SHA256d tarama çekirdeği (OpenCL 1.2).
 //
 // Başlık 96 bayttır, nonce büyük-endian olarak [0:8]'dedir: ilk SHA-256 bloğunun W0 (üst
 // 32 bit) ve W1 (alt 32 bit) sözcükleri. Konak:
@@ -122,7 +121,8 @@ HEAD = """// Q-BTC başlığı için açılmış SHA256d tarama çekirdeği (Ope
 // Bu dosyanın gövdesi gpu/gen/genkernel.py ile üretilir (elle düzenlemeyin): üç sıkıştırma
 // tamamen açılmıştır, takvim 16 sözcüklük kayan pencerededir ve değişken indeksli dizi yoktur;
 // böylece durum GPU yazmaçlarında kalır ve ikinci SHA'nın sabit dolgusu derleyicide katlanır.
-// Üreteç aynı işlem dizisini Python'da standart SHA-256'ya karşı doğrular.
+// Üreteç aynı işlem dizisini Python'da standart SHA-256'ya karşı doğrular. Döngülü sürüm
+// (gpu/testdata/sha256d_loop.cl) ile aynı süreçteki A/B ölçümü: TestKernelAB.
 """
 body = """
 #define ROTR(x, n) rotate((uint)(x), (uint)(32u - (n)))

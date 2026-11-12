@@ -215,23 +215,23 @@ func BenchmarkKernel(b *testing.B) {
 	b.ReportMetric(float64(b.N)*batch/time.Since(start).Seconds(), "hash/s")
 }
 
-// TestKernelAB döngülü (gpu/sha256d.cl) ve açılmış (testdata, gpu/gen/genkernel.py)
-// çekirdekleri aynı süreçte ve aynı aygıtta, turlar hâlinde dönüşümlü sırayla ölçer; böylece
-// makineler arası fark karşılaştırmayı bozmaz. Önce açılmış çekirdeğin doğruluğu sınanır.
+// TestKernelAB döngülü (gpu/testdata/sha256d_loop.cl) ve açılmış (gpu/sha256d.cl,
+// gpu/gen/genkernel.py ile üretilir) çekirdekleri aynı süreçte ve aynı aygıtta, turlar hâlinde dönüşümlü sırayla ölçer; böylece
+// makineler arası fark karşılaştırmayı bozmaz. Önce döngülü çekirdeğin doğruluğu sınanır.
 // Yalnızca QBTC_KERNEL_AB ayarlıysa çalışır (CI'da pocl; gerçek GPU ölçümü değildir).
 func TestKernelAB(t *testing.T) {
 	if os.Getenv("QBTC_KERNEL_AB") == "" {
 		t.Skip("QBTC_KERNEL_AB ayarlı değil")
 	}
 	openTest(t)
-	src, err := os.ReadFile("testdata/sha256d_unrolled.cl")
+	src, err := os.ReadFile("testdata/sha256d_loop.cl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	const batch = MinBatch * 256
 	names := []string{"döngülü", "açılmış"}
 	kernels := make([]Backend, 2)
-	for i, source := range []string{kernelSource, string(src)} {
+	for i, source := range []string{string(src), kernelSource} {
 		b, err := openSource(0, batch, source)
 		if err != nil {
 			t.Fatalf("%s: %v", names[i], err)
@@ -239,7 +239,7 @@ func TestKernelAB(t *testing.T) {
 		defer b.Close()
 		kernels[i] = b
 	}
-	checkKernel(t, kernels[1].(*clMiner))
+	checkKernel(t, kernels[0].(*clMiner))
 
 	var hdr [core.HeaderSize]byte
 	var tgt [32]byte

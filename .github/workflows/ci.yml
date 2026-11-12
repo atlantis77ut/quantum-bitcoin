@@ -77,10 +77,10 @@ jobs:
           go vet -tags opencl ./...
           go test -tags opencl -race -count=1 ./gpu/... ./core/...
 
-      - name: Açılmış çekirdek üreteci (Python'da SHA256d doğrulaması + depodakiyle aynı mı)
+      - name: GPU çekirdeği üreteci (Python'da SHA256d doğrulaması + depodakiyle aynı mı)
         run: |
-          python3 gpu/gen/genkernel.py /tmp/sha256d_unrolled.cl
-          diff -u gpu/testdata/sha256d_unrolled.cl /tmp/sha256d_unrolled.cl
+          python3 gpu/gen/genkernel.py /tmp/sha256d.cl
+          diff -u gpu/sha256d.cl /tmp/sha256d.cl
 
       - name: GPU çekirdeği hızı ve A/B (pocl, yalnızca bilgi; gerçek GPU ölçümü değil)
         env:

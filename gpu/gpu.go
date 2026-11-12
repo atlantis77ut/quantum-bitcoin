@@ -5,7 +5,8 @@
 // ocl-icd-libopencl1 + üretici sürücüsü ya da pocl). Kazıcı core.MineBackend'i uygular;
 // bulduğu her nonce core tarafından CPU'da yeniden doğrulanır.
 //
-// Çekirdek (sha256d.cl) şablon başına sabit olan ikinci başlık bloğunun mesaj takvimini
+// Çekirdek (sha256d.cl, gen/genkernel.py ile üretilir) tamamen açılmıştır ve durumu
+// yazmaçlarda tutar; şablon başına sabit olan ikinci başlık bloğunun mesaj takvimini
 // konakta bir kez hesaplar ve ilk bloğun W2–W15 sözcüklerini tur başına verir. Midstate
 // yoktur: nonce ilk SHA-256 bloğundadır (core/header.go).
 package gpu
