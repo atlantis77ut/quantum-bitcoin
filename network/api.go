@@ -82,9 +82,9 @@ func (api *APIServer) Handler() http.Handler {
 	// Bakiye sorgulama (borsalar kullanıcı bakiyelerini bununla doğrular)
 	// Kullanım: GET /balance?address=QBTC...
 	mux.HandleFunc("/balance", getOnly(api.handleGetBalance))
-	// Son blok, işlemleriyle birlikte (en fazla ~7 MiB; uyumluluk için korunur). Zinciri izlemek
-	// için /header ve /headers kullanılmalıdır.
-	// Kullanım: GET /latestblock
+	// Uçtaki blok, /block ile aynı biçimde ve sayfalı (başlık, tx_count, işlemlerin bir sayfası).
+	// Zinciri izlemek için /header ve /headers daha ucuzdur.
+	// Kullanım: GET /latestblock[?offset=<0..>][&limit=<1..200, varsayılan 50>] | [?txid=<64 hex>]
 	mux.HandleFunc("/latestblock", getOnly(api.handleGetLatestBlock))
 	// Ana zincirdeki bir bloğun başlığı; hash verilmezse uç. Ana zincirde olmayan özet 404.
 	// Kullanım: GET /header[?hash=<64 hex blok özeti>]
@@ -176,14 +176,12 @@ func (api *APIServer) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetLatestBlock uçtaki bloğu /block biçiminde, sayfalı döndürür (hash/height verilmez).
+// Eskiden tam blok dönüyordu (en fazla ~7 MiB). Sayfalar arasında uç değişebilir: istemci ilk
+// sayfadan sonra /block?hash=<header.hash> ile devam etmeli ya da her sayfada header.hash'i
+// denetlemelidir.
 func (api *APIServer) handleGetLatestBlock(w http.ResponseWriter, r *http.Request) {
-	latestBlock, err := api.Blockchain.GetLatestBlock()
-	if err != nil {
-		api.log.Error("son blok okunamadı", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
-		return
-	}
-	writeJSON(w, http.StatusOK, latestBlock)
+	api.serveBlock(w, r, true)
 }
 
 // handleHeader ana zincirdeki bir başlığı (hash yoksa ucu) döndürür.
@@ -250,9 +248,19 @@ type blockTx struct {
 // /confirmations kullanmalıdır. offset işlem sayısından büyükse liste boştur. txid verilirse
 // yalnızca o işlem döner (blokta yoksa 404). Blok her istekte diskten okunur.
 func (api *APIServer) handleBlock(w http.ResponseWriter, r *http.Request) {
+	api.serveBlock(w, r, false)
+}
+
+// serveBlock /block ve /latestblock'un ortak gövdesidir. latest true ise uçtaki blok seçilir ve
+// hash/height verilemez (onay sayısı 1).
+func (api *APIServer) serveBlock(w http.ResponseWriter, r *http.Request, latest bool) {
 	q := r.URL.Query()
 	hash, heightStr := q.Get("hash"), q.Get("height")
-	if (hash == "") == (heightStr == "") {
+	if latest && (hash != "" || heightStr != "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hash ve height verilemez; belirli blok için /block kullanın"})
+		return
+	}
+	if !latest && (hash == "") == (heightStr == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hash ya da height parametrelerinden tam biri verilmeli"})
 		return
 	}
@@ -286,7 +294,10 @@ func (api *APIServer) handleBlock(w http.ResponseWriter, r *http.Request) {
 	var b *core.Block
 	var confirmations int64
 	var err error
-	if hash != "" {
+	if latest {
+		b, err = api.Blockchain.GetLatestBlock()
+		confirmations = 1
+	} else if hash != "" {
 		if !core.IsHashHex(hash) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz hash parametresi"})
 			return
