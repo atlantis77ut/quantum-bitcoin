@@ -17,6 +17,9 @@ import (
 	"quantum-bitcoin/network"
 )
 
+// mempoolSaveInterval havuzun düzenli kayıt aralığıdır.
+const mempoolSaveInterval = 10 * time.Minute
+
 func main() {
 	fmt.Println("=== QUANTUM BITCOIN (Q-BTC) PRODUCTION NODE ===")
 
@@ -147,6 +150,12 @@ func main() {
 
 	// 3. P2P sunucusu ve eşler
 	p2p := network.NewP2PServer(*port, bc)
+	// Havuz kaydı ağ ve API işlem almadan önce yüklenir; her işlem kabul yolundan yeniden geçer.
+	if restored, skipped, err := p2p.Mempool.Load(); err != nil {
+		slog.Error("havuz kaydı yüklenemedi; boş havuzla devam ediliyor", "err", err)
+	} else if restored+skipped > 0 {
+		slog.Info("havuz kaydı yüklendi", "geri_yuklenen", restored, "atlanan", skipped)
+	}
 	for _, p := range strings.Split(*peerAddr, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			p2p.AddPeer(p)
@@ -176,6 +185,25 @@ func main() {
 		go miner.Run(stopMining)
 	}
 
+	// Havuz düzenli olarak (değiştiyse) ve kapanışta kaydedilir: çökmede en çok bir aralık kaybolur.
+	stopSaver := make(chan struct{})
+	saverDone := make(chan struct{})
+	go func() {
+		defer close(saverDone)
+		t := time.NewTicker(mempoolSaveInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopSaver:
+				return
+			case <-t.C:
+				if _, err := p2p.Mempool.Save(); err != nil {
+					slog.Error("havuz kaydedilemedi", "err", err)
+				}
+			}
+		}
+	}()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
@@ -187,10 +215,18 @@ func main() {
 	}
 
 	close(stopMining)
+	close(stopSaver)
+	<-saverDone
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := apiServer.Shutdown(ctx); err != nil {
 		slog.Error("API düzgün kapatılamadı", "err", err)
+	}
+	// Son kayıt API kapandıktan sonra, zincir kapanmadan (ertelenmiş bc.Close'dan önce) yapılır.
+	if saved, err := p2p.Mempool.Save(); err != nil {
+		slog.Error("havuz kapanışta kaydedilemedi", "err", err)
+	} else if saved {
+		slog.Info("havuz kaydedildi")
 	}
 }
 

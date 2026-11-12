@@ -34,7 +34,7 @@ import (
 //     ana zincirden düşen blokların işlemleri blok sırasıyla geri alınır, yeni dalda olanlar
 //     nonce'u onaylandığı için kendiliğinden düşer.
 //
-// Kilit sırası: Mempool.mu → Blockchain.mu. Blockchain hiçbir zaman mempool'u çağırmaz;
+// Kilit sırası: Mempool.saveMu → Mempool.mu → Blockchain.mu. Blockchain hiçbir zaman mempool'u çağırmaz;
 // mempool zincir kilidini tutarken zincirin kilit alan dışa açık metotlarını çağırmaz.
 
 // Mempool politikası (kullanıcı kararı 2026-11-09).
@@ -102,6 +102,11 @@ type Mempool struct {
 	count   int
 	bytes   int
 	tip     string // havuzun en son uzlaştırıldığı uç
+
+	// gen her içerik değişiminde artar; savedGen son kalıcı kaydın gen'idir (mempoolstore.go).
+	gen      uint64
+	savedGen uint64
+	saveMu   sync.Mutex // Save çağrılarını sıralar: eski anlık görüntü yenisinin üzerine yazılmaz
 }
 
 // NewMempool bc'nin ucuna göre boş bir havuz kurar.
@@ -160,6 +165,13 @@ func (m *Mempool) Policy(address string) (TxPolicy, error) {
 // Add işlemi havuz politikası ve ucun durumuna göre denetleyip havuza alır; işlem kimliğini
 // döndürür. Denetimler ucuzdan pahalıya sıralıdır, ML-DSA imzası en son doğrulanır.
 func (m *Mempool) Add(tx Transaction) (string, error) {
+	return m.add(tx, false)
+}
+
+// add Add'in gövdesidir. restoring true ise (kalıcı kayıttan yükleme) yalnızca
+// MempoolExpiryMargin denetimi atlanır: marj kabulde uygulanır, havuzda kalmak için uç+1'de
+// geçerli olmak yeter (dosya belgesi). Diğer bütün denetimler ve imza doğrulaması aynen yapılır.
+func (m *Mempool) add(tx Transaction, restoring bool) (string, error) {
 	if err := tx.checkFormat(); err != nil {
 		return "", err
 	}
@@ -184,7 +196,7 @@ func (m *Mempool) Add(tx Transaction) (string, error) {
 	}
 
 	remaining := tx.ExpiryHeight - bc.tip.Height // dahil edilebileceği blok sayısı
-	if remaining < MempoolExpiryMargin {
+	if !restoring && remaining < MempoolExpiryMargin {
 		return "", fmt.Errorf("%w: %d blok kaldı, en az %d gerekli", ErrExpiryTooSoon, remaining, MempoolExpiryMargin)
 	}
 	if max := bc.params.MaxTxLifetime(); remaining > max {
@@ -348,6 +360,12 @@ func (m *Mempool) ordered(max int) ([]*poolTx, error) {
 	if err := m.syncLocked(); err != nil {
 		return nil, err
 	}
+	return m.orderedLocked(max), nil
+}
+
+// orderedLocked uzlaştırılmış havuzdan en çok max işlemi Select sırasıyla döndürür; m.mu ve
+// bc.mu (okuma) tutulmalıdır.
+func (m *Mempool) orderedLocked(max int) []*poolTx {
 	h := &headHeap{}
 	for _, chain := range m.senders {
 		*h = append(*h, head{chain: chain})
@@ -364,7 +382,7 @@ func (m *Mempool) ordered(max int) ([]*poolTx, error) {
 			heap.Fix(h, 0)
 		}
 	}
-	return out, nil
+	return out
 }
 
 type head struct {
@@ -580,6 +598,7 @@ func (h *tailHeap) Pop() interface{} {
 
 // truncateLocked gönderenin zincirini ilk n işleme kısaltır.
 func (m *Mempool) truncateLocked(sender string, n int) {
+	m.gen++
 	chain := m.senders[sender]
 	for _, p := range chain[n:] {
 		delete(m.ids, p.id)
@@ -595,7 +614,7 @@ func (m *Mempool) truncateLocked(sender string, n int) {
 
 // setChainLocked gönderenin zincirini kept ile değiştirir.
 func (m *Mempool) setChainLocked(sender string, kept []*poolTx) {
-	m.truncateLocked(sender, 0)
+	m.truncateLocked(sender, 0) // gen'i artırır
 	if len(kept) == 0 {
 		return
 	}
