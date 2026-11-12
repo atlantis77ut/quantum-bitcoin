@@ -106,6 +106,34 @@ func BitsForHashrate(hashesPerSec float64, spacing int64, limitBits uint32) (uin
 	return bits, nil
 }
 
+// LaunchTargets mainnet lansman kontrol listesindeki (madde 6a) başlangıç hedefini ve tabanı
+// ölçülmüş hashrate'ten önerir: başlangıç = BitsForHashrate(h, spacing) mainnet tavanına
+// (0x1d00ffff ≈ 2^224) kırpılmış, taban hedef cinsinden min(başlangıç · 2^16, tavan). Yalnızca
+// öneridir; uzlaşma bunu çağırmaz (Validate yalnızca tavanı ve başlangıç ≤ taban sırasını denetler).
+func LaunchTargets(hashesPerSec float64, spacing int64) (startBits, floorBits uint32, err error) {
+	startBits, err = BitsForHashrate(hashesPerSec, spacing, mainnetMaxPowLimitBits)
+	if err != nil {
+		return 0, 0, err
+	}
+	start, err := TargetFromBits(startBits)
+	if err != nil {
+		return 0, 0, err
+	}
+	ceiling, err := TargetFromBits(mainnetMaxPowLimitBits)
+	if err != nil {
+		return 0, 0, err
+	}
+	floor := new(big.Int).Lsh(start, 16)
+	if floor.Cmp(ceiling) > 0 {
+		floor = ceiling
+	}
+	floorBits = bigToCompact(floor)
+	if _, err := TargetFromBits(floorBits); err != nil {
+		return 0, 0, err
+	}
+	return startBits, floorBits, nil
+}
+
 // hashMeetsTarget özeti büyük-endian 256 bitlik tamsayı olarak okur; kural: özet <= hedef.
 func hashMeetsTarget(h [32]byte, target *big.Int) bool {
 	return new(big.Int).SetBytes(h[:]).Cmp(target) <= 0
