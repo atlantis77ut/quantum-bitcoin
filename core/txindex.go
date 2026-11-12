@@ -34,7 +34,7 @@ type txIndexPut struct {
 	key, value []byte
 }
 
-// blockTxPuts b'nin işlemleri için indeks kayıtlarını döndürür.
+// blockTxPuts b'nin işlemleri için işlem indeksi ve adres geçmişi kayıtlarını döndürür.
 func blockTxPuts(b *Block) ([]txIndexPut, error) {
 	out := make([]txIndexPut, 0, len(b.Transactions))
 	for i := range b.Transactions {
@@ -44,7 +44,11 @@ func blockTxPuts(b *Block) ([]txIndexPut, error) {
 		}
 		out = append(out, txIndexPut{key: txKey(b.Transactions[i].ID()), value: data})
 	}
-	return out, nil
+	addrs, err := blockAddrPuts(b) // adres geçmişi (addrindex.go)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, addrs...), nil
 }
 
 // putBlockTxs b'nin işlemlerini indekse ekler.
@@ -59,11 +63,12 @@ func putBlockTxs(batch *leveldb.Batch, b *Block) error {
 	return nil
 }
 
-// deleteBlockTxs b'nin işlemlerini indeksten siler.
+// deleteBlockTxs b'nin işlemlerini işlem indeksinden ve adres geçmişinden siler.
 func deleteBlockTxs(batch *leveldb.Batch, b *Block) {
 	for i := range b.Transactions {
 		batch.Delete(txKey(b.Transactions[i].ID()))
 	}
+	deleteBlockAddrs(batch, b)
 }
 
 // TxByID ana zincirdeki işlemi bloğuyla, blok içi sırasıyla ve aynı anlık görüntüdeki onay

@@ -36,9 +36,9 @@ Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-de
 5. Eş başına kotalar ve korunan gruplara ayrılmış yuvalar (eş kimliği/puanlama yok).
 6. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek. Lansman kontrol listesi: (a) lansmandan önce açık kaynak, Q-BTC başlığında ölçülmüş GPU ve çok çekirdekli CPU kazıcısı yayımlanır; başlatıcı genesis'i ve 1.–2. bloğu yalnızca GPU kazıcısıyla ve aynı donanımla kazar, yeniden üretilebilir hashrate'ini kamuya açıklar; başlangıç hedefi `BitsForHashrate` ile bu hashrate'ten, taban hedef cinsinden min(başlangıç · 2^16, 0x1d00ffff ≈ 2^224) seçilir; (b) T_g ≥ genesis mesajındaki Bitcoin bloğunun zamanı ve yayın anı − T_g ≤ birkaç dakika (1. blok T_g+1'e damgalanabilir; boşluk 3. bloktan itibaren 2^(boşluk/2 sa) kat kolaylaşma ve ~boşluk/60 hızlı blok verir), bağımsız test vektörü bu şartları da sabitler.
 
-Teknik borç (ayrıntı docs dosyasında): adrese göre işlem geçmişi yok; ceza ve hız sınırı adres grubuna bağlı.
+Teknik borç (ayrıntı docs dosyasında): ceza ve hız sınırı adres grubuna bağlı.
 
-Not: şema sürümü değiştiğinde (şu an "9") eski veri dizinleri açılmaz; silinip yeniden başlatılmalı.
+Not: şema sürümü değiştiğinde (şu an "10") eski veri dizinleri açılmaz; silinip yeniden başlatılmalı.
 
 <!-- model-routing:start -->
 ## Çalışma düzeni: model ve alt ajan yönlendirmesi
