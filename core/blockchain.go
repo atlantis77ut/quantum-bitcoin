@@ -34,7 +34,8 @@ const (
 	// 7: işlem son kullanma yüksekliği (zaman damgası yerine), imza alanı v4, yeni genesis.
 	// 8: ASERT zorluk ayarlaması; indekste çapa zamanı.
 	// 9: ana zincir işlem indeksi (tx_<kimlik> → blok özeti ve sıra; txindex.go).
-	schemaVersion = "9"
+	// 10: ana zincir adres geçmişi indeksi (atx_<adres>_<yükseklik>_<sıra>; addrindex.go).
+	schemaVersion = "10"
 )
 
 var (

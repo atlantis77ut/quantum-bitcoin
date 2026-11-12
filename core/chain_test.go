@@ -96,7 +96,7 @@ func tipHash(t *testing.T, bc *Blockchain) string {
 func chainDump(t *testing.T, bc *Blockchain) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for _, p := range []string{prefixBalance, prefixNonce, prefixHeight, prefixUndo, prefixTx, keyLastHash} {
+	for _, p := range []string{prefixBalance, prefixNonce, prefixHeight, prefixUndo, prefixTx, prefixAddrTx, keyLastHash} {
 		it := bc.db.NewIterator(util.BytesPrefix([]byte(p)), nil)
 		for it.Next() {
 			out[string(it.Key())] = string(it.Value())

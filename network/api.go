@@ -102,6 +102,10 @@ func (api *APIServer) Handler() http.Handler {
 	// alarmı). Havuzdaki (onaylanmamış) işlemler burada görünmez.
 	// Kullanım: GET /transaction?id=<64 hex işlem kimliği>
 	mux.HandleFunc("/transaction", getOnly(api.handleTransaction))
+	// Bir adresin ana zincirdeki işlemleri, yeniden eskiye sayfalı (gelen/giden, tutar, ücret,
+	// karşı taraf, onay). Sonraki sayfa için yanıttaki next before'a verilir. Havuzdakiler görünmez.
+	// Kullanım: GET /history?address=QBTC...[&limit=<1..200, varsayılan 50>][&before=<yükseklik:sıra>]
+	mux.HandleFunc("/history", getOnly(api.handleHistory))
 	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm true ise onaylara
 	// güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
@@ -425,6 +429,72 @@ func (api *APIServer) handleTransaction(w http.ResponseWriter, r *http.Request) 
 		"confirmations": confirmations,
 		"transaction":   b.Transactions[pos],
 	})
+}
+
+// addrTxJSON adres geçmişindeki bir kaydın gösterimidir.
+type addrTxJSON struct {
+	TxID          string `json:"txid"`
+	BlockHash     string `json:"block_hash"`
+	Height        int64  `json:"height"`
+	Index         int    `json:"index"`
+	Confirmations int64  `json:"confirmations"`
+	Direction     string `json:"direction"`
+	Amount        int64  `json:"amount"`
+	AmountQBTC    string `json:"amount_qbtc"`
+	Fee           int64  `json:"fee"`
+	Counterparty  string `json:"counterparty"`
+	Coinbase      bool   `json:"coinbase"`
+}
+
+// handleHistory bir adresin ana zincirdeki işlemlerini yeniden eskiye sayfalı döndürür
+// (core/addrindex.go). Sayfa tek anlık görüntüdür; sayfalar arasında reorg olabilir: istemci
+// tip_hash değiştiyse baştan başlamalıdır. Coinbase girişleri olgunlaşana kadar harcanamaz
+// (/balance). Yatırım onayı için /confirmations kullanılmalıdır.
+func (api *APIServer) handleHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	address := q.Get("address")
+	if !crypto.IsValidAddress(address) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik address parametresi"})
+		return
+	}
+	limit := core.AddrHistoryDefaultLimit
+	if s := q.Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > core.AddrHistoryMaxLimit {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit 1 ile 200 arasında olmalı"})
+			return
+		}
+		limit = n
+	}
+	before := q.Get("before")
+	if before != "" {
+		if _, _, err := core.ParseAddrCursor(before); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz before parametresi (yükseklik:sıra)"})
+			return
+		}
+	}
+	h, err := api.Blockchain.AddressHistory(address, before, limit)
+	if err != nil {
+		api.log.Error("adres geçmişi okunamadı", "address", address, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+	txs := make([]addrTxJSON, 0, len(h.Txs))
+	for _, t := range h.Txs {
+		txs = append(txs, addrTxJSON{TxID: t.TxID, BlockHash: t.BlockHash, Height: t.Height, Index: t.Index,
+			Confirmations: t.Confirmations, Direction: t.Direction, Amount: t.Amount,
+			AmountQBTC: core.FormatAmount(t.Amount), Fee: t.Fee, Counterparty: t.Counterparty, Coinbase: t.Coinbase})
+	}
+	resp := map[string]interface{}{
+		"address":      address,
+		"tip_height":   h.TipHeight,
+		"tip_hash":     h.TipHash,
+		"transactions": txs,
+	}
+	if h.Next != "" {
+		resp["next"] = h.Next
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleConfirmations blok sayısının yanında iş ve zamana dayalı onay bilgisini döndürür
