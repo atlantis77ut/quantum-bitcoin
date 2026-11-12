@@ -10,7 +10,8 @@ import (
 
 // Uzlaşma (consensus) parametreleri. Değiştirmeden önce kullanıcıya sorulmalı.
 const (
-	BlockReward    int64 = 50              // Whitepaper blok ödülü
+	Coin           int64 = 100_000_000     // 1 QBTC = 10^8 taban birim; tüm tutarlar taban birim cinsindendir
+	BlockReward    int64 = 50 * Coin       // Blok ödülü (emisyon takvimi ayrı bir uzlaşma kararıdır)
 	CoinbaseSender       = "SYSTEM_REWARD" // Ödül işlemlerinin göndereni
 	MaxTxPerBlock        = 1000            // Coinbase hariç blok başına en fazla işlem (DoS sınırı)
 	MaxFutureDrift       = 2 * 60 * 60     // Saniye: blok zamanı yerel saatten en fazla bu kadar ileride olabilir
@@ -73,7 +74,7 @@ func NewGenesisBlock() *Block {
 	genesisTx := Transaction{
 		Sender:     "SYSTEM",
 		Receiver:   "QBTC_SATOSHI_QUANTUM",
-		Amount:     21000000, // İlk can suyu arzı
+		Amount:     21_000_000 * Coin, // İlk can suyu arzı; premine genesis PR'ında kaldırılacak (kullanıcı kararı)
 		Timestamp:  time.Now().Unix(),
 		IsCoinbase: true,
 	}

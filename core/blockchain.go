@@ -130,6 +130,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 
 	view := newStateView(bc)
 	var accepted []Transaction
+	fees := int64(0)
 	for i := range transactions {
 		if len(accepted) == MaxTxPerBlock {
 			bc.log.Warn("blok dolu, kalan işlemler bekletiliyor", "kalan", len(transactions)-i)
@@ -140,17 +141,23 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
 			continue
 		}
+		// Ücret toplamı (ödül dahil) taşacaksa işlemi bloğa alma; aksi halde coinbase geçersiz olur.
+		if BlockReward+fees > math.MaxInt64-tx.Fee {
+			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", "ücret toplamı taşar")
+			continue
+		}
 		if err := view.apply(&tx); err != nil {
 			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
 			continue
 		}
+		fees += tx.Fee
 		accepted = append(accepted, tx)
 	}
 
 	coinbase := Transaction{
 		Sender:     CoinbaseSender,
 		Receiver:   minerAddress,
-		Amount:     BlockReward,
+		Amount:     BlockReward + fees,
 		IsCoinbase: true,
 	}
 
@@ -246,7 +253,7 @@ func (bc *Blockchain) checkStateless(b *Block) error {
 		return ErrTooManyTx
 	}
 	cb := &b.Transactions[0]
-	if !cb.IsCoinbase || cb.Sender != CoinbaseSender || cb.Amount != BlockReward ||
+	if !cb.IsCoinbase || cb.Sender != CoinbaseSender || cb.Fee != 0 ||
 		!crypto.IsValidAddress(cb.Receiver) || cb.Nonce != 0 ||
 		len(cb.PublicKey) != 0 || len(cb.Signature) != 0 {
 		return ErrBadCoinbase
@@ -256,7 +263,31 @@ func (bc *Blockchain) checkStateless(b *Block) error {
 			return fmt.Errorf("işlem %d: %w", i, err)
 		}
 	}
+	// Ücretler yalnızca VerifyStateless'tan geçtikten (Fee >= 0) sonra toplanır.
+	want, err := coinbaseValue(b.Transactions[1:])
+	if err != nil {
+		return err
+	}
+	if cb.Amount != want {
+		return fmt.Errorf("%w: tutar %d, beklenen %d (ödül + ücretler)", ErrBadCoinbase, cb.Amount, want)
+	}
 	return nil
+}
+
+// coinbaseValue blok ödülü ile işlem ücretlerinin toplamını taşma kontrolüyle hesaplar.
+// Çağıran, tüm ücretlerin negatif olmadığını önceden doğrulamış olmalıdır.
+func coinbaseValue(txs []Transaction) (int64, error) {
+	total := BlockReward
+	for i := range txs {
+		if txs[i].Fee < 0 {
+			return 0, ErrNegativeFee
+		}
+		if total > math.MaxInt64-txs[i].Fee {
+			return 0, fmt.Errorf("%w: ücret toplamı", ErrOverflow)
+		}
+		total += txs[i].Fee
+	}
+	return total, nil
 }
 
 // checkStateful bloğu zincir ucuna göre kontrol eder ve işlemleri view üzerinde uygular
@@ -294,7 +325,7 @@ func (bc *Blockchain) checkStateful(b *Block, prev *Block, view *stateView) erro
 // düğümler bloğu kalıcı reddedip ağı bölerdi. Disk/okuma hataları ve ErrCorruptState
 // geçicidir; dürüst bir bloğu kalıcı olarak dışlamamalıdır.
 func isPermanentStatefulErr(err error) bool {
-	for _, perm := range []error{ErrTimestampOld, ErrBadNonce, ErrInsufficientBal, ErrOverflow, ErrNonPositiveAmount} {
+	for _, perm := range []error{ErrTimestampOld, ErrBadNonce, ErrInsufficientBal, ErrOverflow, ErrNonPositiveAmount, ErrNegativeFee} {
 		if errors.Is(err, perm) {
 			return true
 		}
@@ -474,8 +505,15 @@ func (v *stateView) apply(tx *Transaction) error {
 	if tx.Amount <= 0 {
 		return ErrNonPositiveAmount
 	}
-	if sb < tx.Amount {
-		return fmt.Errorf("%w: mevcut %d, istenen %d", ErrInsufficientBal, sb, tx.Amount)
+	if tx.Fee < 0 {
+		return ErrNegativeFee
+	}
+	if tx.Amount > math.MaxInt64-tx.Fee {
+		return fmt.Errorf("%w: tutar + ücret", ErrOverflow)
+	}
+	debit := tx.Amount + tx.Fee
+	if sb < debit {
+		return fmt.Errorf("%w: mevcut %d, istenen %d (tutar + ücret)", ErrInsufficientBal, sb, debit)
 	}
 	rb, err := v.balance(tx.Receiver)
 	if err != nil {
@@ -484,7 +522,7 @@ func (v *stateView) apply(tx *Transaction) error {
 	if rb > math.MaxInt64-tx.Amount {
 		return ErrOverflow
 	}
-	v.balances[tx.Sender] = sb - tx.Amount
+	v.balances[tx.Sender] = sb - debit
 	v.balances[tx.Receiver] = rb + tx.Amount
 	v.nonces[tx.Sender] = n + 1
 	return nil

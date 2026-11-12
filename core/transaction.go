@@ -16,10 +16,12 @@ import (
 const ChainID = "qbtc-mainnet"
 
 // txDomain imza verisini başka protokollerin ve ağların mesajlarından ayırır.
-const txDomain = "QBTC-TX-v1|" + ChainID
+// v2: Fee alanı eklendi; v1 imzaları geçersizdir.
+const txDomain = "QBTC-TX-v2|" + ChainID
 
 var (
 	ErrNonPositiveAmount  = errors.New("tutar pozitif olmalı")
+	ErrNegativeFee        = errors.New("işlem ücreti negatif olamaz")
 	ErrBadSender          = errors.New("gönderen adresi açık anahtarla eşleşmiyor")
 	ErrBadReceiver        = errors.New("geçersiz alıcı adresi")
 	ErrSelfTransfer       = errors.New("kendine transfer desteklenmiyor")
@@ -30,7 +32,8 @@ var (
 type Transaction struct {
 	Sender     string `json:"sender"`
 	Receiver   string `json:"receiver"`
-	Amount     int64  `json:"amount"`
+	Amount     int64  `json:"amount"` // Taban birim (1 QBTC = Coin)
+	Fee        int64  `json:"fee"`    // Madenciye giden ücret, taban birim; göndericiden Amount+Fee düşülür
 	Timestamp  int64  `json:"timestamp"`
 	Nonce      uint64 `json:"nonce"`      // Gönderenin hesap sırası; her işlemde 1 artar (replay koruması)
 	PublicKey  []byte `json:"public_key"` // Gönderenin ML-DSA-65 açık anahtarı
@@ -54,6 +57,8 @@ func (tx *Transaction) SigningBytes() []byte {
 	writeField([]byte(tx.Receiver))
 	var n [8]byte
 	binary.BigEndian.PutUint64(n[:], uint64(tx.Amount))
+	writeField(n[:])
+	binary.BigEndian.PutUint64(n[:], uint64(tx.Fee))
 	writeField(n[:])
 	binary.BigEndian.PutUint64(n[:], uint64(tx.Timestamp))
 	writeField(n[:])
@@ -97,6 +102,9 @@ func (tx *Transaction) VerifyStateless() error {
 	if tx.Amount <= 0 {
 		return ErrNonPositiveAmount
 	}
+	if tx.Fee < 0 {
+		return ErrNegativeFee
+	}
 	if !crypto.IsValidAddress(tx.Receiver) {
 		return ErrBadReceiver
 	}
@@ -113,5 +121,6 @@ func (tx *Transaction) VerifyStateless() error {
 }
 
 func (tx *Transaction) String() string {
-	return fmt.Sprintf("tx{%s -> %s, %d QBTC, nonce=%d}", tx.Sender, tx.Receiver, tx.Amount, tx.Nonce)
+	return fmt.Sprintf("tx{%s -> %s, %s QBTC, ücret=%s, nonce=%d}", tx.Sender, tx.Receiver,
+		FormatAmount(tx.Amount), FormatAmount(tx.Fee), tx.Nonce)
 }
