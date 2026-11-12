@@ -184,3 +184,29 @@ func TestOpenTunes(t *testing.T) {
 		t.Fatalf("tur boyu %d", r)
 	}
 }
+
+// go test -tags opencl -run '^$' -bench Kernel ./gpu: ilk aygıtta tek tur (MinBatch·256
+// nonce) başına hash/s. CI'da pocl üzerinde yalnızca bilgi içindir; gerçek GPU ölçümü
+// -mine-gpu -bench-hashrate ile yapılır.
+func BenchmarkKernel(b *testing.B) {
+	devs, err := Devices()
+	if err != nil || len(devs) == 0 {
+		b.Skipf("OpenCL aygıtı yok: %v", err)
+	}
+	const batch = MinBatch * 256
+	be, err := Open(0, batch)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer be.Close()
+	var hdr [core.HeaderSize]byte
+	var tgt [32]byte
+	b.ResetTimer()
+	start := time.Now()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := be.Scan(hdr, tgt, uint64(i)*batch, batch); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(b.N)*batch/time.Since(start).Seconds(), "hash/s")
+}
