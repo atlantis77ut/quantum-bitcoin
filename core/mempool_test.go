@@ -276,3 +276,42 @@ func TestMempoolEviction(t *testing.T) {
 		t.Fatalf("tahliye edilen işlem geri döndü: %v", err)
 	}
 }
+
+// Envanter şablonla aynı sıradadır (göndericinin nonce'ları boşluksuz); Missing ve Get yalnızca
+// geçerli kimliklerle çalışır.
+func TestMempoolInventory(t *testing.T) {
+	bc := newTestChain(t)
+	m := NewMempool(bc)
+	alice, carol, bob := newKey(t), newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+	fund(t, bc, carol, 1)
+	a1 := mpTx(t, bc, alice, bob.Address, Coin, MempoolMinFee, 1)
+	a2 := mpTx(t, bc, alice, bob.Address, Coin, 5000, 2)
+	c1 := mpTx(t, bc, carol, bob.Address, Coin, 3000, 1)
+	for _, tx := range []Transaction{a1, a2, c1} {
+		mustAdd(t, m, tx)
+	}
+	inv, err := m.Inventory(MempoolMaxTxs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{c1.ID(), a1.ID(), a2.ID()}
+	if len(inv) != len(want) {
+		t.Fatalf("envanter %d kimlik", len(inv))
+	}
+	for i := range want {
+		if inv[i] != want[i] {
+			t.Fatalf("envanter sırası %d yanlış", i)
+		}
+	}
+	u := mpTx(t, bc, bob, alice.Address, Coin, MempoolMinFee, 1)
+	unknown := u.ID()
+	missing := m.Missing([]string{a1.ID(), "zz", unknown, unknown, "ABC"})
+	if len(missing) != 1 || missing[0] != unknown {
+		t.Fatalf("eksikler %v", missing)
+	}
+	got := m.Get([]string{c1.ID(), "zz", unknown})
+	if len(got) != 1 || got[0].ID() != c1.ID() {
+		t.Fatalf("Get %d işlem", len(got))
+	}
+}
