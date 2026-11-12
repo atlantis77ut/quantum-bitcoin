@@ -78,6 +78,9 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 	if p == nil {
 		return nil, ErrNoGenesis
 	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
 	genesis, err := NewGenesisBlock(p)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", p.Name, err)
@@ -183,6 +186,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 	if err != nil {
 		return nil, err
 	}
+	subsidy := BlockSubsidy(prev.Index+1, bc.params)
 
 	view := newStateView(bc)
 	var accepted []Transaction
@@ -198,7 +202,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 			continue
 		}
 		// Ücret toplamı (ödül dahil) taşacaksa işlemi bloğa alma; aksi halde coinbase geçersiz olur.
-		if BlockReward+fees > math.MaxInt64-tx.Fee {
+		if subsidy+fees > math.MaxInt64-tx.Fee {
 			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", "ücret toplamı taşar")
 			continue
 		}
@@ -213,7 +217,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 	coinbase := Transaction{
 		Sender:     CoinbaseSender,
 		Receiver:   minerAddress,
-		Amount:     BlockReward + fees,
+		Amount:     subsidy + fees,
 		Nonce:      uint64(prev.Index + 1), // yükseklik: her coinbase'in kimliği benzersiz olur
 		IsCoinbase: true,
 	}
@@ -344,6 +348,11 @@ func (bc *Blockchain) checkHeader(b *Block) error {
 // checkBody coinbase biçimini, işlem imzalarını ve ödül + ücret toplamını doğrular.
 // checkHeader'dan geçmiş blokta gövde özete bağlıdır; buradaki hatalar kalıcıdır.
 func (bc *Blockchain) checkBody(b *Block) error {
+	// Ödül yüksekliğe bağlıdır; ağdan gelen yükseklik ödülden önce sınırlanır. Ebeveynle
+	// tutarlılığı (Index == prev+1) checkStateful denetler.
+	if b.Index < 1 {
+		return ErrBadIndex
+	}
 	cb := &b.Transactions[0]
 	if !cb.IsCoinbase || cb.Sender != CoinbaseSender || cb.Fee != 0 ||
 		!crypto.IsValidAddress(cb.Receiver) || cb.Nonce != uint64(b.Index) ||
@@ -356,7 +365,7 @@ func (bc *Blockchain) checkBody(b *Block) error {
 		}
 	}
 	// Ücretler yalnızca VerifyStateless'tan geçtikten (Fee >= 0) sonra toplanır.
-	want, err := coinbaseValue(b.Transactions[1:])
+	want, err := coinbaseValue(BlockSubsidy(b.Index, bc.params), b.Transactions[1:])
 	if err != nil {
 		return err
 	}
@@ -366,10 +375,10 @@ func (bc *Blockchain) checkBody(b *Block) error {
 	return nil
 }
 
-// coinbaseValue blok ödülü ile işlem ücretlerinin toplamını taşma kontrolüyle hesaplar.
-// Çağıran, tüm ücretlerin negatif olmadığını önceden doğrulamış olmalıdır.
-func coinbaseValue(txs []Transaction) (int64, error) {
-	total := BlockReward
+// coinbaseValue blok ödülü (BlockSubsidy) ile işlem ücretlerinin toplamını taşma
+// kontrolüyle hesaplar. Ücretler negatifse ErrNegativeFee döner.
+func coinbaseValue(subsidy int64, txs []Transaction) (int64, error) {
+	total := subsidy
 	for i := range txs {
 		if txs[i].Fee < 0 {
 			return 0, ErrNegativeFee

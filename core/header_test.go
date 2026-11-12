@@ -122,7 +122,7 @@ func TestEveryFieldIsCommitted(t *testing.T) {
 	base := &Block{Version: BlockVersion, Index: 7, Timestamp: 1000, Bits: 0x1f00ffff, Nonce: 3,
 		PrevHash: strings.Repeat("11", 32),
 		Transactions: []Transaction{
-			{Sender: CoinbaseSender, Receiver: bob.Address, Amount: BlockReward, Nonce: 7, IsCoinbase: true},
+			{Sender: CoinbaseSender, Receiver: bob.Address, Amount: testReward, Nonce: 7, IsCoinbase: true},
 			signedTxFee(t, alice, bob.Address, Coin, 5, 1),
 		}}
 	base.MerkleRoot = base.ComputeMerkleRoot()

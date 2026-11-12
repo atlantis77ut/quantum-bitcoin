@@ -17,21 +17,22 @@ Go ile yazılmış, ML-DSA-65 (liboqs, cgo) imzalı, PoW tabanlı Layer-1 protot
 
 Kapatılanlar (fix/security-hardening): imza ve adres bağı, P2P blok doğrulaması, negatif tutar, aynı blokta çift harcama, replay (hesap nonce'u), atomik yazım, zaman damgası kuralları, P2P başlatma, HTTP sertleştirme, testler + CI.
 
-Kapatılanlar (önkoşul PR'ları): 10^8 taban birim + işlem ücreti (feat/subunit-and-fees); 96 baytlık sabit başlık, SHA256d, Merkle kökü, compact 256 bit hedef (feat/fixed-header); ağ parametreleri (mainnet/testnet/regtest), deterministik genesis, `-network` bayrağı, kimlik ve imza alanının ayrılması (`QBTC-SIG-v3|<ağ>|<genesis özeti>`) (feat/genesis-params).
+Kapatılanlar (önkoşul PR'ları): 10^8 taban birim + işlem ücreti (feat/subunit-and-fees); 96 baytlık sabit başlık, SHA256d, Merkle kökü, compact 256 bit hedef (feat/fixed-header); ağ parametreleri (mainnet/testnet/regtest), deterministik genesis, `-network` bayrağı, kimlik ve imza alanının ayrılması (`QBTC-SIG-v3|<ağ>|<genesis özeti>`) (feat/genesis-params); emisyon takvimi `BlockSubsidy`/`SupplyAt` (feat/emission).
 
 Kullanıcının verdiği uzlaşma kararları (2026-11-08, `devils-advocate` sonrası):
 - Premine yok; genesis sıfır değerli coinbase + mesajdır, alıcısı mesaj özetinden türetilir.
-- Emisyon: tavan + küçük kuyruk emisyonu, ~4 yılda bir yarılanma, ödül blok süresine göre ölçeklenir. Lansmandan önce ayrı PR.
+- Emisyon (core/emission.go): 5 QBTC ilk ödül, 2.100.000 blokta (~4 yıl) bir yarılanma, 0,1 QBTC/blok kuyruk tabanı (~24. yıldan itibaren, yılda ~52.596 QBTC), ilk 20.000 blokta doğrusal başlangıç rampası. Yarılanma dönemi arzı 20.621.872,5 QBTC; sonra arz doğrusal büyür. İletişimde "tavan"/"21M max supply" denmez.
+- Emisyon değerleri `Params.TargetSpacing`'den türetilir; blok süresi (60 ya da 30 sn) lansmandan önce ölçülüp dondurulur, zincir ortasında değiştirilmez.
 - Blok süresi 60 sn; yayılım + doğrulama ölçümü ≤1–2 sn çıkarsa 30 sn'ye inebilir.
 - PoW: SHA256d, Bitcoin'den farklı başlık düzeni.
 - Zorluk: her blokta LWMA (ASERT kabul edilebilir alternatif), aşağıdaki önkoşullardan sonra.
 - Mainnet genesis'i şimdi sabitlenmez (erken gizli kazım = gizli premine). `MainnetParams` genesis'i boştur ve düğüm mainnet'i reddeder; genesis lansman anında öngörülemez bir mesajla (ör. o anki bir Bitcoin blok özeti) son uzlaşma kararı olarak üretilir.
 
 Sırayla kalan önkoşullar ve açıklar (her biri ayrı PR, test + `guvenlik-denetimi` ile; yukarıda kararı verilmemiş bir uzlaşma seçimi çıkarsa uygulamadan önce `devils-advocate` ile sına ve kullanıcıya sor):
-1. **Emisyon takvimi (lansmanı engeller).** `BlockReward` 50 QBTC'de sabit.
-2. **FTL / zaman damgası kuralları** 60 sn blok süresine göre ölçeklenmeli (`MaxFutureDrift` 2 saat).
+1. **FTL / zaman damgası kuralları** 60 sn blok süresine göre ölçeklenmeli (`MaxFutureDrift` 2 saat = 120 blok); emisyon yüksekliğe bağlı olduğundan zaman bükme emisyonu öne çeker. Hedef ~10–15 dk.
+2. **Lansman adilliği:** mainnet başlangıç hedefi gerçekçi hashrate tahminine göre sert seçilmeli (rampa tek başına yetmez).
 3. **Zincir seçimi / reorg / senkronizasyon yok (YÜKSEK).** Düğüm aynı yükseklikte ilk gördüğü bloğu kalıcı kabul ediyor, eşlerden eksik blokları çekemiyor, aldığı bloğu yaymıyor. Başlık indeksi, en çok birikmiş iş kuralı, onay sayısı ve coinbase olgunluğu gerekli.
-4. **Zorluk ayarlaması yok (KRİTİK).** Hedef ağ parametresinde sabit; LWMA 3'ten sonra. Bu yapılmadan madencilik döngüsü `main`'e eklenmeyecek.
+4. **Zorluk ayarlaması yok (KRİTİK).** Hedef ağ parametresinde sabit; LWMA 3'ten sonra. LWMA PR'ına emisyonun takvimden sapma simülasyonu eklenmeli. Bu yapılmadan madencilik döngüsü `main`'e eklenmeyecek.
 5. Madencilik yazma kilidinin dışında yapılmalı (`AddBlock` kazım sırasında zinciri kilitliyor).
 6. DoS: `network/api.go` IPv6 /48 hız sınırı tablosu şişirilebilir; `network/p2p.go` bağlantı yuvaları tüketilebilir.
 7. Mainnet genesis'i lansmanda üretilip `MainnetParams`'a ve bağımsız test vektörüne eklenecek.

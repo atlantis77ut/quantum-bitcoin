@@ -18,21 +18,21 @@ func TestFeeGoesToMiner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Transactions[0].Amount != BlockReward+fee {
+	if b.Transactions[0].Amount != testReward+fee {
 		t.Fatalf("coinbase %d, beklenen ödül + ücret", b.Transactions[0].Amount)
 	}
-	if got := mustBalance(t, bc, alice.Address); got != BlockReward-10*Coin-fee {
+	if got := mustBalance(t, bc, alice.Address); got != testReward-10*Coin-fee {
 		t.Fatalf("alice bakiyesi %d", got)
 	}
 	if got := mustBalance(t, bc, bob.Address); got != 10*Coin {
 		t.Fatalf("bob bakiyesi %d", got)
 	}
-	if got := mustBalance(t, bc, miner.Address); got != BlockReward+fee {
+	if got := mustBalance(t, bc, miner.Address); got != testReward+fee {
 		t.Fatalf("madenci bakiyesi %d", got)
 	}
 	total := mustBalance(t, bc, alice.Address) + mustBalance(t, bc, bob.Address) + mustBalance(t, bc, miner.Address)
-	if total != 2*BlockReward {
-		t.Fatalf("arz korunmadı: %d, beklenen %d", total, 2*BlockReward)
+	if total != 2*testReward {
+		t.Fatalf("arz korunmadı: %d, beklenen %d", total, 2*testReward)
 	}
 }
 
@@ -47,7 +47,7 @@ func TestAcceptsBlockWithCorrectFeeClaim(t *testing.T) {
 	if err := bc.AcceptBlock(b); err != nil {
 		t.Fatalf("geçerli blok reddedildi: %v", err)
 	}
-	if got := mustBalance(t, bc, miner.Address); got != BlockReward+5 {
+	if got := mustBalance(t, bc, miner.Address); got != testReward+5 {
 		t.Fatalf("madenci bakiyesi %d", got)
 	}
 }
@@ -67,7 +67,7 @@ func TestRejectsNegativeFee(t *testing.T) {
 			t.Fatalf("ücret %d: blok hatası %v", fee, err)
 		}
 	}
-	if mustBalance(t, bc, alice.Address) != BlockReward || mustBalance(t, bc, miner.Address) != 0 {
+	if mustBalance(t, bc, alice.Address) != testReward || mustBalance(t, bc, miner.Address) != 0 {
 		t.Fatal("bakiyeler değişti")
 	}
 }
@@ -103,7 +103,7 @@ func TestRejectsWhenFeeExceedsBalance(t *testing.T) {
 	alice, bob, miner := newKey(t), newKey(t), newKey(t)
 	fund(t, bc, alice, 1)
 
-	tx := signedTxFee(t, alice, bob.Address, BlockReward, 1, 1)
+	tx := signedTxFee(t, alice, bob.Address, testReward, 1, 1)
 	b := craftBlock(t, bc, []Transaction{coinbaseWithFees(miner.Address, tx), tx})
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrInsufficientBal) {
 		t.Fatalf("hata %v", err)
@@ -112,7 +112,7 @@ func TestRejectsWhenFeeExceedsBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mined.Transactions) != 1 || mined.Transactions[0].Amount != BlockReward {
+	if len(mined.Transactions) != 1 || mined.Transactions[0].Amount != testReward {
 		t.Fatal("karşılanamayan işlem yerel bloğa alındı")
 	}
 }
@@ -129,7 +129,7 @@ func TestRejectsDoubleSpendPushedOverByFees(t *testing.T) {
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrInsufficientBal) {
 		t.Fatalf("hata %v", err)
 	}
-	if mustBalance(t, bc, alice.Address) != BlockReward || mustBalance(t, bc, bob.Address) != 0 {
+	if mustBalance(t, bc, alice.Address) != testReward || mustBalance(t, bc, bob.Address) != 0 {
 		t.Fatal("bakiyeler değişti")
 	}
 }
@@ -144,12 +144,12 @@ func TestRejectsFeeSumOverflow(t *testing.T) {
 	tx1 := signedTxFee(t, alice, bob.Address, 1, half, 1)
 	tx2 := signedTxFee(t, alice, bob.Address, 1, half, 2)
 	cb := coinbaseTo(miner.Address)
-	cb.Amount = BlockReward // taşma kontrolü olmasa ErrBadCoinbase dönerdi; ErrOverflow beklenir
+	cb.Amount = testReward // taşma kontrolü olmasa ErrBadCoinbase dönerdi; ErrOverflow beklenir
 	b := craftBlock(t, bc, []Transaction{cb, tx1, tx2})
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("hata %v", err)
 	}
-	if _, err := coinbaseValue([]Transaction{tx1, tx2}); !errors.Is(err, ErrOverflow) {
+	if _, err := coinbaseValue(testReward, []Transaction{tx1, tx2}); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("coinbaseValue: %v", err)
 	}
 }
@@ -184,7 +184,7 @@ func TestFormatAmount(t *testing.T) {
 		{0, "0.00000000"},
 		{1, "0.00000001"},
 		{Coin, "1.00000000"},
-		{BlockReward, "50.00000000"},
+		{50 * Coin, "50.00000000"},
 		{-Coin / 2, "-0.50000000"},
 		{math.MaxInt64, "92233720368.54775807"},
 		{math.MinInt64, "-92233720368.54775808"},
