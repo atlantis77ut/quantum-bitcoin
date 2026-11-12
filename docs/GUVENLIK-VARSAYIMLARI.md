@@ -16,14 +16,21 @@ Bu not borsalar, entegrasyonlar ve kamuya yapılan iletişim içindir. Q-BTC'nin
 - "N onaydan sonra işlem geri alınamaz"
 - "Derin reorg alarmı yoksa işlemler güvendedir"
 - "Kuantuma dayanıklı imzalar zinciri güvenli kılar"
+- "ASIC'e dirençli" ya da "Bitcoin ASIC'leri Q-BTC'yi kazamaz"
 
 Doğru ifade: ML-DSA-65 imzaları, kabul görmüş güvenlik varsayımları altında, kuantum bilgisayarlı saldırganın imza sahteciliğine karşı tasarlanmıştır. Uygulama ve yan kanal riskleri bu kapsamın dışındadır. Zincirin yeniden yazılmasına karşı koruma yalnızca dürüst hashrate çoğunluğundan gelir. Kuantum hızlandırmasının (Grover) madenciliğe etkisi bu notta değerlendirilmemiştir.
 
 ## Donanım uyumluluğu
 
-Başlık 96 bayttır ve nonce ilk 64 baytlık SHA-256 bloğundadır (core/header.go). Bu düzen, Bitcoin ASIC'lerinin ilk bloğun ara durumunu (midstate) bir kez hesaplayıp yalnızca ikinci bloktaki nonce'u döndürme varsayımını bilerek bozar. Ancak bu **bir donanım testi değil, tasarım gerekçesidir.**
+Başlık 96 bayttır ve nonce ilk 64 baytlık SHA-256 bloğundadır (core/header.go). Bu düzen, Bitcoin ASIC'lerinin ilk bloğun ara durumunu (midstate) bir kez hesaplayıp yalnızca ikinci bloktaki nonce'u döndürme varsayımını bilerek bozar. Ancak bu **bir donanım testi değil, tasarım gerekçesidir.** Hiçbir yazılım testi bir donanımın Q-BTC'yi kazamayacağını kanıtlamaz. Mevcut ASIC'lerin yazılım uyarlaması, FPGA'lar ve yeni yongalar mümkün kalır.
 
-Güvenlik varsayımı bu yüzden en kötü durumdur: SHA256d hashrate'i (mevcut donanımın yazılım uyarlamasıyla, yeni yongalarla ya da kiralama pazarlarıyla) Q-BTC'ye yönelebilir. Zorluk tabanı seçimi (MAINNET-ONCESI.md, "tek ucuz ASIC ~10 TH/s") da aynı uyumlu-donanım varsayımına dayanır. İki varsayım lansmandan önce birlikte yeniden değerlendirilmelidir.
+Kullanıcı kararı (2026-11-12): referans donanım, Q-BTC başlığında ölçülmüş açık kaynak bir GPU kazıcısıdır. Lansmandan önce bu kazıcı ve çok çekirdekli bir CPU kazıcısı yayımlanır. Başlatıcı genesis'i ve 1.–2. bloğu yalnızca bu GPU kazıcısıyla kazar; açıkladığı hashrate aynı kazıcıyla herkesçe yeniden üretilebilir. Zorluk tabanı hedef cinsinden min(başlangıç · 2^16, 0x1d00ffff ≈ 2^224) seçilir (MAINNET-ONCESI.md).
+
+Sonuçları:
+- Bu başlıkta aynı SHA-256 donanımı Bitcoin'deki hızının yaklaşık 2/3'ünü verir: nonce denemesi başına 3 SHA-256 sıkıştırması gerekir (başlık için 2, ikinci SHA-256 için 1), Bitcoin'de midstate ile 2. Bu yalnızca sıkıştırma sayısından kaba bir tahmindir, kesin değer ya da alt sınır değildir; rakamlar ölçülmedi.
+- GPU bulut kiralaması ilk günden erişilebilirdir. Lansman hashrate'i küçük olduğundan erken dönemde %51 saldırısı ucuzdur.
+- GPU ölçeğinde bir lansmanda taban başlangıçtan yalnızca ~2^4–2^6 kat kolay olabilir (ölçülmemiş 1–5 GH/s varsayımı; oran GPU sayısıyla büyür). Zincir takvimin 8–12 saat gerisine düşerse taban dolar ve sonrasında açık birikir. Bu oranı aşan kalıcı hashrate düşüşünde bloklar süresiz yavaş kalır.
+- Güvenlik varsayımı yine en kötü durumdur: uyumlu SHA-256 hashrate'i (uyarlanmış ya da yeni donanım, kiralama pazarları) Q-BTC'ye yönelebilir.
 
 ## Selfish mining
 

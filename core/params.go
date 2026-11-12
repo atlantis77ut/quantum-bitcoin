@@ -151,14 +151,20 @@ func (p *Params) powLimitTarget() *big.Int {
 	return t
 }
 
-// mainnetMaxPowLimitBits mainnet tabanının olabileceği en kolay hedeftir: 2^224 (Bitcoin
-// zorluk 1, blok başına ~2^32 özet). Kullanıcı kararı (2026-11-08): mainnet tabanı lansmanda,
-// başlangıç hedefiyle birlikte ona oranla seçilir (başlangıçtan 2^12–2^16 kat kolay, ama
-// 2^224'ten kolay değil ve tabanın gerektirdiği hashrate tek ucuz bir ASIC'in, ~10 TH/s,
-// altında kalacak düzeyde). Taban düşük zorluklu başlık spam'ine ya da uzun menzilli yeniden
-// yazıma karşı savunma DEĞİLDİR (2^224 bir ASIC için bedavadır); onlara karşı en az zincir
-// işi / başlık ön-senkronizasyonu gerekir. Taban yalnızca duraklama sonrası hedefin ne kadar
-// kolaylaşabileceğini sınırlar. Mutlak ASERT kırpılınca açığı silmez, biriktirir.
+// mainnetMaxPowLimitBits mainnet tabanının olabileceği en kolay hedeftir: ≈2^224 (Bitcoin
+// zorluk 1, blok başına ~2^32 özet, 60 sn'de ~72 MH/s). Kullanıcı kararları (2026-11-08,
+// 2026-11-12): mainnet tabanı lansmanda başlangıç hedefiyle birlikte, hedef cinsinden
+// taban = min(başlangıç · 2^16, 0x1d00ffff) olarak seçilir; Validate yalnızca tavanı ve
+// başlangıç ≤ taban sırasını denetler, 2^16 oranı lansman kontrol listesindedir. Referans
+// donanım Bitcoin ASIC'i değil, Q-BTC başlığında ölçülmüş açık kaynak GPU kazıcısıdır
+// (core/header.go midstate varsayımını bozar; donanımda test edilmedi). GPU ölçeğinde bir
+// lansmanda (~1–5 GH/s varsayımı, ölçülmedi; oran GPU sayısıyla büyür) oran yalnızca
+// ~2^4–2^6 olur ve bu kabul edildi: zincir takvimin 8–12 saat gerisine düşünce taban dolar,
+// bu oranı aşan kalıcı hashrate düşüşünde bloklar süresiz yavaş kalır. Taban düşük zorluklu
+// başlık spam'ine ya da uzun menzilli yeniden yazıma karşı savunma DEĞİLDİR (taban hedefi tek
+// bir GPU için ucuzdur); onlara karşı en az zincir işi / başlık ön-senkronizasyonu gerekir.
+// Taban yalnızca duraklama sonrası hedefin ne kadar kolaylaşabileceğini sınırlar. Mutlak
+// ASERT kırpılınca açığı silmez, biriktirir.
 const mainnetMaxPowLimitBits = 0x1d00ffff
 
 // sigTag imza alanının sürüm etiketidir.
