@@ -27,6 +27,9 @@ import (
 //     uç+1'de geçerli olmak yeter. Süresi dolan işlem gönderenin sonraki işlemleriyle birlikte düşer.
 //   - Aynı nonce'lu işlem ücret en az %MempoolReplaceBumpPercent ve en az MempoolMinFee arttıysa
 //     yerini alır; gönderenin sonraki işlemleri yeniden denetlenir, artık geçmeyenler düşer.
+//     Düşenler zaten yayılmış ve doğrulanmış olduğundan yeni ücret onların ücretlerini de
+//     karşılamalıdır (BIP125 kural 3 benzeri). Bir nonce yuvası havuzdayken en çok
+//     MempoolMaxReplacements kez değiştirilebilir (sayaç yuva havuzdan çıkınca sıfırlanır).
 //   - Havuz dolunca en düşük ücretli gönderen kuyruğu (zincirin son işlemi) tahliye edilir;
 //     zincirin ortasından işlem çıkarılmaz. İşlemler ML-DSA yüzünden neredeyse eş boyutludur,
 //     bu yüzden sıralama mutlak ücretledir.
@@ -50,6 +53,9 @@ const (
 	MempoolMaxPerSender       = 25
 	// MempoolReplaceBumpPercent aynı nonce'lu işlemin yerini almak için gereken ücret artışıdır.
 	MempoolReplaceBumpPercent = 10
+	// MempoolMaxReplacements bir nonce yuvasının havuzdayken en çok kaç kez değiştirilebileceğidir
+	// (kullanıcı kararı 2026-11-12).
+	MempoolMaxReplacements = 10
 
 	maxTxLifetimeSeconds     = 7 * 24 * 60 * 60 // 1 hafta
 	defaultTxLifetimeSeconds = 24 * 60 * 60     // 1 gün
@@ -66,6 +72,7 @@ var (
 	ErrNonceGap      = errors.New("işlem sırasında boşluk: önceki nonce havuzda değil")
 	ErrSenderLimit   = errors.New("gönderenin havuzda çok fazla bekleyen işlemi var")
 	ErrReplaceFee    = errors.New("aynı nonce'lu işlemin yerini almak için ücret artışı yetersiz")
+	ErrReplaceLimit  = errors.New("bu nonce yuvası havuzda en çok sayıda değiştirildi")
 	ErrMempoolFull   = errors.New("havuz dolu ve işlemin ücreti tahliyeye yetmiyor")
 )
 
@@ -81,6 +88,7 @@ type poolTx struct {
 	tx   Transaction
 	id   [32]byte
 	size int
+	repl int // bu nonce yuvasının havuzdayken kaç kez değiştirildiği
 }
 
 // txSize işlemin havuzdaki bellek payının tahminidir.
@@ -220,9 +228,14 @@ func (m *Mempool) add(tx Transaction, restoring bool) (string, error) {
 		return "", ErrSenderLimit
 	}
 	if replacing {
-		if need, ok := replaceFee(chain[idx].tx.Fee); !ok || tx.Fee < need {
-			return "", fmt.Errorf("%w: eski ücret %d", ErrReplaceFee, chain[idx].tx.Fee)
+		old := chain[idx]
+		if old.repl >= MempoolMaxReplacements {
+			return "", fmt.Errorf("%w: %d", ErrReplaceLimit, MempoolMaxReplacements)
 		}
+		if need, ok := replaceFee(old.tx.Fee); !ok || tx.Fee < need {
+			return "", fmt.Errorf("%w: eski ücret %d", ErrReplaceFee, old.tx.Fee)
+		}
+		p.repl = old.repl + 1
 	}
 
 	candidate := append(append([]*poolTx{}, chain[:idx]...), p)
@@ -242,6 +255,22 @@ func (m *Mempool) add(tx Transaction, restoring bool) (string, error) {
 			stopErr = ErrBadNonce
 		}
 		return "", stopErr
+	}
+	if replacing {
+		// Düşen sonraki işlemler (candidate[len(kept):], hepsi chain[idx+1:]'den) ağda bedelsiz
+		// yayılmış olmasın: yeni ücret onların ücretlerini de karşılamalı.
+		need, ok := replaceFee(chain[idx].tx.Fee)
+		for _, q := range candidate[len(kept):] {
+			if !ok || need > math.MaxInt64-q.tx.Fee {
+				ok = false
+				break
+			}
+			need += q.tx.Fee
+		}
+		if !ok || tx.Fee < need {
+			return "", fmt.Errorf("%w: eski ücret %d ve düşecek %d işlemin ücretleri, gereken %d",
+				ErrReplaceFee, chain[idx].tx.Fee, len(candidate)-len(kept), need)
+		}
 	}
 
 	addBytes := 0
