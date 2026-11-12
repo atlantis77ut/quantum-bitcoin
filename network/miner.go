@@ -65,7 +65,13 @@ func (m *Miner) Run(stop <-chan struct{}) {
 			m.log.Info("en az zincir işine ulaşıldı; kazım başlıyor")
 			waiting = false
 		}
-		t, err := bc.NewTemplate(nil, m.address) // mempool yok: yalnızca coinbase
+		// Şablon yalnızca uç değişince yenilenir: kazım sürerken gelen işlem bir sonraki bloğu bekler.
+		txs, err := m.ps.Mempool.Select(core.MaxTxPerBlock)
+		if err != nil {
+			m.log.Error("havuzdan işlem seçilemedi; yalnızca coinbase kazılıyor", "err", err)
+			txs = nil
+		}
+		t, err := bc.NewTemplate(txs, m.address)
 		if err != nil {
 			m.log.Error("kazım şablonu kurulamadı", "err", err)
 			if !sleep(stop, time.Second) {
