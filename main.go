@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -21,7 +22,8 @@ func main() {
 	// 1. Komut satırı parametreleri
 	port := flag.String("port", ":8001", "P2P dinleme portu")
 	apiPort := flag.String("api", ":9001", "Borsa API portu")
-	dbPath := flag.String("db", "qbtc_production_db", "LevelDB klasör yolu")
+	dbPath := flag.String("db", "", "LevelDB klasör yolu (boşsa qbtc_<ağ>_db)")
+	netName := flag.String("network", "testnet", "Ağ: testnet, regtest (mainnet genesis'i lansmanda tanımlanacak)")
 	peerAddr := flag.String("peer", "", "Bağlanılacak diğer düğümlerin adresleri (virgülle ayrılmış)")
 	tlsCert := flag.String("tls-cert", "", "API için TLS sertifika dosyası (boşsa HTTP)")
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
@@ -35,7 +37,19 @@ func main() {
 	}
 
 	// 2. Blockchain
-	bc, err := core.NewBlockchain(*dbPath, 4)
+	params, err := core.ParamsByName(*netName)
+	if err != nil {
+		slog.Error("ağ seçilemedi", "err", err)
+		os.Exit(2)
+	}
+	if *dbPath == "" {
+		*dbPath = "qbtc_" + params.Name + "_db"
+	}
+	bc, err := core.NewBlockchain(*dbPath, params)
+	if errors.Is(err, core.ErrNoGenesis) {
+		slog.Error("bu ağ henüz başlatılamaz: genesis lansmanda tanımlanacak", "network", params.Name)
+		os.Exit(2)
+	}
 	if err != nil {
 		slog.Error("zincir başlatılamadı", "err", err)
 		os.Exit(1)

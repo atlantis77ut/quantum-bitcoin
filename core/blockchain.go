@@ -20,16 +20,26 @@ import (
 const (
 	keyLastHash   = "lh"
 	keySchema     = "schema"
+	keyGenesis    = "genesis"
 	prefixBalance = "bal_"
 	prefixNonce   = "nonce_"
 
 	// schemaVersion disk biçimi veya uzlaşma kodlaması uyumsuz değiştiğinde artırılır.
 	// 2: taban birim (10^8), işlem ücreti, sabit başlık + Merkle kökü + compact hedef.
-	schemaVersion = "2"
+	// 3: ağ parametreleri, deterministik genesis, ağa bağlı imza alanı.
+	schemaVersion = "3"
 )
 
-// ErrSchemaMismatch veri dizini bu sürümle uyumsuz bir biçimde yazılmış.
-var ErrSchemaMismatch = errors.New("veri dizini şema sürümü uyumsuz; dizini silip zinciri yeniden başlatın")
+var (
+	// ErrSchemaMismatch veri dizini bu sürümle uyumsuz bir biçimde yazılmış.
+	ErrSchemaMismatch = errors.New("veri dizini şema sürümü uyumsuz; dizini silip zinciri yeniden başlatın")
+
+	// ErrGenesisMismatch veri dizini başka bir ağın (başka bir genesis'in) zincirini içeriyor.
+	ErrGenesisMismatch = errors.New("veri dizini başka bir ağa ait (genesis uyuşmuyor)")
+
+	// ErrBadGenesis kodda üretilen genesis, ağ parametrelerindeki sabitle tutarsız.
+	ErrBadGenesis = errors.New("genesis bloğu ağ parametreleriyle tutarsız")
+)
 
 var (
 	ErrBadIndex        = errors.New("blok indeksi beklenen değil")
@@ -53,6 +63,7 @@ var (
 type Blockchain struct {
 	mu       sync.RWMutex
 	db       *leveldb.DB
+	params   *Params
 	bits     uint32 // zincir genelinde sabit hedef (yeniden hedefleme ayrı bir PR'da)
 	lastHash string
 	log      *slog.Logger
@@ -60,30 +71,52 @@ type Blockchain struct {
 	rejected rejectCache
 }
 
-// NewBlockchain veritabanını açar; zincir boşsa genesis bloğunu yazar. difficulty eski
-// "baştaki hex sıfır" ölçeğindedir ve DifficultyToBits ile 256 bitlik hedefe çevrilir.
-func NewBlockchain(dbPath string, difficulty int) (*Blockchain, error) {
-	bits, err := DifficultyToBits(difficulty)
-	if err != nil {
-		return nil, fmt.Errorf("geçersiz zorluk: %d", difficulty)
+// NewBlockchain verilen ağ için veritabanını açar; zincir boşsa ağın sabit genesis bloğunu
+// yazar. Genesis'i tanımsız ağ (lansman öncesi mainnet) başlatılamaz; başka bir ağın ya da
+// eski şemanın veri dizini reddedilir.
+func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
+	if p == nil {
+		return nil, ErrNoGenesis
 	}
+	genesis, err := NewGenesisBlock(p)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", p.Name, err)
+	}
+	if _, err := TargetFromBits(p.Bits); err != nil {
+		return nil, fmt.Errorf("%s başlangıç hedefi: %w", p.Name, err)
+	}
+	bc := &Blockchain{
+		params: p,
+		bits:   p.Bits,
+		log:    slog.Default().With("component", "blockchain", "network", p.Name),
+		now:    func() int64 { return time.Now().Unix() },
+	}
+	// Kodda üretilen genesis, sabitlenmiş özete eşit, kendi hedefine kazılmış ve biçimce
+	// geçerli olmalı; aksi halde kodlama sessizce değişmiş demektir (ağ bölünmesi).
+	if genesis.Hash != p.GenesisHash || bc.checkHeader(genesis) != nil ||
+		!crypto.IsValidAddress(genesis.Transactions[0].Receiver) {
+		return nil, fmt.Errorf("%w: %s (üretilen %s)", ErrBadGenesis, p.Name, genesis.Hash)
+	}
+
 	db, err := leveldb.OpenFile(dbPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("veritabanı açılamadı: %w", err)
 	}
-
-	bc := &Blockchain{
-		db:   db,
-		bits: bits,
-		log:  slog.Default().With("component", "blockchain"),
-		now:  func() int64 { return time.Now().Unix() },
-	}
+	bc.db = db
 
 	data, err := db.Get([]byte(keyLastHash), nil)
 	switch {
 	case errors.Is(err, leveldb.ErrNotFound):
-		bc.log.Info("zincir boş, genesis bloğu üretiliyor")
-		genesis := NewGenesisBlock()
+		// "lh" yoksa dizin tamamen boş olmalı: yarım ya da yabancı bir dizinde kalan
+		// bakiye/nonce kayıtları yeni zincirin durumuna karışmasın.
+		it := db.NewIterator(nil, nil)
+		nonEmpty := it.First()
+		it.Release()
+		if nonEmpty {
+			db.Close()
+			return nil, fmt.Errorf("%w: son blok kaydı yok ama dizin boş değil", ErrSchemaMismatch)
+		}
+		bc.log.Info("zincir boş, genesis bloğu yazılıyor", "genesis", genesis.Hash)
 		if err := bc.commitBlock(genesis, newStateView(bc)); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("genesis yazılamadı: %w", err)
@@ -99,6 +132,11 @@ func NewBlockchain(dbPath string, difficulty int) (*Blockchain, error) {
 				return nil, fmt.Errorf("şema sürümü okunamadı: %w", err)
 			}
 			return nil, fmt.Errorf("%w (diskte %q, beklenen %q)", ErrSchemaMismatch, schema, schemaVersion)
+		}
+		stored, err := db.Get([]byte(keyGenesis), nil)
+		if err != nil || string(stored) != p.GenesisHash {
+			db.Close()
+			return nil, fmt.Errorf("%w: diskte %q, %s genesis'i %s", ErrGenesisMismatch, stored, p.Name, p.GenesisHash)
 		}
 		bc.lastHash = string(data)
 		bc.log.Info("mevcut zincir diskten yüklendi", "last_hash", bc.lastHash)
@@ -155,7 +193,7 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 			break
 		}
 		tx := transactions[i]
-		if err := tx.VerifyStateless(); err != nil {
+		if err := tx.VerifyStateless(bc.params); err != nil {
 			bc.log.Warn("işlem reddedildi", "tx", tx.String(), "neden", err)
 			continue
 		}
@@ -313,7 +351,7 @@ func (bc *Blockchain) checkBody(b *Block) error {
 		return ErrBadCoinbase
 	}
 	for i := 1; i < len(b.Transactions); i++ {
-		if err := b.Transactions[i].VerifyStateless(); err != nil {
+		if err := b.Transactions[i].VerifyStateless(bc.params); err != nil {
 			return fmt.Errorf("işlem %d: %w", i, err)
 		}
 	}
@@ -422,15 +460,7 @@ func (c *rejectCache) add(h string) {
 
 // commitBlock bloğu ve view'deki tüm durum değişikliklerini tek bir atomik batch ile yazar.
 func (bc *Blockchain) commitBlock(b *Block, view *stateView) error {
-	if b.Index == 0 {
-		// Genesis güvenilir yerel kaynaktır; bakiyelerini doğrudan uygula.
-		for _, tx := range b.Transactions {
-			if err := view.credit(tx.Receiver, tx.Amount); err != nil {
-				return err
-			}
-		}
-	}
-
+	// Genesis'in tek işlemi sıfır değerli coinbase'dir: bakiye yazılmaz (premine yok).
 	blockData, err := json.Marshal(b)
 	if err != nil {
 		return fmt.Errorf("blok serileştirilemedi: %w", err)
@@ -446,7 +476,9 @@ func (bc *Blockchain) commitBlock(b *Block, view *stateView) error {
 	batch.Put([]byte(b.Hash), blockData)
 	batch.Put([]byte(keyLastHash), []byte(b.Hash))
 	if b.Index == 0 {
-		batch.Put([]byte(keySchema), []byte(schemaVersion)) // genesis ile aynı atomik yazımda
+		// Şema ve ağ kimliği genesis ile aynı atomik yazımda.
+		batch.Put([]byte(keySchema), []byte(schemaVersion))
+		batch.Put([]byte(keyGenesis), []byte(b.Hash))
 	}
 
 	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {

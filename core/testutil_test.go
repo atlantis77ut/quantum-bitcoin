@@ -12,12 +12,13 @@ func easierThanLimitBits() uint32 {
 	return bigToCompact(new(big.Int).Lsh(big.NewInt(1), 255))
 }
 
-const testDifficulty = 1
+// testParams testlerin ağıdır: en kolay hedef, sabit genesis.
+var testParams = RegtestParams
 
 // newTestChain geçici dizinde, sabit saatli ve düşük zorluklu bir zincir açar.
 func newTestChain(t *testing.T) *Blockchain {
 	t.Helper()
-	bc, err := NewBlockchain(t.TempDir(), testDifficulty)
+	bc, err := NewBlockchain(t.TempDir(), testParams)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func signedTx(t *testing.T, from *crypto.KeyPair, to string, amount int64, nonce
 func signedTxFee(t *testing.T, from *crypto.KeyPair, to string, amount, fee int64, nonce uint64) Transaction {
 	t.Helper()
 	tx := Transaction{Receiver: to, Amount: amount, Fee: fee, Timestamp: 1, Nonce: nonce}
-	if err := tx.Sign(from); err != nil {
+	if err := tx.Sign(from, testParams); err != nil {
 		t.Fatal(err)
 	}
 	return tx

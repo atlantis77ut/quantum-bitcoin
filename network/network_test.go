@@ -15,7 +15,7 @@ import (
 
 func newChain(t *testing.T) *core.Blockchain {
 	t.Helper()
-	bc, err := core.NewBlockchain(t.TempDir(), 1)
+	bc, err := core.NewBlockchain(t.TempDir(), core.RegtestParams)
 	if err != nil {
 		t.Fatal(err)
 	}
