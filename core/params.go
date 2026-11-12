@@ -32,6 +32,11 @@ type Params struct {
 	// alacaklandırılır (ertelenmiş ödeme). Değer TargetSpacing'den türetilir (~4 saat).
 	CoinbaseMaturity int64
 
+	// ReorgAlarmDepth: bu kadar bloktan derin reorg kalıcı alarm verir (düğüm politikası,
+	// uzlaşma kuralı değil). TargetSpacing'den türetilir (~2 saat); CoinbaseMaturity'den
+	// küçük olmalı: olgunluktan derin reorg ertelenmiş ödemeleri geri alır.
+	ReorgAlarmDepth int64
+
 	// Zorluk (bkz. asert.go): HalfLife ASERT yarı ömrüdür (saniye). NoRetarget yalnızca
 	// regtest içindir: hedef Bits'te sabit kalır, testler hızlı ve öngörülebilir olsun.
 	HalfLife   int64
@@ -56,6 +61,9 @@ const (
 
 	// Coinbase olgunluğu (kullanıcı kararı, 2026-11-08): 60 sn'de 240 blok (~4 saat).
 	referenceCoinbaseMaturity int64 = 240
+
+	// Derin reorg alarmı (kullanıcı kararı, 2026-11-11): 60 sn'de 120 blok (~2 saat).
+	referenceReorgAlarmDepth int64 = 120
 )
 
 // withEmission emisyon değerlerini p.TargetSpacing'den türetir. Ölçekleme tam bölünmüyorsa
@@ -66,7 +74,8 @@ func withEmission(p *Params) *Params {
 		referenceTailSubsidy*s%referenceSpacing != 0 ||
 		referenceHalvingInterval*referenceSpacing%s != 0 ||
 		referenceSlowStartBlocks*referenceSpacing%s != 0 ||
-		referenceCoinbaseMaturity*referenceSpacing%s != 0 {
+		referenceCoinbaseMaturity*referenceSpacing%s != 0 ||
+		referenceReorgAlarmDepth*referenceSpacing%s != 0 {
 		panic(fmt.Sprintf("%s: blok süresi %d sn emisyonu tam ölçeklemiyor", p.Name, s))
 	}
 	p.InitialSubsidy = referenceInitialSubsidy * s / referenceSpacing
@@ -74,6 +83,7 @@ func withEmission(p *Params) *Params {
 	p.HalvingInterval = referenceHalvingInterval * referenceSpacing / s
 	p.SlowStartBlocks = referenceSlowStartBlocks * referenceSpacing / s
 	p.CoinbaseMaturity = referenceCoinbaseMaturity * referenceSpacing / s
+	p.ReorgAlarmDepth = referenceReorgAlarmDepth * referenceSpacing / s
 	p.HalfLife = referenceHalfLife
 	return p
 }
@@ -99,6 +109,9 @@ func (p *Params) Validate() error {
 		return fmt.Errorf("%w: %s başlangıç rampası %d", ErrBadParams, p.Name, p.SlowStartBlocks)
 	case p.CoinbaseMaturity < 1:
 		return fmt.Errorf("%w: %s coinbase olgunluğu %d", ErrBadParams, p.Name, p.CoinbaseMaturity)
+	case p.ReorgAlarmDepth < 1 || p.ReorgAlarmDepth >= p.CoinbaseMaturity:
+		return fmt.Errorf("%w: %s reorg alarm derinliği %d, coinbase olgunluğundan (%d) küçük olmalı",
+			ErrBadParams, p.Name, p.ReorgAlarmDepth, p.CoinbaseMaturity)
 	case p.HalfLife < minHalfLifePerFTL*MaxFutureDrift:
 		// Tek bloğun zaman damgasını FTL kadar ileri atmanın kazancı 2^(FTL/yarı ömür) − 1.
 		return fmt.Errorf("%w: %s yarı ömür %d sn, FTL için en az %d", ErrBadParams, p.Name,
@@ -196,6 +209,7 @@ func regtestEmission(p *Params) *Params {
 	p.HalvingInterval = 150
 	p.SlowStartBlocks = 0
 	p.CoinbaseMaturity = 3
+	p.ReorgAlarmDepth = 2
 	p.NoRetarget = true
 	return p
 }

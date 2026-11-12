@@ -39,9 +39,11 @@ import (
 
 // Mempool politikası (kullanıcı kararı 2026-11-09).
 const (
-	// MempoolExpiryMargin kabulde süresinin dolmasına kalan en az blok sayısıdır: dahil edilen
-	// her işlemin alarm derinliğine kadar reorg payı olur.
-	MempoolExpiryMargin int64 = ReorgAlarmDepth
+	// MempoolExpiryMargin kabulde süresinin dolmasına kalan en az blok sayısıdır. Yalnızca
+	// kabulde denetlenir: havuzda kalmak için uç+1'de geçerli olmak yeter, E'ye yakın dahil
+	// edilen işlemin reorg payı daha azdır. Alarm derinliğinden bağımsız cüzdan politikasıdır
+	// (kullanıcı kararı 2026-11-11).
+	MempoolExpiryMargin int64 = 100
 	MempoolMaxTxs             = 5000
 	MempoolMaxBytes           = 32 << 20
 	MempoolMinFee       int64 = 1000 // taban birim (0,00001 QBTC)

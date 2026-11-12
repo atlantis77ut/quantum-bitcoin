@@ -476,13 +476,13 @@ func TestOrphanNotCached(t *testing.T) {
 	}
 }
 
-// ReorgAlarmDepth'ten derin reorg zinciri değiştirir (uzlaşma sınırı yok) ama alarm verir;
+// Params.ReorgAlarmDepth'ten derin reorg zinciri değiştirir (uzlaşma sınırı yok) ama alarm verir;
 // tam eşikteki reorg alarm vermez.
 func TestDeepReorgAlarm(t *testing.T) {
 	for _, tc := range []struct {
 		depth int
 		alarm bool
-	}{{ReorgAlarmDepth, false}, {ReorgAlarmDepth + 1, true}} {
+	}{{int(testParams.ReorgAlarmDepth), false}, {int(testParams.ReorgAlarmDepth) + 1, true}} {
 		bc := newTestChain(t)
 		g := genesisOf(t, bc)
 		main := extend(t, bc, g, tc.depth, newKey(t).Address)
