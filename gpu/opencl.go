@@ -216,6 +216,11 @@ func Devices() ([]Device, error) {
 // Open device'ı açar ve çekirdeği derler. batch bir Scan çağrısının nonce sayısıdır; 0 ise
 // tek başlatma ~tuneTarget sürecek biçimde ölçülerek seçilir.
 func Open(device int, batch uint64) (Backend, error) {
+	return openSource(device, batch, kernelSource)
+}
+
+// openSource Open'ın çekirdek kaynağını dışarıdan alan hâlidir (A/B testi için).
+func openSource(device int, batch uint64, source string) (Backend, error) {
 	if device < 0 {
 		return nil, fmt.Errorf("geçersiz OpenCL aygıtı: %d", device)
 	}
@@ -223,10 +228,10 @@ func Open(device int, batch uint64) (Backend, error) {
 		return nil, fmt.Errorf("GPU tur boyu %d ile %d arasında olmalı: %d", MinBatch, MaxBatch, batch)
 	}
 	m := &clMiner{name: fmt.Sprintf("OpenCL aygıtı %d", device)}
-	src := C.CString(kernelSource)
+	src := C.CString(source)
 	defer C.free(unsafe.Pointer(src))
 	var log [buildLogSize]C.char
-	if rc := C.qb_open(C.int(device), src, C.size_t(len(kernelSource)), &m.g, &log[0], C.size_t(len(log))); rc != C.CL_SUCCESS {
+	if rc := C.qb_open(C.int(device), src, C.size_t(len(source)), &m.g, &log[0], C.size_t(len(log))); rc != C.CL_SUCCESS {
 		return nil, fmt.Errorf("OpenCL aygıtı %d açılamadı (hata %d): %s", device, int(rc), C.GoString(&log[0]))
 	}
 	m.open = true

@@ -65,7 +65,11 @@ func decrement(b [32]byte) ([32]byte, bool) {
 // nonce'u bulmalı ve aynı özeti hesaplamalıdır (yanlış negatif, yanlış pozitif, elde ve
 // sarma hataları). Hedef bir eksiltilince hiçbir nonce bulunmamalıdır (<= kuralının sınırı).
 func TestKernelMatchesCPU(t *testing.T) {
-	m := openTest(t)
+	checkKernel(t, openTest(t))
+}
+
+func checkKernel(t *testing.T, m *clMiner) {
+	t.Helper()
 	const count = 64
 	// Sıfır, alt sözcükten üst sözcüğe elde (iki kez), aralık sonunda ve ortasında 2^64
 	// sarması, rastgele bir başlangıç.
@@ -209,4 +213,67 @@ func BenchmarkKernel(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.N)*batch/time.Since(start).Seconds(), "hash/s")
+}
+
+// TestKernelAB döngülü (gpu/sha256d.cl) ve açılmış (testdata, gpu/gen/genkernel.py)
+// çekirdekleri aynı süreçte ve aynı aygıtta, turlar hâlinde dönüşümlü sırayla ölçer; böylece
+// makineler arası fark karşılaştırmayı bozmaz. Önce açılmış çekirdeğin doğruluğu sınanır.
+// Yalnızca QBTC_KERNEL_AB ayarlıysa çalışır (CI'da pocl; gerçek GPU ölçümü değildir).
+func TestKernelAB(t *testing.T) {
+	if os.Getenv("QBTC_KERNEL_AB") == "" {
+		t.Skip("QBTC_KERNEL_AB ayarlı değil")
+	}
+	openTest(t)
+	src, err := os.ReadFile("testdata/sha256d_unrolled.cl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const batch = MinBatch * 256
+	names := []string{"döngülü", "açılmış"}
+	kernels := make([]Backend, 2)
+	for i, source := range []string{kernelSource, string(src)} {
+		b, err := openSource(0, batch, source)
+		if err != nil {
+			t.Fatalf("%s: %v", names[i], err)
+		}
+		defer b.Close()
+		kernels[i] = b
+	}
+	checkKernel(t, kernels[1].(*clMiner))
+
+	var hdr [core.HeaderSize]byte
+	var tgt [32]byte
+	nonce := uint64(0)
+	scan := func(k Backend, n int) time.Duration {
+		start := time.Now()
+		for i := 0; i < n; i++ {
+			if _, _, err := k.Scan(hdr, tgt, nonce, batch); err != nil {
+				t.Fatal(err)
+			}
+			nonce += batch
+		}
+		return time.Since(start)
+	}
+	for _, k := range kernels { // ısınma
+		scan(k, 1)
+	}
+	const rounds, perRound = 10, 3
+	var total [2]time.Duration
+	minRatio, maxRatio := math.Inf(1), math.Inf(-1)
+	for r := 0; r < rounds; r++ {
+		var d [2]time.Duration
+		for i := 0; i < 2; i++ {
+			idx := (i + r) % 2 // sıra her turda değişir
+			d[idx] = scan(kernels[idx], perRound)
+			total[idx] += d[idx]
+		}
+		ratio := d[0].Seconds() / d[1].Seconds() // açılmış hızı / döngülü hızı
+		minRatio, maxRatio = math.Min(minRatio, ratio), math.Max(maxRatio, ratio)
+	}
+	hashes := float64(rounds * perRound * batch)
+	for i := range kernels {
+		t.Logf("%s: %.0f hash/s", names[i], hashes/total[i].Seconds())
+	}
+	t.Logf("açılmış/döngülü hız oranı: %.3f (turlarda en düşük %.3f, en yüksek %.3f)",
+		total[0].Seconds()/total[1].Seconds(), minRatio, maxRatio)
 }
