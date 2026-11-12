@@ -38,6 +38,9 @@ type APIServer struct {
 	TLSKey     string
 	Mempool    *core.Mempool // nil ise işlem kabulü kapalıdır (503)
 
+	// OnTxAccepted havuza yeni kabul edilen işlem için çağrılır (eşlere yayın); nil olabilir.
+	OnTxAccepted func(core.Transaction)
+
 	server  *http.Server
 	limiter *ipRateLimiter
 	log     *slog.Logger
@@ -221,6 +224,9 @@ func (api *APIServer) handleSubmitTx(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
+	}
+	if api.OnTxAccepted != nil {
+		api.OnTxAccepted(tx)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"txid": id})
 }

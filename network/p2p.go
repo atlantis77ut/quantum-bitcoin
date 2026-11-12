@@ -28,6 +28,15 @@ const (
 	syncInterval  = 30 * time.Second // Senkronizasyon hiç bitmez; "senkronuz" kararı zamana bağlı değildir
 	relayQueueLen = 16
 
+	// İşlem yayını: kabul edilen işlemler kuyrukta toplanır ve eşlere en çok maxTxsPerMsg'lik
+	// gruplar halinde, en geç txRelayInterval sonra gönderilir (bağlantı başına tek mesaj;
+	// işlem başına bağlantı açılmaz). Bir grup ~16 × 7,5 KiB ≈ 120 KiB JSON'dur: karşı düğümde
+	// gönderen grubun tek çözümleme yuvasını yavaş bağlantıda da (~2 Mbit/sn) quotaWait'ten çok
+	// kısa tutar, ardından gelen blok duyurusu düşmez.
+	maxTxsPerMsg    = 16
+	txRelayQueueLen = 1024
+	txRelayInterval = time.Second
+
 	// transferTimeout bir istek yanıtının (en çok ~7 MiB blok) toplam aktarım süresidir:
 	// ~1 Mbps bağlantıda dolu bir blok aktarılabilmeli. Sunum yuvası en fazla bu kadar tutulur.
 	transferTimeout = 60 * time.Second
@@ -49,6 +58,7 @@ const (
 	msgGetHeaders = "getheaders" // Locator → headers
 	msgHeaders    = "headers"
 	msgGetBlock   = "getblock" // Hash → block
+	msgTxs        = "txs"      // işlem duyurusu (en çok maxTxsPerMsg)
 )
 
 type message struct {
@@ -57,6 +67,7 @@ type message struct {
 	Locator []string           `json:"locator,omitempty"`
 	Headers []core.BlockHeader `json:"headers,omitempty"`
 	Hash    string             `json:"hash,omitempty"`
+	Txs     []core.Transaction `json:"txs,omitempty"`
 }
 
 var (
@@ -90,8 +101,14 @@ type P2PServer struct {
 	presyncs   map[string]*peerPresync
 
 	// syncCh senkronizasyonu hemen tetikler; tek yuvalıdır, bekleyen tetikler birleşir.
-	syncCh  chan struct{}
-	relayCh chan *core.Block
+	syncCh    chan struct{}
+	relayCh   chan *core.Block
+	txRelayCh chan core.Transaction
+
+	// sendMu blok ve işlem yayınlarını sıraya koyar: karşı düğüm bağlantılarımızı tek adres
+	// grubundan görür (tek çözümleme yuvası); eşzamanlı bir işlem grubu blok duyurusunu düşürmesin.
+	sendMu sync.Mutex
+	txGate *txGate // gelen işlem hız sınırı ve geçersiz işlem cezası (quota.go)
 
 	// syncRounds tamamlanan senkronizasyon turu sayısıdır (testler için).
 	syncRounds atomic.Int64
@@ -111,6 +128,8 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		presyncs:   map[string]*peerPresync{},
 		syncCh:     make(chan struct{}, 1),
 		relayCh:    make(chan *core.Block, relayQueueLen),
+		txRelayCh:  make(chan core.Transaction, txRelayQueueLen),
+		txGate:     newTxGate(),
 
 		connQuota:   newGroupQuota(connsPerGroup),
 		decodeQuota: newGroupQuota(decodesPerGroup),
@@ -157,6 +176,7 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	ps.TriggerSync() // açılışta hemen senkronize ol
 	go ps.syncLoop(stop)
 	go ps.relayLoop(stop)
+	go ps.txRelayLoop(stop)
 
 	for {
 		conn, err := listener.Accept()
@@ -225,6 +245,8 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 		ps.serveHeaders(conn, remote, group, msg.Locator)
 	case msgGetBlock:
 		ps.serveBlock(conn, remote, group, msg.Hash)
+	case msgTxs:
+		ps.handleTxs(remote, group, msg.Txs)
 	default:
 		ps.log.Debug("bilinmeyen mesaj türü", "remote", remote, "type", msg.Type)
 	}
@@ -261,6 +283,88 @@ func (ps *P2PServer) handleBlock(remote string, b *core.Block) {
 		ps.log.Debug("eşten gelen blok reddedildi", "remote", remote, "index", b.Index, "err", err)
 	default:
 		ps.log.Warn("eşten gelen blok reddedildi", "remote", remote, "index", b.Index, "err", err)
+	}
+}
+
+// handleTxs duyurulan işlemleri havuz politikasıyla (core.Mempool.Add: uzlaşma denetimleri ve
+// imza) kabul eder ve yalnızca yeni kabul edilenleri yeniden yayar: işlemi zaten bilen eş
+// ErrTxKnown alır, yayın döngüsü kendiliğinden biter. Düğüm senkronize değilken (en az zincir
+// işinin altında) durum eski olduğundan işlemler bırakılır. Dürüst eş yalnızca kendi kabul
+// ettiği işlemleri yayar; biçimi ya da imzası geçersiz işlem içeren grubun kalanı işlenmez
+// ve gönderen adres grubunun işlemleri bir süre bırakılır (bkz. txGate). Durum farkından doğan
+// retler (yetersiz bakiye, nonce, dolu havuz vb.) olağandır ve grubu kesmez; adres grubu başına
+// işlem sayısı ayrıca hız sınırlıdır.
+func (ps *P2PServer) handleTxs(remote, group string, txs []core.Transaction) {
+	if len(txs) > maxTxsPerMsg {
+		ps.log.Debug("işlem grubu çok büyük", "remote", remote, "adet", len(txs))
+		ps.txGate.penalize(group)
+		return
+	}
+	if ps.Blockchain.BelowMinChainWork() {
+		return
+	}
+	if !ps.txGate.allow(group, len(txs)) {
+		ps.log.Debug("işlem hız sınırı ya da ceza: grup bırakıldı", "remote", remote, "adet", len(txs))
+		return
+	}
+	for _, tx := range txs {
+		_, err := ps.Mempool.Add(tx)
+		switch {
+		case err == nil:
+			ps.RelayTx(tx)
+		case invalidTx(err):
+			ps.log.Debug("eşten geçersiz işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote, "err", err)
+			ps.txGate.penalize(group)
+			return
+		default:
+			// Durum farkı ya da yineleme: olağan, log taşkını olmasın.
+		}
+	}
+}
+
+// invalidTx işlemin durumdan bağımsız olarak geçersiz olduğunu (dürüst eşin yaymayacağını)
+// söyler.
+func invalidTx(err error) bool {
+	for _, e := range []error{core.ErrBadSignature, core.ErrBadSender, core.ErrBadReceiver,
+		core.ErrSelfTransfer, core.ErrNonPositiveAmount, core.ErrNegativeFee, core.ErrBadExpiry,
+		core.ErrUnexpectedCoinbase} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
+// RelayTx havuza yeni kabul edilmiş işlemi yayın kuyruğuna koyar; kuyruk doluysa atar.
+func (ps *P2PServer) RelayTx(tx core.Transaction) {
+	select {
+	case ps.txRelayCh <- tx:
+	default:
+		ps.log.Debug("işlem yayın kuyruğu dolu, işlem yayınlanmadı", "tx", tx.ID())
+	}
+}
+
+// txRelayLoop kuyruktaki işlemleri gruplayıp tek işçiyle yayar.
+func (ps *P2PServer) txRelayLoop(stop <-chan struct{}) {
+	t := time.NewTicker(txRelayInterval)
+	defer t.Stop()
+	var batch []core.Transaction
+	for {
+		select {
+		case <-stop:
+			return
+		case tx := <-ps.txRelayCh:
+			batch = append(batch, tx)
+			if len(batch) < maxTxsPerMsg {
+				continue
+			}
+		case <-t.C:
+			if len(batch) == 0 {
+				continue
+			}
+		}
+		ps.broadcast(message{Type: msgTxs, Txs: batch})
+		batch = nil
 	}
 }
 
@@ -653,17 +757,39 @@ func (ps *P2PServer) relayLoop(stop <-chan struct{}) {
 // BroadcastBlock bloğu bilinen tüm eşlere duyurur. Yayın döngüsü kendiliğinden biter: bloğu
 // zaten bilen eş ErrKnownBlock alır ve yeniden yaymaz.
 func (ps *P2PServer) BroadcastBlock(block *core.Block) {
-	for _, peer := range ps.Peers() {
-		conn, err := net.DialTimeout("tcp", peer, dialTimeout)
-		if err != nil {
-			ps.log.Warn("eşe bağlanılamadı", "peer", peer, "err", err)
-			continue
-		}
-		if err := conn.SetWriteDeadline(time.Now().Add(connWriteTimeout)); err == nil {
-			if err := json.NewEncoder(conn).Encode(message{Type: msgBlock, Block: block}); err != nil {
-				ps.log.Warn("blok eşe gönderilemedi", "peer", peer, "err", err)
-			}
-		}
-		conn.Close()
+	ps.broadcast(message{Type: msgBlock, Block: block})
+}
+
+// broadcast mesajı bilinen tüm eşlere paralel, birer bağlantıyla gönderir: erişilemeyen ya da
+// yavaş okuyan tek eş diğerlerini geciktirmez. Yayınlar sendMu ile sıralıdır (bkz. alan belgesi);
+// bir yayın en çok dialTimeout + connWriteTimeout sürer.
+func (ps *P2PServer) broadcast(m message) {
+	data, err := json.Marshal(m)
+	if err != nil {
+		ps.log.Error("yayın mesajı kodlanamadı", "type", m.Type, "err", err)
+		return
 	}
+	data = append(data, '\n') // json.Encoder biçimi; goroutine'ler yalnızca okur
+	ps.sendMu.Lock()
+	defer ps.sendMu.Unlock()
+	var wg sync.WaitGroup
+	for _, peer := range ps.Peers() {
+		wg.Add(1)
+		go func(peer string) {
+			defer wg.Done()
+			conn, err := net.DialTimeout("tcp", peer, dialTimeout)
+			if err != nil {
+				ps.log.Warn("eşe bağlanılamadı", "peer", peer, "err", err)
+				return
+			}
+			defer conn.Close()
+			if err := conn.SetWriteDeadline(time.Now().Add(connWriteTimeout)); err != nil {
+				return
+			}
+			if _, err := conn.Write(data); err != nil {
+				ps.log.Warn("mesaj eşe gönderilemedi", "peer", peer, "type", m.Type, "err", err)
+			}
+		}(peer)
+	}
+	wg.Wait()
 }
