@@ -92,11 +92,11 @@ func tipHash(t *testing.T, bc *Blockchain) string {
 }
 
 // chainDump uzlaşma durumunu oluşturan bütün anahtarları döndürür: bakiyeler, nonce'lar,
-// ana zincir yükseklik tablosu, undo kayıtları ve uç.
+// ana zincir yükseklik tablosu, undo kayıtları, işlem indeksi ve uç.
 func chainDump(t *testing.T, bc *Blockchain) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for _, p := range []string{prefixBalance, prefixNonce, prefixHeight, prefixUndo, keyLastHash} {
+	for _, p := range []string{prefixBalance, prefixNonce, prefixHeight, prefixUndo, prefixTx, keyLastHash} {
 		it := bc.db.NewIterator(util.BytesPrefix([]byte(p)), nil)
 		for it.Next() {
 			out[string(it.Key())] = string(it.Value())

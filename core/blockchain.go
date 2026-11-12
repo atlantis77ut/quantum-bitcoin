@@ -33,7 +33,8 @@ const (
 	// 6: indekste tam başlık (sürüm, Merkle kökü, nonce): başlıklar diskten okunmadan sunulur.
 	// 7: işlem son kullanma yüksekliği (zaman damgası yerine), imza alanı v4, yeni genesis.
 	// 8: ASERT zorluk ayarlaması; indekste çapa zamanı.
-	schemaVersion = "8"
+	// 9: ana zincir işlem indeksi (tx_<kimlik> → blok özeti ve sıra; txindex.go).
+	schemaVersion = "9"
 )
 
 var (
@@ -557,6 +558,9 @@ func (bc *Blockchain) writeGenesis(g *Block) error {
 		return err
 	}
 	batch.Put([]byte(heightKey(0)), []byte(g.Hash))
+	if err := putBlockTxs(batch, g); err != nil {
+		return err
+	}
 	batch.Put([]byte(keyLastHash), []byte(g.Hash))
 	batch.Put([]byte(keySchema), []byte(schemaVersion))
 	batch.Put([]byte(keyGenesis), []byte(g.Hash))
