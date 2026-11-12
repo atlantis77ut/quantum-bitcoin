@@ -126,3 +126,72 @@ func TestBlockEndpoint(t *testing.T) {
 		t.Errorf("POST /block = %d", rec.Code)
 	}
 }
+
+// /latestblock uçtaki bloğu /block biçiminde, sayfalı döndürür; hash/height kabul etmez.
+func TestLatestBlockEndpoint(t *testing.T) {
+	bc := newChain(t)
+	from := fundKey(t, bc)
+	ps := NewP2PServer(":0", bc)
+	var sent []core.Transaction
+	for i := 0; i < 3; i++ {
+		tx := policyTx(t, ps.Mempool, from, int64(i+1))
+		if _, err := ps.Mempool.Add(tx); err != nil {
+			t.Fatal(err)
+		}
+		sent = append(sent, tx)
+	}
+	txs, err := ps.Mempool.Select(core.MaxTxPerBlock)
+	if err != nil || len(txs) != 3 {
+		t.Fatalf("havuz seçimi: %d %v", len(txs), err)
+	}
+	blk, err := bc.AddBlock(txs, minerAddr(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAPIServer(":0", bc).Handler()
+	get := func(url string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))
+		return rec
+	}
+	page := func(url string) blockPage {
+		t.Helper()
+		var p blockPage
+		rec := get(url)
+		if rec.Code != http.StatusOK || json.NewDecoder(rec.Body).Decode(&p) != nil {
+			t.Fatalf("%s = %d %s", url, rec.Code, rec.Body.String())
+		}
+		return p
+	}
+
+	p := page("/latestblock")
+	if p.Header.Hash != blk.Hash || p.Header.Index != blk.Index || p.Confirmations != 1 || p.TxCount != 4 ||
+		p.Offset != 0 || len(p.Transactions) != 4 || p.Transactions[0].TxID != blk.Transactions[0].ID() {
+		t.Fatalf("son blok sayfası %+v", p)
+	}
+	if q := page("/latestblock?offset=1&limit=2"); q.Header.Hash != blk.Hash || q.Offset != 1 ||
+		len(q.Transactions) != 2 || q.Transactions[0].Index != 1 || q.Transactions[1].Index != 2 {
+		t.Fatalf("sayfa %+v", q)
+	}
+	want := sent[2].ID()
+	if q := page("/latestblock?txid=" + want); len(q.Transactions) != 1 || q.Transactions[0].TxID != want ||
+		q.Transactions[0].Index != 3 {
+		t.Fatalf("txid sorgusu %+v", q)
+	}
+	for _, url := range []string{
+		"/latestblock?height=1",
+		"/latestblock?hash=" + blk.Hash,
+		"/latestblock?limit=0",
+		"/latestblock?limit=201",
+		"/latestblock?offset=-1",
+	} {
+		if rec := get(url); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, beklenen 400", url, rec.Code)
+		}
+	}
+	mineN(t, bc, 1) // uç ilerleyince yeni uç döner
+	if q := page("/latestblock"); q.Header.Index != blk.Index+1 || q.Confirmations != 1 || q.TxCount != 1 {
+		t.Fatalf("yeni uç %+v", q.Header)
+	}
+}
