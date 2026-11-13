@@ -74,6 +74,9 @@ var (
 	ErrReplaceFee    = errors.New("aynı nonce'lu işlemin yerini almak için ücret artışı yetersiz")
 	ErrReplaceLimit  = errors.New("bu nonce yuvası havuzda en çok sayıda değiştirildi")
 	ErrMempoolFull   = errors.New("havuz dolu ve işlemin ücreti tahliyeye yetmiyor")
+
+	// ErrNotOrphan CheckOrphan'ın, işlemin artık boşlukta olmadığını (Add yeniden denenmeli) söylemesidir.
+	ErrNotOrphan = errors.New("işlem artık yetim değil")
 )
 
 // MaxTxLifetime son kullanma yüksekliğinin uca göre en çok kaç blok ileride olabileceğidir
@@ -174,6 +177,78 @@ func (m *Mempool) Policy(address string) (TxPolicy, error) {
 // döndürür. Denetimler ucuzdan pahalıya sıralıdır, ML-DSA imzası en son doğrulanır.
 func (m *Mempool) Add(tx Transaction) (string, error) {
 	return m.add(tx, false)
+}
+
+// CheckOrphan Add'in ErrNonceGap ile geri çevirdiği bir işlemin, öncülleri gelince kabul
+// edilebilecek gibi görünüp görünmediğini söyler (eş işlemlerinin yetim tamponu için; düğüm
+// politikası). Add boşluğu imzadan önce bulduğundan işlem henüz doğrulanmamıştır: önce ucuz
+// süzgeçler (biçim, ücret, son kullanma ufku, boşluk hâlâ var ve gönderen başına sınırın içinde,
+// uç+1'de kullanılabilir bakiye tutar + ücreti karşılıyor), en son ML-DSA imzası denetlenir.
+// nil tamponlanabilir demektir; imza ve biçim hataları Add'deki hatalarla aynıdır; ErrNotOrphan
+// öncüllerin bu arada geldiğini söyler; diğerleri Add'in politika ve durum hatalarıdır. Bakiye ve boşluk anlık bir
+// görüntüdür; kabul her zaman Add'dedir.
+func (m *Mempool) CheckOrphan(tx Transaction) error {
+	if err := tx.checkFormat(); err != nil {
+		return err
+	}
+	if len(tx.Signature) != crypto.SignatureSize {
+		return ErrBadSignature
+	}
+	if tx.Fee < MempoolMinFee {
+		return fmt.Errorf("%w: en az %d taban birim", ErrFeeTooLow, MempoolMinFee)
+	}
+	params, err := m.checkOrphanState(&tx)
+	if err != nil {
+		return err
+	}
+	return tx.verifySignature(params) // kilit dışında: pahalı
+}
+
+func (m *Mempool) checkOrphanState(tx *Transaction) (*Params, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	bc := m.bc
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	if err := m.syncLocked(); err != nil {
+		return nil, err
+	}
+	if _, ok := m.ids[tx.IDBytes()]; ok {
+		return nil, ErrTxKnown
+	}
+	remaining := tx.ExpiryHeight - bc.tip.Height
+	if remaining < MempoolExpiryMargin {
+		return nil, fmt.Errorf("%w: %d blok kaldı, en az %d gerekli", ErrExpiryTooSoon, remaining, MempoolExpiryMargin)
+	}
+	if max := bc.params.MaxTxLifetime(); remaining > max {
+		return nil, fmt.Errorf("%w: uçtan %d blok ileride, en çok %d", ErrExpiryTooFar, remaining, max)
+	}
+	matured, err := m.maturedLocked()
+	if err != nil {
+		return nil, err
+	}
+	confirmed, err := matured.nonce(tx.Sender)
+	if err != nil {
+		return nil, err
+	}
+	if tx.Nonce <= confirmed {
+		return nil, fmt.Errorf("%w: nonce %d zaten onaylandı", ErrBadNonce, tx.Nonce)
+	}
+	next := confirmed + 1 + uint64(len(m.senders[tx.Sender]))
+	if tx.Nonce <= next {
+		return nil, ErrNotOrphan // öncüller bu arada geldi: Add yeniden denenmeli
+	}
+	if tx.Nonce-confirmed > MempoolMaxPerSender {
+		return nil, fmt.Errorf("%w: nonce %d gönderen sınırının ötesinde", ErrNonceGap, tx.Nonce)
+	}
+	bal, err := matured.balance(tx.Sender)
+	if err != nil {
+		return nil, err
+	}
+	if bal < tx.Fee || bal-tx.Fee < tx.Amount {
+		return nil, fmt.Errorf("%w: bakiye %d", ErrInsufficientBal, bal)
+	}
+	return bc.params, nil
 }
 
 // add Add'in gövdesidir. restoring true ise (kalıcı kayıttan yükleme) yalnızca

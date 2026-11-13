@@ -123,6 +123,7 @@ type P2PServer struct {
 	sendMu  sync.Mutex
 	txGate  *txGate      // gelen işlem hız sınırı ve geçersiz işlem cezası (quota.go)
 	rejects *rejectCache // eşlerden gelen ve bir daha geçerli olamayacak işlemler (rejectcache.go)
+	orphans *orphanPool  // öncülü gelmemiş eş işlemleri (orphans.go)
 
 	// syncRounds tamamlanan senkronizasyon turu sayısıdır (testler için).
 	syncRounds atomic.Int64
@@ -150,6 +151,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		txOverflow: newTxOverflow(),
 		txGate:     newTxGate(),
 		rejects:    newRejectCache(rejectCacheMax),
+		orphans:    newOrphanPool(),
 
 		connQuota:   newGroupQuota(connsPerGroup),
 		decodeQuota: newGroupQuota(decodesPerGroup),
@@ -203,6 +205,7 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	go ps.syncLoop(stop)
 	go ps.relayLoop(stop)
 	go ps.txRelayLoop(stop)
+	go ps.orphanLoop(stop)
 
 	for {
 		conn, err := listener.Accept()
@@ -371,6 +374,14 @@ func (ps *P2PServer) handleTxs(remote, group string, txs []core.Transaction) {
 		switch {
 		case err == nil:
 			ps.RelayTx(tx)
+			ps.admitOrphans(tx.Sender, tx.Nonce+1)
+		case errors.Is(err, core.ErrNonceGap):
+			// Öncül henüz gelmedi (gruplar yer değiştirebilir): yetim tamponu (orphans.go).
+			if !ps.bufferOrphan(tx, time.Now()) {
+				ps.log.Debug("eşten geçersiz yetim işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote)
+				ps.txGate.penalize(group)
+				return
+			}
 		case invalidTx(err):
 			ps.log.Debug("eşten geçersiz işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote, "err", err)
 			ps.txGate.penalize(group)
