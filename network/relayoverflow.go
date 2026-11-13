@@ -13,11 +13,8 @@ import (
 // grup gönderildikten sonra boşaltır; böylece biz aynı gönderenin N+1 nonce'lu işlemini N'den
 // önce göndermeyiz. Karşı düğüm her mesajı ayrı bağlantıda eşzamanlı işleyebildiğinden ardışık
 // gruplar orada yer değiştirebilir (kuyruk yolunda da böyledir); nonce boşluğuyla düşen işlem
-// havuz eşitlemesine kalır. Taşmadan bir turda yayılan, o turda kuyruktan gönderilenlerle
-// birlikte txRatePerSec'i (karşı düğümün adres grubu başına hız sınırı) aşmayacak kadardır;
-// kuyruk grupları ise eskisi gibi sınırsız ve art arda gider (kuyruk birden boşalırsa karşı
-// düğümün ani payını aşan gruplar orada cezasız bırakılır). Ticker kaçırılan tiki tuttuğundan
-// yavaş bir yayından sonra iki tur art arda çalışabilir (ani pay bunu karşılar). İşlemler
+// havuz eşitlemesine kalır. Kuyruk grupları ve taşma boşaltması aynı gönderen kovasından harcar
+// (relaybudget.go): karşı düğümün adres grubu başına hız sınırının altında kalınır. İşlemler
 // gönderim anında havuzdan okunur (Mempool.Get): bu arada kazılan, değiştirilen, tahliye edilen
 // ya da süresi dolan işlem atlanır; uca göre uzlaştırma yapılmadığı için eskimiş bir işlem
 // gidebilir, karşı düğüm onu durum hatasıyla cezasız reddeder. Taşma
@@ -101,7 +98,7 @@ func (ps *P2PServer) relayOverflow(budget int, stop <-chan struct{}) int {
 		if len(txs) == 0 {
 			continue
 		}
-		ps.broadcast(message{Type: msgTxs, Txs: txs})
+		ps.broadcastTxs(txs)
 		sent += len(txs)
 	}
 	return sent
