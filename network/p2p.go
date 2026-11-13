@@ -19,7 +19,6 @@ const (
 	maxBlockMessageBytes   = 8 << 20 // Bir blok mesajı en fazla 8 MiB (1000 ML-DSA işlemi ~7,2 MiB JSON)
 	maxHeadersMessageBytes = 2 << 20 // 2000 başlık ~0,8 MiB JSON
 	connReadTimeout        = 10 * time.Second
-	connWriteTimeout       = 10 * time.Second
 	dialTimeout            = 5 * time.Second
 	maxConcurrentConns     = 64
 	maxConcurrentDecodes   = 8  // Aynı anda çözümlenen büyük mesaj sayısı (bellek tavanı ~8×8 MiB)
@@ -158,7 +157,7 @@ type P2PServer struct {
 
 	// syncCh senkronizasyonu hemen tetikler; tek yuvalıdır, bekleyen tetikler birleşir.
 	syncCh     chan struct{}
-	relayCh    chan *core.Block
+	relayCh    chan relayItem
 	txRelayCh  chan core.Transaction
 	txOverflow *txOverflow // yayın kuyruğuna sığmayan işlemler (relayoverflow.go)
 
@@ -168,6 +167,11 @@ type P2PServer struct {
 	sendersMu sync.Mutex
 	senders   map[string]*peerSender
 	send      func(peer string, data []byte) error
+
+	// İtme taşıması (push.go): pushLim Serve'den önce ayarlanır (testler kısaltır), sonra
+	// yalnızca okunur; pushSlots blok itme yuvalarıdır.
+	pushLim   pushLimits
+	pushSlots *pushSlots
 
 	// Uç bekleme (tippoll.go). tipCh uç değişince kapatılıp yenilenir, quit Serve dönünce
 	// kapanır; ikisi tipMu altındadır. tipWait Serve'den önce ayarlanır (testler kısaltır), sonra
@@ -214,7 +218,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		syncWindow: core.MaxSyncHeaders,
 		presyncs:   map[string]*peerPresync{},
 		syncCh:     make(chan struct{}, 1),
-		relayCh:    make(chan *core.Block, relayQueueLen),
+		relayCh:    make(chan relayItem, relayQueueLen),
 		txRelayCh:  make(chan core.Transaction, txRelayQueueLen),
 		txOverflow: newTxOverflow(),
 		txGate:     newTxGate(),
@@ -230,6 +234,8 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		lastMempoolSync:  map[string]time.Time{},
 		presyncBackoff:   map[string]*presyncPenalty{},
 		senders:          map[string]*peerSender{},
+		pushLim:          defaultPushLimits(),
+		pushSlots:        newPushSlots(blockPushSlots),
 
 		waits:     newSlotPool(maxConcurrentWaits, reservedWaits),
 		waitQuota: newGroupQuota(waitsPerGroup),
@@ -341,12 +347,11 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 		ps.decodeQuota.release(group)
 		return
 	}
-	// Okuma süresi yuva alındıktan sonra başlar: yuva beklemesi okuma bütçesini yemez.
+	// Okuma süresi yuva alındıktan sonra başlar: yuva beklemesi okuma bütçesini yemez. Süre
+	// her okumada asgari hıza göre tazelenir (push.go); hıza takılan bağlantı bozuk sayılmaz.
 	var msg message
-	err := conn.SetReadDeadline(time.Now().Add(connReadTimeout))
-	if err == nil {
-		err = json.NewDecoder(io.LimitReader(conn, maxBlockMessageBytes)).Decode(&msg)
-	}
+	r := &rateReader{conn: conn, lim: &ps.pushLim, start: time.Now()}
+	err := json.NewDecoder(io.LimitReader(r, maxBlockMessageBytes)).Decode(&msg)
 	ps.decodes.release(lvl)
 	ps.decodeQuota.release(group)
 	if err != nil {
@@ -925,15 +930,20 @@ func withFirst(h string, loc []string) []string {
 }
 
 // downloadBodies oturumun yetkili eksik gövdelerini sırayla indirip doğrular; kısmi
-// ilerleme de duyurulur.
+// ilerleme de duyurulur. Yeni uç bu eşten indirildiyse eşe geri itilmez.
 func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped func() bool) error {
 	bc := ps.Blockchain
 	before := bc.TipHash()
+	got := map[string]bool{}
 	defer func() {
 		if tip := bc.TipHash(); tip != before {
 			ps.log.Info("eşle senkronize olundu", "peer", peer, "uc", tip)
 			if b, err := bc.BlockByHash(tip); err == nil {
-				ps.relay(b)
+				from := ""
+				if got[tip] {
+					from = peer
+				}
+				ps.relayFrom(b, from)
 			}
 		}
 	}()
@@ -952,6 +962,7 @@ func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped fun
 		if err := bc.AcceptBlock(resp.Block); err != nil && !errors.Is(err, core.ErrKnownBlock) {
 			return fmt.Errorf("blok %d: %w", resp.Block.Index, err)
 		}
+		got[h] = true
 	}
 	return nil
 }
@@ -1002,9 +1013,14 @@ func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, loc []string, 
 // Ucu değiştiren her yol (gelen blok, senkronizasyon, madenci) buradan geçer: uç bekleyenler
 // kuyruk dolu olsa da uyanır.
 func (ps *P2PServer) relay(b *core.Block) {
+	ps.relayFrom(b, "")
+}
+
+// relayFrom relay gibidir; blok from eşinden indirildiyse o eşe geri itilmez (push.go).
+func (ps *P2PServer) relayFrom(b *core.Block, from string) {
 	ps.notifyTip()
 	select {
-	case ps.relayCh <- b:
+	case ps.relayCh <- relayItem{b: b, from: from}:
 	default:
 		ps.log.Debug("yayın kuyruğu dolu, blok yayınlanmadı", "hash", b.Hash)
 	}
@@ -1016,8 +1032,8 @@ func (ps *P2PServer) relayLoop(stop <-chan struct{}) {
 		select {
 		case <-stop:
 			return
-		case b := <-ps.relayCh:
-			ps.BroadcastBlock(b)
+		case it := <-ps.relayCh:
+			ps.broadcastFrom(message{Type: msgBlock, Block: it.b}, it.from)
 		}
 	}
 }
@@ -1032,6 +1048,11 @@ func (ps *P2PServer) BroadcastBlock(block *core.Block) {
 // (peersend.go); gönderimi beklemez. Erişilemeyen ya da yavaş okuyan eş yalnızca kendi kuyruğunu
 // geciktirir.
 func (ps *P2PServer) broadcast(m message) {
+	ps.broadcastFrom(m, "")
+}
+
+// broadcastFrom broadcast gibidir; skip eşini atlar (mesajın kaynağı).
+func (ps *P2PServer) broadcastFrom(m message, skip string) {
 	data, err := json.Marshal(stamped(m))
 	if err != nil {
 		ps.log.Error("yayın mesajı kodlanamadı", "type", m.Type, "err", err)
@@ -1041,6 +1062,9 @@ func (ps *P2PServer) broadcast(m message) {
 	block := m.Type == msgBlock
 	now := time.Now()
 	for _, peer := range ps.Peers() {
+		if skip != "" && peer == skip {
+			continue
+		}
 		ps.enqueueSend(peer, data, block, now)
 	}
 }

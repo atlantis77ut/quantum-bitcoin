@@ -1,6 +1,8 @@
 package network
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -88,16 +90,36 @@ func (s *peerSender) push(data []byte, block bool, now time.Time) bool {
 
 // next sıradaki mesajı verir (önce bloklar); kuyruk boşsa çalışanı durdurur.
 func (s *peerSender) next() ([]byte, bool) {
+	data, _, ok := s.nextItem()
+	return data, ok
+}
+
+// nextItem next gibidir; mesajın blok olup olmadığını da söyler.
+func (s *peerSender) nextItem() (data []byte, block, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
 	case len(s.blocks) > 0:
-		return popFront(&s.blocks), true
+		return popFront(&s.blocks), true, true
 	case len(s.txs) > 0:
-		return popFront(&s.txs), true
+		return popFront(&s.txs), false, true
 	}
 	s.running = false
-	return nil, false
+	return nil, false, false
+}
+
+// hasBlock kuyrukta bekleyen blok olup olmadığını söyler.
+func (s *peerSender) hasBlock() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.blocks) > 0
+}
+
+// healthy eşe son gönderimin başarılı olduğunu (art arda hata olmadığını) söyler.
+func (s *peerSender) healthy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fails == 0
 }
 
 // done gönderim sonucunu devre kesiciye işler. Devre bu sonuçla açıldıysa açık kalma süresini,
@@ -146,14 +168,19 @@ func (ps *P2PServer) enqueueSend(peer string, data []byte, block bool, now time.
 	}
 }
 
-// sendLoop eşin kuyruğunu sırayla gönderir ve kuyruk boşalınca biter.
+// sendLoop eşin kuyruğunu sırayla gönderir ve kuyruk boşalınca biter. Erken başarısız blok
+// itmesi bir kez yeniden denenir (push.go).
 func (ps *P2PServer) sendLoop(peer string, s *peerSender) {
 	for {
-		data, ok := s.next()
+		data, block, ok := s.nextItem()
 		if !ok {
 			return
 		}
-		err := ps.send(peer, data)
+		err := ps.pushOnce(peer, data, block)
+		if block && errors.Is(err, errPushEarly) && s.healthy() && ps.retryWorth(s) {
+			ps.log.Debug("blok itmesi erken başarısız, yeniden deneniyor", "peer", peer, "err", err)
+			err = ps.pushOnce(peer, data, block)
+		}
 		if err != nil {
 			ps.log.Warn("mesaj eşe gönderilemedi", "peer", peer, "err", err)
 		}
@@ -167,17 +194,26 @@ func (ps *P2PServer) sendLoop(peer string, s *peerSender) {
 	}
 }
 
-// sendTo tek bir mesajı yeni bir bağlantıyla eşe yazar; en çok dialTimeout + connWriteTimeout
-// sürer.
+// sendTo tek bir mesajı yeni bir bağlantıyla eşe yazar (push.go): her parçaya sendChunk süre
+// verilir, toplam en çok dialTimeout + sendMax sürer; yazılan her parça blok itme yuvasının
+// ilerlemesine işlenir. Bağlantı kurulamaz ya da en çok earlyBytes yazılmışken koparsa hata
+// errPushEarly'yi sarar.
 func (ps *P2PServer) sendTo(peer string, data []byte) error {
 	conn, err := net.DialTimeout("tcp", peer, dialTimeout)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errPushEarly, err)
 	}
 	defer conn.Close()
-	if err := conn.SetWriteDeadline(time.Now().Add(connWriteTimeout)); err != nil {
-		return err
+	w := &deadlineWriter{
+		conn:    conn,
+		chunk:   writeChunk,
+		per:     ps.pushLim.sendChunk,
+		end:     time.Now().Add(ps.pushLim.sendMax),
+		onChunk: func(n int) { ps.pushSlots.progress(peer, n) },
 	}
-	_, err = conn.Write(data)
+	n, err := w.Write(data)
+	if err != nil && n <= ps.pushLim.earlyBytes {
+		return fmt.Errorf("%w: %w", errPushEarly, err)
+	}
 	return err
 }

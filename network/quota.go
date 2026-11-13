@@ -9,11 +9,14 @@ import (
 // Eş başına kotalar (CLAUDE.md madde 5). Gelen bağlantılar kimlik doğrulamasızdır; bir eş
 // adres grubuyla tanınır: IPv4'te /24, IPv6'da /48. Tek bir kiralık sunucu ya da tek bir /48
 // tahsisi ortak yuvaların (bağlantı, çözümleme, sunum) yalnızca küçük bir kısmını tutabilir.
-// Grup başına tek çözümleme ve tek sunum yuvası: 8 çözümleme yuvasını (yavaş gönderimle
-// 10 sn) tutmak için 8, 16 sunum yuvasını (asgari hızda okuyarak 60 sn) ve 64 bağlantı
-// yuvasını tutmak için 16 ayrı grup gerekir. Kalan risk (tahliye yok): bu kadar /24 öneki ya da
-// tek bir IPv6 /44 (16 adet /48) tahsisi olan saldırgan gelen eşlere senkronizasyon sunumunu
-// ve blok duyurularını aksatabilir; yapılandırılmış eşlere giden senkronizasyon etkilenmez.
+// Grup başına tek çözümleme ve tek sunum yuvası: çözümleme yuvalarının korunmayan payını (5)
+// tutmak için 5 ayrı grup gerekir; yuvanın ilk connReadTimeout'u bedavadır (yeniden bağlanarak
+// sürdürülebilir), sonrası yuva başına ~1 Mbit/sn sürekli gönderim ister ve en çok
+// transferTimeout sürer (push.go; dürüst yavaş itme de yuvayı bu kadar tutar). 16 sunum
+// yuvasını (asgari hızda okuyarak 60 sn) ve 64 bağlantı yuvasını tutmak için 16 ayrı grup
+// gerekir. Kalan risk (tahliye yok): bu kadar /24 öneki ya da tek bir IPv6 /44 (16 adet /48)
+// tahsisi olan saldırgan gelen eşlere senkronizasyon sunumunu ve blok duyurularını
+// aksatabilir; yapılandırılmış eşlere giden senkronizasyon etkilenmez.
 const (
 	connsPerGroup   = 4 // aynı anda açık gelen bağlantı
 	decodesPerGroup = 1 // aynı anda çözümlenen gelen mesaj (maxConcurrentDecodes içinden)
@@ -87,11 +90,13 @@ func peerGroup(host string) string {
 }
 
 // deadlineWriter her parçadan önce yazma süresini tazeler; toplam süre end ile sınırlıdır.
+// onChunk (nil olabilir) her yazılan parçadan sonra parçanın boyuyla çağrılır.
 type deadlineWriter struct {
-	conn  net.Conn
-	chunk int
-	per   time.Duration
-	end   time.Time
+	conn    net.Conn
+	chunk   int
+	per     time.Duration
+	end     time.Time
+	onChunk func(n int)
 }
 
 func (w *deadlineWriter) Write(p []byte) (int, error) {
@@ -109,6 +114,9 @@ func (w *deadlineWriter) Write(p []byte) (int, error) {
 		n += m
 		if err != nil {
 			return n, err
+		}
+		if w.onChunk != nil {
+			w.onChunk(m)
 		}
 		p = p[c:]
 	}
