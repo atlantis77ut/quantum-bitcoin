@@ -176,7 +176,8 @@ func main() {
 	// 3. P2P sunucusu ve eşler
 	p2p := network.NewP2PServer(*port, bc)
 	// Havuz kaydı ağ ve API işlem almadan önce yüklenir; her işlem kabul yolundan yeniden geçer.
-	if restored, skipped, err := p2p.Mempool.Load(); err != nil {
+	// Yüklenenler ilk senkronizasyondan sonra eşlere yeniden yayılır (network/restorerelay.go).
+	if restored, skipped, err := p2p.LoadMempool(); err != nil {
 		slog.Error("havuz kaydı yüklenemedi; boş havuzla devam ediliyor", "err", err)
 	} else if restored+skipped > 0 {
 		slog.Info("havuz kaydı yüklendi", "geri_yuklenen", restored, "atlanan", skipped)
