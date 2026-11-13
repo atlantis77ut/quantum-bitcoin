@@ -1,6 +1,6 @@
 # Eş keşfi: tasarım notu
 
-**Durum:** kararlar verildi (kullanıcı, 2026-11-14, `devils-advocate` sonrası; bkz. §7). Uygulama PR'ları bekliyor, ilki önkoşul olan itme taşıması düzeltmesidir (§5). Bu not hiçbir uzlaşma kuralını değiştirmez; konu düğüm politikası ve P2P taşımasıdır. Kapanışlar ve kalanlar [MAINNET-ONCESI.md](MAINNET-ONCESI.md)'ye yazılır.
+**Durum:** kararlar verildi (kullanıcı, 2026-11-14, `devils-advocate` sonrası; bkz. §7). Önkoşul olan itme taşıması düzeltmesi kapandı (§4.5); adres öğrenme PR'ı sırada (§5). Bu not hiçbir uzlaşma kuralını değiştirmez; konu düğüm politikası ve P2P taşımasıdır. Kapanışlar ve kalanlar [MAINNET-ONCESI.md](MAINNET-ONCESI.md)'ye yazılır.
 
 ## 1. Sorun
 
@@ -28,7 +28,7 @@
 
 ## 3. `devils-advocate` bulguları (tasarımı değiştirenler)
 
-### 3.1 İtme taşıması (bugün de geçerli; keşiften bağımsız)
+### 3.1 İtme taşıması (keşiften bağımsız; feat/push-transport ile kapandı, §4.5)
 
 - **İtilen mesaja iki tarafta da tek bir 10 sn süre verilir.**
   - Gönderende `sendTo` mesajın tamamını tek bir yazma süresiyle yazar.
@@ -107,13 +107,22 @@
 - **`hasPeers`** (yayın bütçesi) etkin giden eşlerin tamamını sayar. Aksi hâlde yalnızca yedekle çalışan düğüm işlemleri sessizce atar.
 - **Madencinin kabul denetimi** gövde kanıtıyla kalır.
 
-### 4.5 İtme taşıması düzeltmesi (önkoşul)
+### 4.5 İtme taşıması düzeltmesi (önkoşul; kapandı: feat/push-transport, `network/push.go`)
 
-- **Alıcı:** okuma süresi parça başına tazelenir; asgari ortalama hız ve toplam tavan konur. Çözümleme yuvası grup başına 1 kalır, yuva tutma hesabı (quota.go belgesi) yeniden yapılır.
+- **Alıcı:** okuma süresi her okumadan önce tazelenir ve üç sınırın en erkenidir:
+  - şimdi + 10 sn (canlılık);
+  - başlangıç + 10 sn + okunan bayt / 128 KiB/sn (asgari ortalama hız, ~1 Mbit/sn; ilk 10 sn eskisi gibi bedava);
+  - başlangıç + 60 sn (tavan).
+
+  Başlangıç çözümleme yuvası alındıktan sonradır. Hıza ya da tavana takılan bağlantı bozuk sayılmaz, eş geri çevrilmez. Çözümleme yuvası grup başına 1 kalır; yuvayı 10 sn'den uzun tutmak yuva başına ~1 Mbit/sn sürekli gönderim ister (quota.go belgesi).
 - **Gönderen:**
-  - Parça başına yazma süresi uygulanır. İlk parçanın süresi alıcının en uzun yuva beklemesinden uzun olur (alıcı yuva beklerken TCP tamponu dolar).
-  - Başarısız blok itmesi en az bir kez yeniden denenir.
-  - Kendi bloğumuzda ilk atlama kademelidir: önce bir iki eşe gövde, sonra diğerlerine.
+  - Parça (64 KiB) başına 14 sn yazma süresi: alıcının en uzun yuva beklemesinden (2 + 10 sn) uzundur, çünkü alıcı yuva beklerken tampon dolar. Toplam en çok 75 sn.
+  - Erken başarısız blok itmesi 2 sn sonra bir kez yeniden denenir. Erken: bağlantı kurulamadı ya da en çok 2 MiB yazılmışken koptu (ör. alıcının yuvası doluydu ve okumadan kapattı). İki uçtaki çekirdek tamponlarına sığan küçük itme gönderende hiç başarısız görünmez; o eşe blok uç beklemesi ya da senkronizasyonla gider. Koşullar: eşin son gönderimi başarılı, kuyrukta daha yeni blok yok (beklemeden önce ve sonra bakılır). Geç kopan itme denenmez.
+  - **Kademeli itme bütün bloklar içindir**, yalnızca kendi bloğumuz için değil: düğüm aynı anda en çok 2 blok gövdesi iter.
+    - Yuva bekleyen gönderim, tutanlar parça yazdıkça bekler.
+    - 2 sn hiç parça yazamayan ya da dürüst alıcının isteyeceği hızın gerisinde kalan tutanın yuvasını bekleyenlerden yalnızca biri devralır. Böylece her takılan eş eşzamanlılığı en çok bir artırır.
+    - Dolu blok için iki kopyada ~2 Mbit/sn yukarı bant alıcıların asgari hızını karşılar.
+  - Senkronizasyonla ya da uç beklemesiyle bir eşten indirilen blok o eşe geri itilmez. Gelen bağlantıyla itilen blok kaynağına geri itilebilir (yankı): kaynak portu geçicidir, IP ile eşleştirmek aynı IP'deki (aynı makine, NAT) başka bir düğümü atlayabilirdi.
 - **Yayılım ölçümü:** 60/30 sn ölçümü bu düzeltmeden sonra ve dolu blokla yapılır. Bu, "bugünkü taşımayla" kararına uyar, çünkü taşıma oturumsuz kalır.
 
 ### 4.6 Gömülü başlangıç listesi

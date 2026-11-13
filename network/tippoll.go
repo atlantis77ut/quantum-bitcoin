@@ -271,7 +271,7 @@ func (ps *P2PServer) adoptTip(peer string, h core.BlockHeader) tipOutcome {
 	case err == nil:
 		ps.log.Info("uç beklemesiyle blok alındı", "peer", peer, "index", resp.Block.Index, "hash", h.Hash)
 		if bc.TipHash() == h.Hash {
-			ps.relay(resp.Block)
+			ps.relayFrom(resp.Block, peer) // eş bloğu zaten biliyor
 		}
 		return tipProgress
 	case errors.Is(err, core.ErrKnownBlock):
