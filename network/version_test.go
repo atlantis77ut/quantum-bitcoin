@@ -174,15 +174,15 @@ func TestDefaultVersionAccepts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, c = net.Pipe()
+	a2, c2 := net.Pipe() // ayrı değişken: ilk yazıcı a'yı hâlâ kapatıyor olabilir
 	go func() {
-		json.NewEncoder(a).Encode(struct {
+		json.NewEncoder(a2).Encode(struct {
 			Type  string      `json:"type"`
 			Block *core.Block `json:"block"`
 		}{msgBlock, next})
-		a.Close()
+		a2.Close()
 	}()
-	ps.handleConnection(c, "g")
+	ps.handleConnection(c2, "g")
 	if bc.TipHash() != next.Hash {
 		t.Fatal("sürümsüz blok işlenmedi")
 	}
