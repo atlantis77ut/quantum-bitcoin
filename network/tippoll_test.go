@@ -181,6 +181,7 @@ func TestAdoptTipTriggersSyncFloored(t *testing.T) {
 	src := startNode(t, time.Hour)
 	mineN(t, src.bc, 2)
 	c := NewP2PServer("127.0.0.1:0", newChain(t))
+	c.AddPeer(src.addr) // yalnızca yapılandırılmış eşin başlığı tetikler (backup.go)
 	now := time.Now()
 	if out := c.adoptTip(src.addr, src.bc.TipHeader()); out != tipNeutral || len(c.syncCh) != 1 {
 		t.Fatalf("sonuç %d, tetik %d", out, len(c.syncCh))

@@ -13,7 +13,7 @@
 - **Yeni (itibarsız) kimlik, grubunun bütçesini ve ceza havuzunu paylaşmak zorundadır.** Aksi hâlde cezayı kimliğe daraltmak, tek bir /24'ten sınırsız yeniden deneme verir.
 - **Kimlik, çok sayıda /24 kontrol eden saldırgana karşı bir şey yapmaz.** Bu bir eclipse ve çeşitlilik sorunudur; eş keşfi notunun ([ES-KESFI.md](ES-KESFI.md)) konusudur.
 - **Bugün komşudan zarar gören yalnızca yapılandırılmamış gelen eşlerdir:**
-  - Yayın yalnızca yapılandırılmış eşlere gider (`ps.Peers()`, p2p.go `broadcast`).
+  - Yayın etkin eşlere gider: yapılandırılmış eşler ve onlara ulaşılamazken en çok 4 yedek (`ps.activePeers()`, backup.go). Yedek kullanılırken düğüm istemci olarak da etkilenir: aynı gruptaki komşu, yedeğin bizim gruba ayırdığı kotayı doldurabilir ([ES-KESFI.md](ES-KESFI.md) §4.4).
   - Yapılandırılmış grup hiç geri çevrilmez (peers.go:185).
 
 ## 2. Bugün adres grubuna (IPv4 /24, IPv6 /48) bağlı olanlar
