@@ -65,7 +65,7 @@ func TestOrphanPoolBounds(t *testing.T) {
 			t.Fatalf("süresi dolan gönderen kaldı: %s", s)
 		}
 	}
-	if o.expire(t0.Add(orphanTTL+time.Second)); o.len() != 0 || len(o.order) != 0 {
+	if o.expire(t0.Add(orphanTTL + time.Second)); o.len() != 0 || len(o.order) != 0 {
 		t.Fatalf("süre sonunda tampon boş değil: %d / %d", o.len(), len(o.order))
 	}
 }
