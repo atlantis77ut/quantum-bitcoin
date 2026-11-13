@@ -11,7 +11,7 @@
   - (a) Kazanılmış itibar, kötü davranan komşulardan etkilenmez.
   - (b) Ceza daraltılabilir: kötü davranan *yerleşik* kimlik cezalandırılır, bütün grup değil.
 - **Yeni (itibarsız) kimlik, grubunun bütçesini ve ceza havuzunu paylaşmak zorundadır.** Aksi hâlde cezayı kimliğe daraltmak, tek bir /24'ten sınırsız yeniden deneme verir.
-- **Kimlik, çok sayıda /24 kontrol eden saldırgana karşı bir şey yapmaz.** Bu bir eclipse ve çeşitlilik sorunudur; eş keşfi notunun konusudur.
+- **Kimlik, çok sayıda /24 kontrol eden saldırgana karşı bir şey yapmaz.** Bu bir eclipse ve çeşitlilik sorunudur; eş keşfi notunun ([ES-KESFI.md](ES-KESFI.md)) konusudur.
 - **Bugün komşudan zarar gören yalnızca yapılandırılmamış gelen eşlerdir:**
   - Yayın yalnızca yapılandırılmış eşlere gider (`ps.Peers()`, p2p.go `broadcast`).
   - Yapılandırılmış grup hiç geri çevrilmez (peers.go:185).
