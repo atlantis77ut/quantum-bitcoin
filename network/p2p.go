@@ -125,6 +125,9 @@ type P2PServer struct {
 	rejects *rejectCache // eşlerden gelen ve bir daha geçerli olamayacak işlemler (rejectcache.go)
 	orphans *orphanPool  // öncülü gelmemiş eş işlemleri (orphans.go)
 
+	// relayGate aynı yuvanın sık yer değiştirme yayınlarını bekletir (relaygate.go).
+	relayGate *relayGate
+
 	// restored geri yüklenen, ilk senkronizasyondan sonra bir kez yayılacak işlem kimlikleridir
 	// (restorerelay.go).
 	restoredMu sync.Mutex
@@ -157,6 +160,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		txGate:     newTxGate(),
 		rejects:    newRejectCache(rejectCacheMax),
 		orphans:    newOrphanPool(),
+		relayGate:  newRelayGate(),
 
 		connQuota:   newGroupQuota(connsPerGroup),
 		decodeQuota: newGroupQuota(decodesPerGroup),
@@ -212,6 +216,7 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	go ps.txRelayLoop(stop)
 	go ps.orphanLoop(stop)
 	go ps.restoredRelayLoop(stop)
+	go ps.relayGateLoop(stop)
 
 	for {
 		conn, err := listener.Accept()
@@ -411,10 +416,16 @@ func invalidTx(err error) bool {
 	return false
 }
 
-// RelayTx havuza yeni kabul edilmiş işlemi yayın kuyruğuna koyar. Kuyruk doluysa ya da taşma
-// boş değilse (sıra korunur) işlem kimliği taşmaya girer; taşma da doluysa işlem atılır ve havuz
-// eşitlemesine kalır (relayoverflow.go).
+// RelayTx havuza yeni kabul edilmiş işlemi yayın kapısından (relaygate.go: aynı yuvanın sık yer
+// değiştirmeleri bekletilir) geçirip yayın kuyruğuna koyar.
 func (ps *P2PServer) RelayTx(tx core.Transaction) {
+	ps.relayTxAt(tx, time.Now())
+}
+
+// enqueueRelay işlemi yayın kuyruğuna koyar. Kuyruk doluysa ya da taşma boş değilse (sıra
+// korunur) işlem kimliği taşmaya girer; taşma da doluysa işlem atılır ve havuz eşitlemesine
+// kalır (relayoverflow.go).
+func (ps *P2PServer) enqueueRelay(tx core.Transaction) {
 	o := ps.txOverflow
 	o.mu.Lock()
 	defer o.mu.Unlock()
