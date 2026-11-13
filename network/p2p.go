@@ -113,9 +113,10 @@ type P2PServer struct {
 	lastMempoolSync  map[string]time.Time
 
 	// syncCh senkronizasyonu hemen tetikler; tek yuvalıdır, bekleyen tetikler birleşir.
-	syncCh    chan struct{}
-	relayCh   chan *core.Block
-	txRelayCh chan core.Transaction
+	syncCh     chan struct{}
+	relayCh    chan *core.Block
+	txRelayCh  chan core.Transaction
+	txOverflow *txOverflow // yayın kuyruğuna sığmayan işlemler (relayoverflow.go)
 
 	// sendMu blok ve işlem yayınlarını sıraya koyar: karşı düğüm bağlantılarımızı tek adres
 	// grubundan görür (tek çözümleme yuvası); eşzamanlı bir işlem grubu blok duyurusunu düşürmesin.
@@ -142,6 +143,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		syncCh:     make(chan struct{}, 1),
 		relayCh:    make(chan *core.Block, relayQueueLen),
 		txRelayCh:  make(chan core.Transaction, txRelayQueueLen),
+		txOverflow: newTxOverflow(),
 		txGate:     newTxGate(),
 
 		connQuota:   newGroupQuota(connsPerGroup),
@@ -376,20 +378,33 @@ func invalidTx(err error) bool {
 	return false
 }
 
-// RelayTx havuza yeni kabul edilmiş işlemi yayın kuyruğuna koyar; kuyruk doluysa atar.
+// RelayTx havuza yeni kabul edilmiş işlemi yayın kuyruğuna koyar. Kuyruk doluysa ya da taşma
+// boş değilse (sıra korunur) işlem kimliği taşmaya girer; taşma da doluysa işlem atılır ve havuz
+// eşitlemesine kalır (relayoverflow.go).
 func (ps *P2PServer) RelayTx(tx core.Transaction) {
-	select {
-	case ps.txRelayCh <- tx:
-	default:
-		ps.log.Debug("işlem yayın kuyruğu dolu, işlem yayınlanmadı", "tx", tx.ID())
+	o := ps.txOverflow
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.ids) == 0 {
+		select {
+		case ps.txRelayCh <- tx:
+			return
+		default:
+		}
+	}
+	if !o.pushLocked(tx.ID()) {
+		ps.log.Debug("işlem yayın taşması dolu, işlem yayınlanmadı", "tx", tx.ID(), "atılan", o.dropped)
 	}
 }
 
-// txRelayLoop kuyruktaki işlemleri gruplayıp tek işçiyle yayar.
+// txRelayLoop kuyruktaki işlemleri gruplayıp tek işçiyle yayar. Her turda bekleyen grup
+// gönderilir; kuyruk boşsa taşma, turda gönderilen toplam txRatePerSec'i aşmayacak kadar
+// boşaltılır.
 func (ps *P2PServer) txRelayLoop(stop <-chan struct{}) {
 	t := time.NewTicker(txRelayInterval)
 	defer t.Stop()
 	var batch []core.Transaction
+	sent := 0 // bu turda gönderilen işlem sayısı
 	for {
 		select {
 		case <-stop:
@@ -399,13 +414,20 @@ func (ps *P2PServer) txRelayLoop(stop <-chan struct{}) {
 			if len(batch) < maxTxsPerMsg {
 				continue
 			}
+			ps.broadcast(message{Type: msgTxs, Txs: batch})
+			sent += len(batch)
+			batch = nil
 		case <-t.C:
-			if len(batch) == 0 {
-				continue
+			if len(batch) > 0 {
+				ps.broadcast(message{Type: msgTxs, Txs: batch})
+				sent += len(batch)
+				batch = nil
 			}
+			if len(ps.txRelayCh) == 0 && sent < txRatePerSec {
+				ps.relayOverflow(txRatePerSec-sent, stop)
+			}
+			sent = 0
 		}
-		ps.broadcast(message{Type: msgTxs, Txs: batch})
-		batch = nil
 	}
 }
 
