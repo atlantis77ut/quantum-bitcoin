@@ -73,6 +73,10 @@ type message struct {
 	// (stamped her gönderimde yazar; bilinmeyen bitler yok sayılır).
 	Version  uint32 `json:"version,omitempty"`
 	Services uint64 `json:"services,omitempty"`
+
+	// Adres öğrenme (addr.go): Network gönderenin genesis özeti, Addrs "ip:port" listesidir.
+	Network string   `json:"network,omitempty"`
+	Addrs   []string `json:"addrs,omitempty"`
 }
 
 // Protokol sürümü (düğüm politikası, uzlaşma kuralı değil). Kalıcı oturumlar gibi taşıma
@@ -87,10 +91,11 @@ type message struct {
 // dürüst eşte de olur).
 //
 // minPeerVersion 0'dır: sürüm alanından önceki (alanı göndermeyen) düğümler de kabul edilir.
-// Sürüm 2 uç beklemesini (msgWaitTip/msgTip, tippoll.go) ekledi; yeni bir istek türü olduğundan
-// eski eşlerle uyumludur.
+// Sürüm 2 uç beklemesini (msgWaitTip/msgTip, tippoll.go), sürüm 3 adres öğrenmeyi
+// (msgGetAddr/msgAddr, addr.go) ekledi; ikisi de yeni istek türleri olduğundan eski eşlerle
+// uyumludur.
 const (
-	protocolVersion uint32 = 2
+	protocolVersion uint32 = 3
 	minPeerVersion  uint32 = 0
 	localServices   uint64 = 0 // henüz tanımlı yetenek biti yok
 )
@@ -173,6 +178,21 @@ type P2PServer struct {
 	pushLim   pushLimits
 	pushSlots *pushSlots
 
+	// Adres öğrenme (addr.go). discover, addrs, seeds ve aralıklar Serve'den önce ayarlanır
+	// (EnableDiscovery; testler aralıkları kısaltır), sonra yalnızca okunur. localAddrs
+	// (regtest) yönlendirilemeyen adresleri de kabul ettirir. reached yapılandırılmış eşlere ve
+	// sorulan kaynaklara son başarılı isteği, wrongNet `getaddr` yanıtı başka ağ kimliği taşıyan
+	// kaynakların yanıtta verilmeyeceği zamanı tutar; ikisi de o eş kümesiyle sınırlıdır.
+	discover      bool
+	addrs         *AddrBook
+	seeds         []string
+	addrEvery     time.Duration
+	addrScanEvery time.Duration
+	localAddrs    bool
+	reachedMu     sync.Mutex
+	reached       map[string]reachedPeer
+	wrongNet      map[string]time.Time
+
 	// Uç bekleme (tippoll.go). tipCh uç değişince kapatılıp yenilenir, quit Serve dönünce
 	// kapanır; ikisi tipMu altındadır. tipWait Serve'den önce ayarlanır (testler kısaltır), sonra
 	// yalnızca okunur.
@@ -236,6 +256,10 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		senders:          map[string]*peerSender{},
 		pushLim:          defaultPushLimits(),
 		pushSlots:        newPushSlots(blockPushSlots),
+		addrEvery:        addrInterval,
+		addrScanEvery:    addrScanInterval,
+		reached:          map[string]reachedPeer{},
+		wrongNet:         map[string]time.Time{},
 
 		waits:     newSlotPool(maxConcurrentWaits, reservedWaits),
 		waitQuota: newGroupQuota(waitsPerGroup),
@@ -243,6 +267,8 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		tipCh:     make(chan struct{}),
 	}
 	ps.send = ps.sendTo
+	name, _ := bc.Network()
+	ps.localAddrs = name == core.RegtestParams.Name
 	return ps
 }
 
@@ -293,6 +319,9 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	go ps.orphanLoop(stop)
 	go ps.restoredRelayLoop(stop)
 	go ps.relayGateLoop(stop)
+	if ps.discover && ps.addrs != nil {
+		go ps.addrLoop(stop)
+	}
 
 	for {
 		conn, err := listener.Accept()
@@ -385,6 +414,11 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 		ps.serveTxs(conn, remote, id, msg.TxIDs)
 	case msgWaitTip:
 		ps.serveWaitTip(conn, remote, id, msg.Hash)
+	case msgGetAddr:
+		ps.serveGetAddr(conn, remote, id, msg.Network)
+	case msgAddr:
+		// Adres yalnızca kendi isteğimize yanıt olarak alınır; kendiliğinden gelen yok sayılır.
+		ps.log.Debug("istenmemiş adres mesajı yok sayıldı", "remote", remote)
 	default:
 		ps.log.Debug("bilinmeyen mesaj türü", "remote", remote, "type", msg.Type)
 	}
@@ -645,6 +679,7 @@ func (ps *P2PServer) request(peer string, req message, limit int64) (*message, e
 	if !ps.versionOK(resp.Version) {
 		return nil, fmt.Errorf("%w: %d", errPeerVersion, resp.Version)
 	}
+	ps.noteReached(peer, conn.RemoteAddr(), time.Now())
 	return &resp, nil
 }
 

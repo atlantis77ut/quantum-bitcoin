@@ -75,25 +75,25 @@
   - Yalnızca yapılandırılmış eşlerin hepsine ulaşılamıyorken devreye girerler. Ölçüt: belirli bir süre boyunca hiçbir yapılandırılmış eşe hiçbir isteğin başarılı olmaması.
   - Biri yeniden ulaşılır olunca, gecikmeli bir eşikle (histerezis) çıkarılırlar.
   - Etkinken senkronizasyon, uç beklemesi, blok ve işlem itmesi ve havuz eşitlemesi onları da kapsar. NAT arkasındaki madencinin bloğu bu durumda da yayılır.
-- **`-discover=0` keşfi tamamen kapatır** (borsa profili): yalnızca yapılandırılmış eşler kullanılır, `getaddr` sorulmaz.
+- **`-discover=false` keşfi tamamen kapatır** (borsa profili): yalnızca yapılandırılmış eşler kullanılır, `getaddr` sorulmaz ve adres verilmez (kullanıcı kararı 2026-11-14). Gelen `getaddr` bağlantıyı yanıtsız kapatmak yerine adressiz, yalnızca ağ kimliğiyle yanıtlanır (uygulama seçimi: soran yeniden deneme ertelemesine girmez; bedeli düğümün sürüm 3'ü ve ağını göstermesi).
 
 ### 4.2 Adres kaynağı
 
 - **Adres yalnızca güvenilen eşlerden öğrenilir:** yapılandırılmış eşler ve gömülü liste. Kendini duyurma, besleyici yoklaması ve `new`/`tried` tablosu yoktur (lansmandan sonra, birincil rol için; §6).
 - **`getaddr` → `addr`** (istek/yanıt, protokol sürümü 3).
   - Yanıtlayan, kendi yapılandırılmış eşlerinden son dönemde başarıyla ulaştıklarını verir: operatörlerin seçtiği adresler, bir atlama.
-  - Yanıt sınırlıdır (en çok 32 adres) ve genesis özeti taşır. Yanlış ağın yanıtı reddedilir, eşi bozuk işaretlenir.
-  - Kendiliğinden gelen `addr` itmeleri yok sayılır. Yalnızca yönlendirilebilir adresler alınır (regtest hariç). Kaynak başına kayıt sayısı sınırlıdır.
-- **Ağ başına varsayılan port** ayrılır; testnet ve mainnet düğümleri birbirinin tablosuna karışmaz.
+  - Yanıt sınırlıdır (en çok 32 adres, 8 KiB) ve genesis özeti taşır. Yanlış ağın yanıtı reddedilir ve kaynak uyarıyla 24 sa ertelenir; bozuk işaret yedek kullanımla (§5 madde 4) gelir.
+  - Kendiliğinden gelen `addr` itmeleri yok sayılır. Yalnızca yönlendirilebilir adresler alınır (regtest hariç); NAT64 ve 6to4 adreslerinde gömülü IPv4 de denetlenir. Kaynak başına kayıt sayısı sınırlıdır.
+- **Ağ başına varsayılan port** ayrılır (kullanıcı kararı 2026-11-14): mainnet :8001, testnet :18001, regtest :28001. Testnet ve mainnet düğümleri birbirinin tablosuna karışmaz; ağ kimliği (genesis özeti) yanlış yapılandırmayı da yakalar.
 
 ### 4.3 Tablo ve kalıcılık
 
-- **Küçük tablo** (en çok 256 kayıt). Her kayıt adres, kaynak, son başarı, son başarısızlık ve bozuk işaretini tutar.
+- **Küçük tablo** (en çok 256 kayıt, kaynak başına 32). Her kayıt adres, kaynak, ilk ve son görülme, son başarı, son başarısızlık ve bozuk işaretini tutar. 7 gün hiçbir kaynağın vermediği kayıt silinir; dolu tabloda en eski görülen düşer.
 - **Bozuk işaret** yalnızca §3.2'deki kanıtlı ihlallerde konur ve 24 sa sürer. Taşıma hataları (EOF, zaman aşımı, meşgul) yalnızca yedek eşi sırayla değiştirir, işaret koymaz.
 - **Kalıcılık: `network/` paketinin sahibi olduğu ayrı bir LevelDB dizini** (teknik öneri).
   - Tablo LevelDB batch'iyle atomik yazılır.
   - Zincirin şema silinmesinden etkilenmez, kopyalardan dışlanabilir, `core/`'a API gerektirmez.
-  - Bedeli: ikinci bir veritabanı tanıtıcısı ve yol kuralı (`-db` ile birlikte).
+  - Bedeli: ikinci bir veritabanı tanıtıcısı ve yol kuralı (`-db` ile birlikte): `<db>_peers`. Kayıt biçimi ya da ağ uyuşmazsa tablo sıfırlanır; açılamazsa bellekte tutulur.
 
 ### 4.4 Döngülerle bağlantı
 
@@ -131,6 +131,7 @@
 - Mainnet listesi lansmanda doldurulur: en az üç bağımsız işletmecinin düğümleri, imzalı sürüm notunda da yayımlanır. Lansman kontrol listesine eklenir.
 - DNS tohumu, bağımsız işletmeciler oluşunca ayrı bir kararla gelir.
 - Bedel: liste bayatlar, güncellemesi yeni sürüm ister.
+- Mekanizma `network/addr.go` `seedPeers`'tadır; şu an üç ağda da boştur. `-peer` verilmezse liste yapılandırılmış eş olarak eklenir.
 
 ## 5. PR sırası
 
@@ -138,7 +139,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 
 1. Bu not ve kararlar.
 2. **İtme taşıması düzeltmesi** (§4.5). Keşiften bağımsızdır, bugünkü yapılandırılmış eşleri de düzeltir.
-3. **Adres öğrenme:**
+3. **Adres öğrenme** (kapandı: feat/addr-learning, `network/addr.go`; kalanlar MAINNET-ONCESI.md madde 2):
    - `getaddr`/`addr`, ağ kimliği, ağ başına port, protokol sürümü 3;
    - küçük tablo ve ayrı LevelDB;
    - gömülü liste mekanizması (mainnet boş);
@@ -157,6 +158,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 - **NAT arkasındaki madenci** itme için yapılandırılmış eşlerine, onlar düşünce yedeklere muhtaçtır.
 - **Topoloji gömülü liste düğümlerinde yoğunlaşır.** Liste işletmecileri yarışlarda öne geçer (γ). Bunun ölçüsü yayılım ölçümünde ayrıca bakılmalıdır.
 - **`getaddr` yanıtı yanıtlayanın yapılandırma ilişkilerini açığa çıkarır** (topoloji çıkarımı).
+- **Düğüm kendi adresini öğrenebilir:** yanıtlayanın yapılandırılmış eşi bizsek adresimiz tabloya girer. Yedek kullanım kendine bağlanmayı ayıklamalıdır.
 - **Birincil rol lansmandan sonra ayrı karar ister:**
   - kendini duyurma ve besleyici yoklaması;
   - Bitcoin benzeri `new`/`tried` tablosu (IP başına kayıt tavanı, "dolu konumdaki iyi kaydı koru", "çıkarmadan önce sına");

@@ -208,6 +208,12 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 	return bc, nil
 }
 
+// Network zincirin ağ adı ve genesis özetidir (ağ kimliği; network/addr.go). Parametreler
+// paylaşılan global değerlerdir, bu yüzden işaretçi değil kopya dizgeler döner.
+func (bc *Blockchain) Network() (name, genesisHash string) {
+	return bc.params.Name, bc.params.GenesisHash
+}
+
 // Bits zincirin sabit compact hedefidir.
 func (bc *Blockchain) Bits() uint32 {
 	bc.mu.RLock()

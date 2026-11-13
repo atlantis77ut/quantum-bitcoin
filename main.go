@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -24,11 +25,12 @@ func main() {
 	fmt.Println("=== QUANTUM BITCOIN (Q-BTC) PRODUCTION NODE ===")
 
 	// 1. Komut satırı parametreleri
-	port := flag.String("port", ":8001", "P2P dinleme portu")
+	port := flag.String("port", "", "P2P dinleme adresi (boşsa ağın varsayılan portu: mainnet :8001, testnet :18001, regtest :28001)")
 	apiPort := flag.String("api", ":9001", "Borsa API portu")
 	dbPath := flag.String("db", "", "LevelDB klasör yolu (boşsa qbtc_<ağ>_db)")
 	netName := flag.String("network", "testnet", "Ağ: testnet, regtest (mainnet genesis'i lansmanda tanımlanacak)")
-	peerAddr := flag.String("peer", "", "Bağlanılacak diğer düğümlerin adresleri (virgülle ayrılmış)")
+	peerAddr := flag.String("peer", "", "Bağlanılacak diğer düğümlerin adresleri (virgülle ayrılmış; boşsa ağın gömülü başlangıç listesi)")
+	discover := flag.Bool("discover", true, "Eş adreslerini güvenilen eşlerden öğrenir ve getaddr isteklerini yanıtlar (false: ikisi de kapalı, borsa profili)")
 	tlsCert := flag.String("tls-cert", "", "API için TLS sertifika dosyası (boşsa HTTP)")
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
 	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
@@ -174,6 +176,9 @@ func main() {
 	}
 
 	// 3. P2P sunucusu ve eşler
+	if *port == "" {
+		*port = ":" + network.DefaultPort(params.Name)
+	}
 	p2p := network.NewP2PServer(*port, bc)
 	// Havuz kaydı ağ ve API işlem almadan önce yüklenir; her işlem kabul yolundan yeniden geçer.
 	// Yüklenenler ilk senkronizasyondan sonra eşlere yeniden yayılır (network/restorerelay.go).
@@ -182,11 +187,36 @@ func main() {
 	} else if restored+skipped > 0 {
 		slog.Info("havuz kaydı yüklendi", "geri_yuklenen", restored, "atlanan", skipped)
 	}
+	var peers []string
 	for _, p := range strings.Split(*peerAddr, ",") {
 		if p = strings.TrimSpace(p); p != "" {
-			p2p.AddPeer(p)
-			slog.Info("eş eklendi", "peer", p)
+			peers = append(peers, p)
 		}
+	}
+	// Gömülü başlangıç listesi (docs/ES-KESFI.md §4.6): -peer yoksa yapılandırılmış eş yerine
+	// geçer, varsa yalnızca adres kaynağıdır.
+	seeds := network.SeedPeers(params.Name)
+	if len(peers) == 0 {
+		peers = seeds
+		if len(seeds) == 0 {
+			slog.Warn("-peer verilmedi ve bu ağın gömülü başlangıç listesi boş: düğüm eşsiz çalışıyor", "network", params.Name)
+		}
+	}
+	for _, p := range peers {
+		p2p.AddPeer(p)
+		slog.Info("eş eklendi", "peer", p)
+	}
+	// Adres öğrenme (network/addr.go): tablo zincir dizininin yanında ayrı bir LevelDB'dedir.
+	// Açılamazsa keşif bellekteki tabloyla sürer (ipucu önbelleğidir, durum değil). Tablo
+	// ertelenmiş bc.Close'dan önce kapanır; kapanıştan sonraki kayıtlar sessizce atlanır.
+	if *discover {
+		book, err := network.OpenAddrBook(filepath.Clean(*dbPath)+"_peers", bc)
+		if err != nil {
+			slog.Warn("eş adresi tablosu açılamadı; öğrenilen adresler bellekte tutulacak", "err", err)
+			book = network.MemoryAddrBook(bc)
+		}
+		defer book.Close()
+		p2p.EnableDiscovery(book, seeds)
 	}
 
 	// 4. Borsa API sunucusu
