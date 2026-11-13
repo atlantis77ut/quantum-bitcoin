@@ -84,7 +84,8 @@ func (ps *P2PServer) pullMempool(peer string, stop <-chan struct{}) (int, error)
 			return 0, errBadResponse
 		}
 	}
-	missing := ps.Mempool.Missing(resp.TxIDs)
+	// Önbellekte geçerli retti olanlar istenmez (rejectcache.go).
+	missing := ps.filterRejected(ps.Mempool.Missing(resp.TxIDs))
 	added, full := 0, 0
 	for len(missing) > 0 {
 		select {
@@ -106,13 +107,14 @@ func (ps *P2PServer) pullMempool(peer string, stop <-chan struct{}) (int, error)
 			return added, err
 		}
 		for _, tx := range txs {
-			_, err := ps.Mempool.Add(tx)
+			err := ps.addPeerTx(tx)
 			switch {
 			case err == nil:
 				added++
 				full = 0
 			case invalidTx(err):
-				// Yapılandırılmış eş geri çevrilmez; tek yaptırım turu kesmektir.
+				// Yapılandırılmış eş geri çevrilmez; tek yaptırım turu kesmektir. İşlem önbelleğe
+				// girdiğinden sonraki turlar onu istemez ve kesilmez.
 				return added, fmt.Errorf("%w: geçersiz işlem: %v", errBadResponse, err)
 			case errors.Is(err, core.ErrMempoolFull):
 				if full++; full >= pullFullStop {
