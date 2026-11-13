@@ -1,6 +1,6 @@
 # Eş kimliği ve puanlama: tasarım notu
 
-**Durum:** öneri, karar bekliyor (2026-11-13). Bu not hiçbir uzlaşma kuralını değiştirmez; konu düğüm politikası ve P2P taşımasıdır. Kararlar verilince kapanış ve kalanlar [MAINNET-ONCESI.md](MAINNET-ONCESI.md)'ye yazılır.
+**Durum:** kararlar verildi (kullanıcı, 2026-11-13, `devils-advocate` sonrası; bkz. §7), uygulama PR'ları bekliyor. Bu not hiçbir uzlaşma kuralını değiştirmez; konu düğüm politikası ve P2P taşımasıdır. Kararlar verilince kapanış ve kalanlar [MAINNET-ONCESI.md](MAINNET-ONCESI.md)'ye yazılır.
 
 ## 1. Kimlik neyi yapabilir, neyi yapamaz
 
@@ -114,3 +114,12 @@ B seçilirse, oturum açılmadan önce şunlar sağlanmalıdır:
 2. **İç anahtar ayrıntısı ve *k*.** Öneri: /32 (IPv6 /64) ve 10 dk'lık pencerede k = 3 farklı iç anahtar.
 3. **İtibar kaynağı.** Mevcut kural (yeni uç bloğunu ilk getiren) aynen kalsın mı? Öneri: evet.
 4. **`ErrBadDifficulty` cezası.** 1 sa geri çevirme yerine kademeli olsun mu? Öneri: evet (ilk ihlalde uyarı, tekrarında artan süre).
+
+## 7. Kararlar (kullanıcı, 2026-11-13)
+
+1. **Yol A, lansmandan önce.** Oturumsuz küçük PR'lar §4'teki sırayla yapılır. 60/30 sn yayılım ölçümü bugünkü taşımayla yapılır. Kalıcı oturumlar (Yol B) lansmandan sonra, sürüm alanı üzerinden pazarlıkla ele alınabilir.
+2. **İç anahtar ve yükseltme:**
+   - İç anahtar /32 (IPv6 /64), dış sınır /24 (/48).
+   - 10 dk'lık pencerede 3 farklı iç anahtar cezalanırsa bütün grup cezalanır.
+3. **İtibar kaynağı aynen kalır.** Yeni uç bloğunu ilk getiren korunur; işlem iletmek itibar vermez.
+4. **`ErrBadDifficulty` cezası kademeli olur:** ilk ihlalde uyarı, tekrarında artan süre.
