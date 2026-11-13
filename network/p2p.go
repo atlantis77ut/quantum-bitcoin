@@ -120,8 +120,9 @@ type P2PServer struct {
 
 	// sendMu blok ve işlem yayınlarını sıraya koyar: karşı düğüm bağlantılarımızı tek adres
 	// grubundan görür (tek çözümleme yuvası); eşzamanlı bir işlem grubu blok duyurusunu düşürmesin.
-	sendMu sync.Mutex
-	txGate *txGate // gelen işlem hız sınırı ve geçersiz işlem cezası (quota.go)
+	sendMu  sync.Mutex
+	txGate  *txGate      // gelen işlem hız sınırı ve geçersiz işlem cezası (quota.go)
+	rejects *rejectCache // eşlerden gelen ve bir daha geçerli olamayacak işlemler (rejectcache.go)
 
 	// syncRounds tamamlanan senkronizasyon turu sayısıdır (testler için).
 	syncRounds atomic.Int64
@@ -145,6 +146,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		txRelayCh:  make(chan core.Transaction, txRelayQueueLen),
 		txOverflow: newTxOverflow(),
 		txGate:     newTxGate(),
+		rejects:    newRejectCache(rejectCacheMax),
 
 		connQuota:   newGroupQuota(connsPerGroup),
 		decodeQuota: newGroupQuota(decodesPerGroup),
@@ -351,7 +353,18 @@ func (ps *P2PServer) handleTxs(remote, group string, txs []core.Transaction) {
 		return
 	}
 	for _, tx := range txs {
-		_, err := ps.Mempool.Add(tx)
+		// Önbellekteki ret: Add (ve imza doğrulaması) atlanır; geçersiz işlem yine cezalanır.
+		// Uç denetimi işlem başına tazelenir: önceki işlemin Add'i sırasında reorg olmuş olabilir.
+		switch ps.rejects.check(tx.IDBytes(), ps.onMainFn()) {
+		case rejectNone:
+		case rejectInvalid:
+			ps.log.Debug("eşten bilinen geçersiz işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote)
+			ps.txGate.penalize(group)
+			return
+		default:
+			continue
+		}
+		err := ps.addPeerTx(tx)
 		switch {
 		case err == nil:
 			ps.RelayTx(tx)
