@@ -16,7 +16,10 @@ import (
 // yeni işlemler taşmaya girer), tutulan grup varken taşma boşaltılmaz (sıra korunur, bkz.
 // relayoverflow.go). Değerler karşı düğümün sabitleriyle aynı sürümü varsayar. Kova yalnızca
 // yayın döngüsünden erişilir (kilit yok). Havuz eşitlemesi yanıtları (serveTxs) sayılmaz:
-// çeken düğüm onları txGate'ten geçirmez.
+// çeken düğüm onları txGate'ten geçirmez. Yapılandırılmış eş yoksa gruplar ve taşma kova
+// harcanmadan atılır (gönderilecek kimse yok; kuyruk ve taşma da birikmez). Eş var ama
+// ulaşılamıyorsa kova yine harcanır: iade, kısa bir kesintide bütün birikimi hızla tüketip
+// kaybettirirdi; bedeli eşler dönünce en çok ~relayBurst/relayRatePerSec (≈2,3 sn) düşük hızdır.
 
 const (
 	relayRatePerSec = txRatePerSec * 7 / 8
@@ -70,15 +73,27 @@ type txRelayState struct {
 	bucket sendBucket
 }
 
+// hasPeers yapılandırılmış eş olup olmadığını söyler.
+func (ps *P2PServer) hasPeers() bool {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	return len(ps.peers) > 0
+}
+
 // broadcastTxs bir işlem grubunu yayar; bütün işlem yayınları buradan geçer.
 func (ps *P2PServer) broadcastTxs(txs []core.Transaction) {
 	ps.txsSent.Add(int64(len(txs)))
 	ps.broadcast(message{Type: msgTxs, Txs: txs})
 }
 
-// flushTxBatch bekleyen grubu kova yetiyorsa yayar; grup boşsa ya da gönderildiyse true.
+// flushTxBatch bekleyen grubu kova yetiyorsa yayar; grup boşsa, gönderildiyse ya da eş yokken
+// atıldıysa true.
 func (ps *P2PServer) flushTxBatch(st *txRelayState, now time.Time) bool {
 	if len(st.batch) == 0 {
+		return true
+	}
+	if !ps.hasPeers() {
+		st.batch = nil // eş yok: kova harcanmaz
 		return true
 	}
 	if !st.bucket.take(len(st.batch), now) {
@@ -94,6 +109,10 @@ func (ps *P2PServer) flushTxBatch(st *txRelayState, now time.Time) bool {
 // izin verdiği kadar boşaltılır.
 func (ps *P2PServer) relayTick(st *txRelayState, now time.Time, stop <-chan struct{}) {
 	if !ps.flushTxBatch(st, now) || len(ps.txRelayCh) != 0 {
+		return
+	}
+	if !ps.hasPeers() {
+		ps.txOverflow.clear() // eş yok: taşma kova harcanmadan atılır
 		return
 	}
 	if n := st.bucket.avail(now); n > 0 {
