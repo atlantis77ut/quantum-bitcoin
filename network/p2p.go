@@ -126,6 +126,9 @@ type P2PServer struct {
 
 	// syncRounds tamamlanan senkronizasyon turu sayısıdır (testler için).
 	syncRounds atomic.Int64
+
+	// txsSent yayınlanan toplam işlem sayısıdır (relaybudget.go; testler için).
+	txsSent atomic.Int64
 }
 
 func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
@@ -410,36 +413,29 @@ func (ps *P2PServer) RelayTx(tx core.Transaction) {
 	}
 }
 
-// txRelayLoop kuyruktaki işlemleri gruplayıp tek işçiyle yayar. Her turda bekleyen grup
-// gönderilir; kuyruk boşsa taşma, turda gönderilen toplam txRatePerSec'i aşmayacak kadar
-// boşaltılır.
+// txRelayLoop kuyruktaki işlemleri gruplayıp tek işçiyle yayar. Gruplar ve taşma boşaltması
+// gönderen kovasından harcar (relaybudget.go); kova yetmeyen grup tutulur ve sonraki turda
+// yeniden denenir.
 func (ps *P2PServer) txRelayLoop(stop <-chan struct{}) {
 	t := time.NewTicker(txRelayInterval)
 	defer t.Stop()
-	var batch []core.Transaction
-	sent := 0 // bu turda gönderilen işlem sayısı
+	st := &txRelayState{bucket: newSendBucket(time.Now())}
 	for {
+		// Dolu grup kova yetmediği için tutuluyorsa kuyruk okunmaz (nil kanal seçilmez).
+		var in <-chan core.Transaction
+		if len(st.batch) < maxTxsPerMsg {
+			in = ps.txRelayCh
+		}
 		select {
 		case <-stop:
 			return
-		case tx := <-ps.txRelayCh:
-			batch = append(batch, tx)
-			if len(batch) < maxTxsPerMsg {
-				continue
+		case tx := <-in:
+			st.batch = append(st.batch, tx)
+			if len(st.batch) == maxTxsPerMsg {
+				ps.flushTxBatch(st, time.Now())
 			}
-			ps.broadcast(message{Type: msgTxs, Txs: batch})
-			sent += len(batch)
-			batch = nil
 		case <-t.C:
-			if len(batch) > 0 {
-				ps.broadcast(message{Type: msgTxs, Txs: batch})
-				sent += len(batch)
-				batch = nil
-			}
-			if len(ps.txRelayCh) == 0 && sent < txRatePerSec {
-				ps.relayOverflow(txRatePerSec-sent, stop)
-			}
-			sent = 0
+			ps.relayTick(st, time.Now(), stop)
 		}
 	}
 }
