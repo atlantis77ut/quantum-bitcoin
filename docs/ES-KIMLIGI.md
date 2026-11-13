@@ -13,7 +13,7 @@
 - **Yeni (itibarsız) kimlik, grubunun bütçesini ve ceza havuzunu paylaşmak zorundadır.** Aksi hâlde cezayı kimliğe daraltmak, tek bir /24'ten sınırsız yeniden deneme verir.
 - **Kimlik, çok sayıda /24 kontrol eden saldırgana karşı bir şey yapmaz.** Bu bir eclipse ve çeşitlilik sorunudur; eş keşfi notunun konusudur.
 - **Bugün komşudan zarar gören yalnızca yapılandırılmamış gelen eşlerdir:**
-  - Yayın yalnızca yapılandırılmış eşlere gider (`ps.Peers()`, p2p.go:956).
+  - Yayın yalnızca yapılandırılmış eşlere gider (`ps.Peers()`, p2p.go `broadcast`).
   - Yapılandırılmış grup hiç geri çevrilmez (peers.go:185).
 
 ## 2. Bugün adres grubuna (IPv4 /24, IPv6 /48) bağlı olanlar
@@ -28,12 +28,12 @@
 | `protection.recent` (peers.go:43) | Yeni uç bloğunu ilk getiren son 8 grup korunur. | Korumayı grup kazanır, komşu da yararlanır (madde 5 kalanları). |
 | Ayrılmış yuvalar (peers.go:40-42) | Çözümleme 3/8, sunum 6/16, bağlantı 16/64. | Korunan grubun payını komşu da kullanır. |
 
-**Gruba değil, eş adresine bağlı olanlar:** `presyncBackoff` ve `presyncs` (p2p.go:104-108), `lastMempoolSync` (mempoolsync.go:33). Gönderen kovası (relaybudget.go) bütün eşler için ortaktır.
+**Gruba değil, eş adresine bağlı olanlar:** `presyncBackoff` ve `presyncs` (p2p.go, `P2PServer` alanları), `lastMempoolSync` (mempoolsync.go:33). Gönderen kovası (relaybudget.go) bütün eşler için ortaktır.
 
 **Taşıma:**
-- Düz TCP, şifreleme yok (p2p.go:543, 960).
+- Düz TCP, şifreleme yok (p2p.go `request` ve `broadcast`).
 - Her mesaj ayrı bir bağlantıdır.
-- `message` yapısında sürüm ya da yetenek alanı yoktur (p2p.go:64-72).
+- `message` yapısında sürüm ya da yetenek alanı yoktu (Yol A'nın 1. adımıyla eklendi).
 - `liboqs-go` (go.mod:6) yalnızca ML-DSA imzası için kullanılıyor; KEM kullanılmıyor.
 
 ## 3. Taşıma: neyi gerektirir, neyi gerektirmez
@@ -46,7 +46,7 @@
 
 **Kalıcı oturumların sanıldığı kadar çözmedikleri** (`devils-advocate` incelemesi, kodla doğrulandı):
 - **Yetim tamponu yine gerekir.** Öncül başka bir eşten, bloktan, POST /tx'ten ya da havuz eşitlemesinden geç gelebilir (orphans.go:11-17). Tek bir TCP akışı yalnızca o oturumun içindeki sırayı korur.
-- **Kara delik maliyetinin kökü bağlantı modeli değildir.** `broadcast`, global `sendMu` kilidini tutarken bütün eşleri `wg.Wait` ile bekler (p2p.go:953-974). Eş başına gönderim kuyruğu bu maliyeti oturumsuz kaldırır.
+- **Kara delik maliyetinin kökü bağlantı modeli değildir.** `broadcast`, global `sendMu` kilidini tutarken bütün eşleri `wg.Wait` ile bekler (p2p.go `broadcast`). Eş başına gönderim kuyruğu bu maliyeti oturumsuz kaldırır.
 - **Tahliye bir kazanım değil, oturumun doğurduğu bir gereksinimdir.** Bugün bir yuva okuma süresi dolunca kendiliğinden boşalır. Kalıcı oturumda yuva süresiz tutulabilir; boşta kalma süresi, asgari hız ve tahliye kuralı bu yüzden gerekir.
 - **Paralel senkronizasyon taşımadan bağımsızdır.** `request` durumsuz bir istek/yanıttır.
 
@@ -67,7 +67,7 @@
 
 Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 
-1. **Sürüm ve yetenek alanı.**
+1. **Sürüm ve yetenek alanı** (kapandı: feat/message-version; geçiş kuralları `network/p2p.go`'daki `protocolVersion` belgesinde).
    - `message`'a eklenir; eski düğümler alanı yok sayar.
    - Kalıcı oturum seçeneğini lansmandan sonrası için açık tutar.
 2. **Eş başına gönderim kuyruğu.**

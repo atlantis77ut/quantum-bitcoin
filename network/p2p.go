@@ -69,12 +69,50 @@ type message struct {
 	Hash    string             `json:"hash,omitempty"`
 	Txs     []core.Transaction `json:"txs,omitempty"`
 	TxIDs   []string           `json:"txids,omitempty"`
+
+	// Version gönderenin desteklediği en yüksek protokol sürümü, Services yetenek bitleridir
+	// (stamped her gönderimde yazar; bilinmeyen bitler yok sayılır).
+	Version  uint32 `json:"version,omitempty"`
+	Services uint64 `json:"services,omitempty"`
 }
+
+// Protokol sürümü (düğüm politikası, uzlaşma kuralı değil). Kalıcı oturumlar gibi taşıma
+// değişikliklerinin lansmandan sonra pazarlıkla gelebilmesi için her mesaj gönderenin sürümünü
+// taşır (docs/ES-KIMLIGI.md §3–4).
+//
+// Geçiş kuralları: tek yönlü yayınlar (blok, işlem grubu) pazarlık yapamaz, minPeerVersion'daki
+// bir düğümün çözebileceği biçimde kalmalıdır. Yeni davranış istek/yanıt yoluyla gelir:
+// yanıtlayan isteyenin sürümünü görür ve ikisinin küçüğüyle yanıtlar. Yeni mesaj türleri zaten
+// güvenlidir, bilinmeyen tür cezasız bırakılır (handleConnection). Uyumsuz bir değişiklikte
+// minPeerVersion yükseltilir; altındaki mesajlar ve yanıtlar cezasız bırakılır (sürüm farkı
+// dürüst eşte de olur).
+//
+// minPeerVersion 0'dır: sürüm alanından önceki (alanı göndermeyen) düğümler de kabul edilir.
+const (
+	protocolVersion uint32 = 1
+	minPeerVersion  uint32 = 0
+	localServices   uint64 = 0 // henüz tanımlı yetenek biti yok
+)
 
 var (
 	errBadResponse = errors.New("eşten beklenmeyen yanıt")
 	errSyncBudget  = errors.New("eşle tur süresi doldu, kalan iş sonraki turda")
+	errPeerVersion = errors.New("eşin protokol sürümü desteklenmiyor")
 )
+
+// stamped mesaja kendi sürümümüzü ve yeteneklerimizi yazar; her gönderim noktası (reply,
+// request, broadcast) kodlamadan hemen önce bundan geçer.
+func stamped(m message) message {
+	m.Version = protocolVersion
+	m.Services = localServices
+	return m
+}
+
+// versionOK eşin bildirdiği sürümün kabul edilip edilmediğini söyler; daha yeni sürümler
+// kabul edilir (bilinmeyen alanlar yok sayılır).
+func (ps *P2PServer) versionOK(v uint32) bool {
+	return v >= ps.minVersion
+}
 
 type P2PServer struct {
 	ListenAddr string
@@ -97,6 +135,10 @@ type P2PServer struct {
 	serveQuota  *groupQuota
 
 	syncEvery time.Duration
+
+	// minVersion kabul edilen en düşük eş sürümüdür (minPeerVersion; testler yükseltir).
+	// Serve'den önce ayarlanır, sonra yalnızca okunur.
+	minVersion uint32
 
 	// syncWindow oturum başına bellekteki en fazla yeni başlıktır (core.MaxSyncHeaders;
 	// testler küçültür). presyncs yalnızca senkronizasyon döngüsünden erişilir.
@@ -151,6 +193,7 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		prot:       newProtection(),
 		log:        slog.Default().With("component", "p2p"),
 		syncEvery:  syncInterval,
+		minVersion: minPeerVersion,
 		syncWindow: core.MaxSyncHeaders,
 		presyncs:   map[string]*peerPresync{},
 		syncCh:     make(chan struct{}, 1),
@@ -284,6 +327,10 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 			return
 		}
 		ps.log.Debug("eş mesajı okunamadı", "remote", remote, "err", err)
+		return
+	}
+	if !ps.versionOK(msg.Version) {
+		ps.log.Debug("eş sürümü desteklenmiyor; mesaj bırakıldı", "remote", remote, "version", msg.Version)
 		return
 	}
 
@@ -472,7 +519,7 @@ func (ps *P2PServer) txRelayLoop(stop <-chan struct{}) {
 func (ps *P2PServer) reply(conn net.Conn, remote string, m message) {
 	w := &deadlineWriter{conn: conn, chunk: writeChunk, per: chunkWriteTimeout,
 		end: time.Now().Add(transferTimeout)}
-	if err := json.NewEncoder(w).Encode(m); err != nil {
+	if err := json.NewEncoder(w).Encode(stamped(m)); err != nil {
 		ps.log.Debug("yanıt gönderilemedi", "remote", remote, "err", err)
 	}
 }
@@ -538,7 +585,9 @@ func (ps *P2PServer) releaseServe(group string, lvl level) {
 	ps.serveQuota.release(group)
 }
 
-// request bir eşe tek bir istek gönderip tek bir yanıt okur.
+// request bir eşe tek bir istek gönderip tek bir yanıt okur. Desteklenmeyen sürümdeki yanıt
+// errPeerVersion döner; çağıranlar onu ağ hatası gibi sayar (geri çevirme yok; ön-senkronizasyon
+// gövde indirmesinde ağ hataları gibi ertelemeye sayılır).
 func (ps *P2PServer) request(peer string, req message, limit int64) (*message, error) {
 	conn, err := net.DialTimeout("tcp", peer, dialTimeout)
 	if err != nil {
@@ -548,12 +597,15 @@ func (ps *P2PServer) request(peer string, req message, limit int64) (*message, e
 	if err := conn.SetDeadline(time.Now().Add(transferTimeout)); err != nil {
 		return nil, err
 	}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	if err := json.NewEncoder(conn).Encode(stamped(req)); err != nil {
 		return nil, err
 	}
 	var resp message
 	if err := json.NewDecoder(io.LimitReader(conn, limit)).Decode(&resp); err != nil {
 		return nil, err
+	}
+	if !ps.versionOK(resp.Version) {
+		return nil, fmt.Errorf("%w: %d", errPeerVersion, resp.Version)
 	}
 	return &resp, nil
 }
@@ -944,7 +996,7 @@ func (ps *P2PServer) BroadcastBlock(block *core.Block) {
 // yavaş okuyan tek eş diğerlerini geciktirmez. Yayınlar sendMu ile sıralıdır (bkz. alan belgesi);
 // bir yayın en çok dialTimeout + connWriteTimeout sürer.
 func (ps *P2PServer) broadcast(m message) {
-	data, err := json.Marshal(m)
+	data, err := json.Marshal(stamped(m))
 	if err != nil {
 		ps.log.Error("yayın mesajı kodlanamadı", "type", m.Type, "err", err)
 		return

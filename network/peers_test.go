@@ -131,7 +131,18 @@ func TestMalformedMessage(t *testing.T) {
 	}
 	var m message
 	typeErr := json.Unmarshal([]byte(`{"type":5}`), &m) // sürüm farkı dürüst eşe de çarpar
-	for _, err := range []error{typeErr, io.EOF, io.ErrUnexpectedEOF, errors.New("i/o timeout")} {
+	errs := []error{typeErr, io.EOF, io.ErrUnexpectedEOF, errors.New("i/o timeout")}
+	// Tür ya da aralık dışı sürüm alanı: mesaj çözülmez ve cezasız bırakılır.
+	for _, s := range []string{`{"type":"block","version":"x"}`, `{"type":"block","version":4294967296}`,
+		`{"type":"block","version":-1}`, `{"type":"block","services":-1}`} {
+		var m message
+		err := json.Unmarshal([]byte(s), &m)
+		if err == nil {
+			t.Fatalf("%s çözüldü", s)
+		}
+		errs = append(errs, err)
+	}
+	for _, err := range errs {
 		if malformedMessage(err) {
 			t.Fatalf("%v bozuk mesaj sayıldı", err)
 		}
