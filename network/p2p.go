@@ -160,9 +160,13 @@ type P2PServer struct {
 	txRelayCh  chan core.Transaction
 	txOverflow *txOverflow // yayın kuyruğuna sığmayan işlemler (relayoverflow.go)
 
-	// sendMu blok ve işlem yayınlarını sıraya koyar: karşı düğüm bağlantılarımızı tek adres
-	// grubundan görür (tek çözümleme yuvası); eşzamanlı bir işlem grubu blok duyurusunu düşürmesin.
-	sendMu  sync.Mutex
+	// Eş başına gönderim kuyrukları ve devre kesici (peersend.go); senders yapılandırılmış eş
+	// sayısıyla sınırlıdır. send Serve'den önce ayarlanır (testler değiştirir), sonra yalnızca
+	// okunur.
+	sendersMu sync.Mutex
+	senders   map[string]*peerSender
+	send      func(peer string, data []byte) error
+
 	txGate  *txGate      // gelen işlem hız sınırı ve geçersiz işlem cezası (quota.go)
 	rejects *rejectCache // eşlerden gelen ve bir daha geçerli olamayacak işlemler (rejectcache.go)
 	orphans *orphanPool  // öncülü gelmemiş eş işlemleri (orphans.go)
@@ -183,7 +187,7 @@ type P2PServer struct {
 }
 
 func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
-	return &P2PServer{
+	ps := &P2PServer{
 		ListenAddr: listenAddr,
 		Blockchain: bc,
 		Mempool:    core.NewMempool(bc),
@@ -212,7 +216,10 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		mempoolSyncEvery: mempoolSyncInterval,
 		lastMempoolSync:  map[string]time.Time{},
 		presyncBackoff:   map[string]*presyncPenalty{},
+		senders:          map[string]*peerSender{},
 	}
+	ps.send = ps.sendTo
+	return ps
 }
 
 // AddPeer yayın ve senkronizasyon listesine bir eş ekler; eşin adres grubu korunur (peers.go).
@@ -992,36 +999,19 @@ func (ps *P2PServer) BroadcastBlock(block *core.Block) {
 	ps.broadcast(message{Type: msgBlock, Block: block})
 }
 
-// broadcast mesajı bilinen tüm eşlere paralel, birer bağlantıyla gönderir: erişilemeyen ya da
-// yavaş okuyan tek eş diğerlerini geciktirmez. Yayınlar sendMu ile sıralıdır (bkz. alan belgesi);
-// bir yayın en çok dialTimeout + connWriteTimeout sürer.
+// broadcast mesajı bir kez kodlar ve her yapılandırılmış eşin gönderim kuyruğuna koyar
+// (peersend.go); gönderimi beklemez. Erişilemeyen ya da yavaş okuyan eş yalnızca kendi kuyruğunu
+// geciktirir.
 func (ps *P2PServer) broadcast(m message) {
 	data, err := json.Marshal(stamped(m))
 	if err != nil {
 		ps.log.Error("yayın mesajı kodlanamadı", "type", m.Type, "err", err)
 		return
 	}
-	data = append(data, '\n') // json.Encoder biçimi; goroutine'ler yalnızca okur
-	ps.sendMu.Lock()
-	defer ps.sendMu.Unlock()
-	var wg sync.WaitGroup
+	data = append(data, '\n') // json.Encoder biçimi; kuyruklar yalnızca okur
+	block := m.Type == msgBlock
+	now := time.Now()
 	for _, peer := range ps.Peers() {
-		wg.Add(1)
-		go func(peer string) {
-			defer wg.Done()
-			conn, err := net.DialTimeout("tcp", peer, dialTimeout)
-			if err != nil {
-				ps.log.Warn("eşe bağlanılamadı", "peer", peer, "err", err)
-				return
-			}
-			defer conn.Close()
-			if err := conn.SetWriteDeadline(time.Now().Add(connWriteTimeout)); err != nil {
-				return
-			}
-			if _, err := conn.Write(data); err != nil {
-				ps.log.Warn("mesaj eşe gönderilemedi", "peer", peer, "type", m.Type, "err", err)
-			}
-		}(peer)
+		ps.enqueueSend(peer, data, block, now)
 	}
-	wg.Wait()
 }

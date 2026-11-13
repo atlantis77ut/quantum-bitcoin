@@ -46,7 +46,7 @@
 
 **Kalıcı oturumların sanıldığı kadar çözmedikleri** (`devils-advocate` incelemesi, kodla doğrulandı):
 - **Yetim tamponu yine gerekir.** Öncül başka bir eşten, bloktan, POST /tx'ten ya da havuz eşitlemesinden geç gelebilir (orphans.go:11-17). Tek bir TCP akışı yalnızca o oturumun içindeki sırayı korur.
-- **Kara delik maliyetinin kökü bağlantı modeli değildir.** `broadcast`, global `sendMu` kilidini tutarken bütün eşleri `wg.Wait` ile bekler (p2p.go `broadcast`). Eş başına gönderim kuyruğu bu maliyeti oturumsuz kaldırır.
+- **Kara delik maliyetinin kökü bağlantı modeli değildir.** `broadcast`, global `sendMu` kilidini tutarken bütün eşleri `wg.Wait` ile beklerdi. Eş başına gönderim kuyruğu bu maliyeti oturumsuz kaldırır (Yol A'nın 2. adımıyla kapandı, network/peersend.go).
 - **Tahliye bir kazanım değil, oturumun doğurduğu bir gereksinimdir.** Bugün bir yuva okuma süresi dolunca kendiliğinden boşalır. Kalıcı oturumda yuva süresiz tutulabilir; boşta kalma süresi, asgari hız ve tahliye kuralı bu yüzden gerekir.
 - **Paralel senkronizasyon taşımadan bağımsızdır.** `request` durumsuz bir istek/yanıttır.
 
@@ -58,7 +58,7 @@
 - **Süresiz yuva tutma ve yavaş okuma.** Bugün bu saldırı sürekli yeniden bağlanma ister; oturumda bedavaya gelir.
 - **Kafa hattı engellemesi.** Büyük bir blok yanıtı ya da uzun bir `AcceptBlock`, aynı oturumdaki duyuruları ve ping'leri bekletir.
 - **Bellek ve geri basınç.** Oturum başına yazma kuyrukları gerekir. Gelen eşe tam blok geri yayını, inv/getdata olmadan ağır bant genişliği harcar.
-- **Kalibrasyonun geçersizleşmesi.** `maxTxsPerMsg`, `sendMu`, gönderen kovasının 7/8 ve 1/2 payları ile kota ve yuva sayıları tek mesajlık modele göre seçildi.
+- **Kalibrasyonun geçersizleşmesi.** `maxTxsPerMsg`, eş başına tek uçuştaki mesaj (eskiden `sendMu`), gönderen kovasının 7/8 ve 1/2 payları ile kota ve yuva sayıları tek mesajlık modele göre seçildi.
 - **Takvim.** Blok süresinin 60 ya da 30 sn olacağı kararı, lansmandan önceki yayılım ölçümüne bağlıdır. Taşıma bu ölçümü değiştirir.
 
 **Lansmandan sonra geçiş mümkündür.** Karar uzlaşma dışıdır ve JSON çözücüsü bilinmeyen alanları yok sayar. Bugün mesaja bir sürüm ya da yetenek alanı eklenirse, oturumlara geçiş daha sonra sürüm pazarlığıyla yapılabilir. Bunu engelleyen somut bir neden bulunmadı.
@@ -70,7 +70,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 1. **Sürüm ve yetenek alanı** (kapandı: feat/message-version; geçiş kuralları `network/p2p.go`'daki `protocolVersion` belgesinde).
    - `message`'a eklenir; eski düğümler alanı yok sayar.
    - Kalıcı oturum seçeneğini lansmandan sonrası için açık tutar.
-2. **Eş başına gönderim kuyruğu.**
+2. **Eş başına gönderim kuyruğu** (kapandı: feat/peer-send-queue; ayrıntı `network/peersend.go` belgesinde).
    - `sendMu` ve `wg.Wait` yerine geçer.
    - `sendMu`'nun amacı korunmalıdır: karşı düğümün tek çözümleme yuvası (`decodesPerGroup=1`) nedeniyle eş başına aynı anda en çok bir mesaj gider, bloklar işlem gruplarının önüne geçer.
    - Yavaş ya da ulaşılamayan eş için devre kesici eklenir. Kara delik maliyeti diğer eşlere yansımaz.
