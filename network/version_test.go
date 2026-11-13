@@ -122,14 +122,14 @@ func TestInboundVersionGate(t *testing.T) {
 			json.NewEncoder(a).Encode(message{Type: msgBlock, Block: blk, Version: v})
 			a.Close()
 		}()
-		ps.handleConnection(c, "g")
+		ps.handleConnection(c, pid("g"))
 	}
 	before := bc.TipHash()
 	deliver(protocolVersion)
 	if bc.TipHash() != before {
 		t.Fatal("desteklenmeyen sürümdeki blok işlendi")
 	}
-	if ps.prot.isDiscouraged("g") {
+	if ps.prot.isDiscouraged(pid("g")) {
 		t.Fatal("sürüm farkı cezalandırıldı")
 	}
 	deliver(protocolVersion + 1)
@@ -161,7 +161,7 @@ func TestDefaultVersionAccepts(t *testing.T) {
 			raw, protocolVersion+5)
 		a.Close()
 	}()
-	ps.handleConnection(c, "g")
+	ps.handleConnection(c, pid("g"))
 	if bc.TipHash() != blk.Hash {
 		t.Fatal("daha yeni sürümdeki blok işlenmedi")
 	}
@@ -182,7 +182,7 @@ func TestDefaultVersionAccepts(t *testing.T) {
 		}{msgBlock, next})
 		a2.Close()
 	}()
-	ps.handleConnection(c2, "g")
+	ps.handleConnection(c2, pid("g"))
 	if bc.TipHash() != next.Hash {
 		t.Fatal("sürümsüz blok işlenmedi")
 	}

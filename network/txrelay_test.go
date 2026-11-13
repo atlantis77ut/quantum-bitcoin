@@ -57,11 +57,11 @@ func TestHandleTxs(t *testing.T) {
 	bad := good
 	bad.Amount = 2 * core.Coin // imza artık tutmaz
 
-	ps.handleTxs("eş", "kötü", []core.Transaction{bad, good})
+	ps.handleTxs("eş", pid("kötü"), []core.Transaction{bad, good})
 	if n := mempoolLen(t, ps.Mempool); n != 0 || len(ps.txRelayCh) != 0 || ps.txOverflow.len() != 0 {
 		t.Fatalf("geçersiz işlemden sonra grup işlendi: havuz %d, kuyruk %d", n, len(ps.txRelayCh))
 	}
-	ps.handleTxs("eş", "kötü", []core.Transaction{good}) // ceza süresinde
+	ps.handleTxs("eş", pid("kötü"), []core.Transaction{good}) // ceza süresinde
 	if n := mempoolLen(t, ps.Mempool); n != 0 {
 		t.Fatalf("cezalı grubun işlemi kabul edildi: havuz %d", n)
 	}
@@ -69,12 +69,12 @@ func TestHandleTxs(t *testing.T) {
 	for i := range big {
 		big[i] = good
 	}
-	ps.handleTxs("eş", "büyük", big)
+	ps.handleTxs("eş", pid("büyük"), big)
 	if n := mempoolLen(t, ps.Mempool); n != 0 {
 		t.Fatalf("sınırı aşan grup işlendi: havuz %d", n)
 	}
-	ps.handleTxs("eş", "iyi", []core.Transaction{good})
-	ps.handleTxs("eş", "iyi", []core.Transaction{good}) // yineleme: yeniden yayılmaz
+	ps.handleTxs("eş", pid("iyi"), []core.Transaction{good})
+	ps.handleTxs("eş", pid("iyi"), []core.Transaction{good}) // yineleme: yeniden yayılmaz
 	if n := mempoolLen(t, ps.Mempool); n != 1 || len(ps.txRelayCh) != 1 || ps.txOverflow.len() != 0 {
 		t.Fatalf("havuz %d, kuyruk %d; beklenen 1, 1", n, len(ps.txRelayCh))
 	}
@@ -85,23 +85,23 @@ func TestTxGate(t *testing.T) {
 	g := newTxGate()
 	now := time.Unix(1_900_000_000, 0)
 	g.now = func() time.Time { return now }
-	if !g.allow("a", txRateBurst) || g.allow("a", 1) {
+	if !g.allow(pid("a"), txRateBurst) || g.allow(pid("a"), 1) {
 		t.Fatal("kova sınırı uygulanmadı")
 	}
-	if !g.allow("b", 1) {
+	if !g.allow(pid("b"), 1) {
 		t.Fatal("başka grup etkilendi")
 	}
 	now = now.Add(time.Second)
-	if !g.allow("a", txRatePerSec) || g.allow("a", 1) {
+	if !g.allow(pid("a"), txRatePerSec) || g.allow(pid("a"), 1) {
 		t.Fatal("kova saniyede txRatePerSec dolmadı")
 	}
-	g.penalize("b")
+	g.penalize(pid("b"))
 	now = now.Add(badTxPenalty - time.Second)
-	if g.allow("b", 1) {
+	if g.allow(pid("b"), 1) {
 		t.Fatal("ceza süresinde kabul edildi")
 	}
 	now = now.Add(time.Second)
-	if !g.allow("b", 1) {
+	if !g.allow(pid("b"), 1) {
 		t.Fatal("ceza süresi bitmedi")
 	}
 }
@@ -137,16 +137,19 @@ func TestTxRelayReachesPeer(t *testing.T) {
 // Tablo dolu ve kayıtların hepsi cezalıyken yeni grup yine de kabul edilir; tablo sınırı aşılmaz.
 func TestTxGateFullTable(t *testing.T) {
 	g := newTxGate()
+	now := time.Unix(1_900_000_000, 0)
+	g.now = func() time.Time { return now } // kovalar dolmaz: dolu tablo budanarak boşalamaz
 	for i := 0; i < maxTxGateKeys+10; i++ {
-		g.penalize(fmt.Sprint("kötü", i))
+		g.penalize(pid(fmt.Sprint("kötü", i)))
+		g.allow(pid(fmt.Sprint("yoğun", i)), 1)
 	}
-	if len(g.buckets) > maxTxGateKeys {
-		t.Fatalf("tablo %d kayda büyüdü", len(g.buckets))
+	if len(g.bans) > maxTxGateKeys || len(g.buckets) > maxTxGateKeys {
+		t.Fatalf("tablo %d/%d kayda büyüdü", len(g.bans), len(g.buckets))
 	}
-	if !g.allow("dürüst", 1) {
+	if !g.allow(pid("dürüst"), 1) {
 		t.Fatal("dolu tabloda yeni grup reddedildi")
 	}
-	if len(g.buckets) > maxTxGateKeys {
-		t.Fatalf("tablo %d kayda büyüdü", len(g.buckets))
+	if len(g.bans) > maxTxGateKeys || len(g.buckets) > maxTxGateKeys {
+		t.Fatalf("tablo %d/%d kayda büyüdü", len(g.bans), len(g.buckets))
 	}
 }
