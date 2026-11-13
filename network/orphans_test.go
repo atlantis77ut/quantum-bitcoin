@@ -84,11 +84,11 @@ func TestOrphanReorderedTxs(t *testing.T) {
 	tx1 := signedPeerTx(t, alice, to, core.Coin, p.MinFee, p.NextNonce, p.DefaultExpiryHeight)
 	tx2 := signedPeerTx(t, alice, to, core.Coin, p.MinFee, p.NextNonce+1, p.DefaultExpiryHeight)
 
-	ps.handleTxs("eş", "g1", []core.Transaction{tx2})
-	if ps.orphans.len() != 1 || mempoolLen(t, ps.Mempool) != 0 || !ps.txGate.allow("g1", 1) {
+	ps.handleTxs("eş", pid("g1"), []core.Transaction{tx2})
+	if ps.orphans.len() != 1 || mempoolLen(t, ps.Mempool) != 0 || !ps.txGate.allow(pid("g1"), 1) {
 		t.Fatalf("yetim tamponlanmadı: tampon %d, havuz %d", ps.orphans.len(), mempoolLen(t, ps.Mempool))
 	}
-	ps.handleTxs("eş", "g2", []core.Transaction{tx1})
+	ps.handleTxs("eş", pid("g2"), []core.Transaction{tx1})
 	if ps.orphans.len() != 0 || mempoolLen(t, ps.Mempool) != 2 {
 		t.Fatalf("yetim kabul edilmedi: tampon %d, havuz %d", ps.orphans.len(), mempoolLen(t, ps.Mempool))
 	}
@@ -113,8 +113,8 @@ func TestOrphanRejects(t *testing.T) {
 	to := minerAddr(t)
 	forged := signedPeerTx(t, alice, to, core.Coin, p.MinFee, p.NextNonce+1, p.DefaultExpiryHeight)
 	forged.Amount = 2 * core.Coin
-	ps.handleTxs("eş", "g1", []core.Transaction{forged})
-	if ps.orphans.len() != 0 || ps.txGate.allow("g1", 1) {
+	ps.handleTxs("eş", pid("g1"), []core.Transaction{forged})
+	if ps.orphans.len() != 0 || ps.txGate.allow(pid("g1"), 1) {
 		t.Fatal("sahte imzalı yetim tamponlandı ya da grup cezalanmadı")
 	}
 	if e, ok := ps.rejects.get(forged.IDBytes()); !ok || e.class != rejectInvalid {
@@ -127,8 +127,8 @@ func TestOrphanRejects(t *testing.T) {
 	}
 	unfunded := signedPeerTx(t, carol, to, core.Coin, p.MinFee, 3, p.DefaultExpiryHeight)
 	far := signedPeerTx(t, alice, to, core.Coin, p.MinFee, p.NextNonce+core.MempoolMaxPerSender, p.DefaultExpiryHeight)
-	ps.handleTxs("eş", "g2", []core.Transaction{unfunded, far})
-	if ps.orphans.len() != 0 || !ps.txGate.allow("g2", 1) {
+	ps.handleTxs("eş", pid("g2"), []core.Transaction{unfunded, far})
+	if ps.orphans.len() != 0 || !ps.txGate.allow(pid("g2"), 1) {
 		t.Fatalf("fonsuz ya da çok ileri yetim: tampon %d", ps.orphans.len())
 	}
 }

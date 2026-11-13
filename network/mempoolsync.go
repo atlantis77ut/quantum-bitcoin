@@ -150,12 +150,12 @@ func checkPulled(resp *message, requested []string) ([]core.Transaction, error) 
 
 // serveMempool havuzun kimliklerini Select sırasıyla sunar. Düğüm senkronize değilken (en az
 // zincir işinin altında) eski havuz sunulmaz.
-func (ps *P2PServer) serveMempool(conn net.Conn, remote, group string) {
-	ok, lvl := ps.acquireServe(group)
+func (ps *P2PServer) serveMempool(conn net.Conn, remote string, id peerID) {
+	ok, lvl := ps.acquireServe(id)
 	if !ok {
 		return
 	}
-	defer ps.releaseServe(group, lvl)
+	defer ps.releaseServe(id, lvl)
 	var ids []string
 	if !ps.Blockchain.BelowMinChainWork() {
 		var err error
@@ -169,7 +169,7 @@ func (ps *P2PServer) serveMempool(conn net.Conn, remote, group string) {
 
 // serveTxs istenen kimliklerden havuzda olanları sunar; en çok maxPullTxs kimlik, her biri
 // kanonik hex olmalıdır.
-func (ps *P2PServer) serveTxs(conn net.Conn, remote, group string, ids []string) {
+func (ps *P2PServer) serveTxs(conn net.Conn, remote string, id peerID, ids []string) {
 	if len(ids) > maxPullTxs {
 		ps.log.Debug("gettxs çok uzun", "remote", remote, "adet", len(ids))
 		return
@@ -180,11 +180,11 @@ func (ps *P2PServer) serveTxs(conn net.Conn, remote, group string, ids []string)
 			return
 		}
 	}
-	ok, lvl := ps.acquireServe(group)
+	ok, lvl := ps.acquireServe(id)
 	if !ok {
 		return
 	}
-	defer ps.releaseServe(group, lvl)
+	defer ps.releaseServe(id, lvl)
 	var txs []core.Transaction
 	if !ps.Blockchain.BelowMinChainWork() {
 		txs = ps.Mempool.Get(ids)

@@ -276,9 +276,10 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 			}
 			return err
 		}
-		group := groupOf(conn.RemoteAddr())
-		if ps.prot.isDiscouraged(group) {
-			ps.log.Debug("geri çevrilen grup, bağlantı kapatıldı", "remote", conn.RemoteAddr().String())
+		id := peerIDOf(conn.RemoteAddr())
+		group := id.group
+		if ps.prot.isDiscouraged(id) {
+			ps.log.Debug("geri çevrilen eş, bağlantı kapatıldı", "remote", conn.RemoteAddr().String())
 			conn.Close()
 			continue
 		}
@@ -288,11 +289,11 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 			conn.Close()
 			continue
 		}
-		lvl := ps.prot.levelOf(group)
+		lvl := ps.prot.levelOf(id)
 		if ps.conns.tryAcquire(lvl) {
 			go func() {
 				defer func() { ps.conns.release(lvl); ps.connQuota.release(group) }()
-				ps.handleConnection(conn, group)
+				ps.handleConnection(conn, id)
 			}()
 		} else {
 			ps.connQuota.release(group)
@@ -303,9 +304,10 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	}
 }
 
-func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
+func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
+	group := id.group
 
 	// Bellek tavanı: aynı anda en fazla maxConcurrentDecodes mesaj çözümlenir; tek bir adres
 	// grubu bunların en çok decodesPerGroup kadarını tutar (yavaş gönderen eş, okuma süresi
@@ -314,7 +316,7 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 		ps.log.Debug("adres grubu başına çözümleme sınırı aşıldı", "remote", remote)
 		return
 	}
-	lvl := ps.prot.levelOf(group)
+	lvl := ps.prot.levelOf(id)
 	if !ps.decodes.acquire(lvl, connReadTimeout) {
 		ps.decodeQuota.release(group)
 		return
@@ -329,8 +331,8 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 	ps.decodeQuota.release(group)
 	if err != nil {
 		if malformedMessage(err) {
-			ps.prot.discourage(group)
-			ps.log.Debug("bozuk mesaj; grup geri çevriliyor", "remote", remote, "err", err)
+			ps.prot.discourage(id, discouragePeriod)
+			ps.log.Debug("bozuk mesaj; eş geri çevriliyor", "remote", remote, "err", err)
 			return
 		}
 		ps.log.Debug("eş mesajı okunamadı", "remote", remote, "err", err)
@@ -344,18 +346,18 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 	switch msg.Type {
 	case msgBlock:
 		if msg.Block != nil {
-			ps.handleBlock(remote, group, msg.Block)
+			ps.handleBlock(remote, id, msg.Block)
 		}
 	case msgGetHeaders:
-		ps.serveHeaders(conn, remote, group, msg.Locator)
+		ps.serveHeaders(conn, remote, id, msg.Locator)
 	case msgGetBlock:
-		ps.serveBlock(conn, remote, group, msg.Hash)
+		ps.serveBlock(conn, remote, id, msg.Hash)
 	case msgTxs:
-		ps.handleTxs(remote, group, msg.Txs)
+		ps.handleTxs(remote, id, msg.Txs)
 	case msgGetMempool:
-		ps.serveMempool(conn, remote, group)
+		ps.serveMempool(conn, remote, id)
 	case msgGetTxs:
-		ps.serveTxs(conn, remote, group, msg.TxIDs)
+		ps.serveTxs(conn, remote, id, msg.TxIDs)
 	default:
 		ps.log.Debug("bilinmeyen mesaj türü", "remote", remote, "type", msg.Type)
 	}
@@ -365,9 +367,9 @@ func (ps *P2PServer) handleConnection(conn net.Conn, group string) {
 // senkronizasyonu tetikler: gelen bağlantının eşine geri bağlanılamaz, eksik atalar
 // yapılandırılmış eşlerden çekilir.
 //
-// Ucumuzu uzatan yeni bir bloğu getiren grup korunanlara girer; durumdan bağımsız geçersiz
-// blok gönderen grup geri çevrilir (peers.go).
-func (ps *P2PServer) handleBlock(remote, group string, b *core.Block) {
+// Ucumuzu uzatan yeni bir bloğu getiren eş korunanlara girer; durumdan bağımsız geçersiz blok
+// gönderen eş geri çevrilir, beklenen hedefi taşımayan blok kademeli cezalanır (peers.go).
+func (ps *P2PServer) handleBlock(remote string, id peerID, b *core.Block) {
 	// Yeni düğüme sahte düşük işli zincir blok blok yutturulamasın (bkz. core/minwork.go);
 	// gerçek zincir eşikten geçen başlık zinciriyle senkronizasyondan gelir.
 	if ps.Blockchain.RelayBelowMinWork(b) {
@@ -376,15 +378,17 @@ func (ps *P2PServer) handleBlock(remote, group string, b *core.Block) {
 	}
 	// Tüm uzlaşma kuralları (PoW, coinbase, imzalar, bakiye, nonce, zaman) burada uygulanır.
 	err := ps.Blockchain.AcceptBlock(b)
-	if neverHonestBlock(err) {
-		ps.prot.discourage(group)
+	if errors.Is(err, core.ErrBadDifficulty) {
+		ps.prot.badDifficulty(id) // ilk ihlal uyarı: sürüm farkı dürüst eşte de olur
+	} else if neverHonestBlock(err) {
+		ps.prot.discourage(id, discouragePeriod)
 	}
 	switch {
 	case err == nil:
 		tip := ps.Blockchain.TipHash()
 		ps.log.Info("eşten gelen blok kabul edildi", "remote", remote, "index", b.Index, "uc", tip)
 		if tip == b.Hash {
-			ps.prot.noteBlock(group)
+			ps.prot.noteBlock(id)
 			ps.relay(b)
 		}
 	case errors.Is(err, core.ErrBadPrevHash):
@@ -407,20 +411,20 @@ func (ps *P2PServer) handleBlock(remote, group string, b *core.Block) {
 // ErrTxKnown alır, yayın döngüsü kendiliğinden biter. Düğüm senkronize değilken (en az zincir
 // işinin altında) durum eski olduğundan işlemler bırakılır. Dürüst eş yalnızca kendi kabul
 // ettiği işlemleri yayar; biçimi ya da imzası geçersiz işlem içeren grubun kalanı işlenmez
-// ve gönderen adres grubunun işlemleri bir süre bırakılır (bkz. txGate). Durum farkından doğan
-// retler (yetersiz bakiye, nonce, dolu havuz vb.) olağandır ve grubu kesmez; adres grubu başına
-// işlem sayısı ayrıca hız sınırlıdır.
-func (ps *P2PServer) handleTxs(remote, group string, txs []core.Transaction) {
+// ve gönderen eşin (iç anahtarın; yükselirse adres grubunun) işlemleri bir süre bırakılır (bkz.
+// txGate). Durum farkından doğan retler (yetersiz bakiye, nonce, dolu havuz vb.) olağandır ve
+// eşi kesmez; adres grubu başına işlem sayısı ayrıca hız sınırlıdır.
+func (ps *P2PServer) handleTxs(remote string, id peerID, txs []core.Transaction) {
 	if len(txs) > maxTxsPerMsg {
 		ps.log.Debug("işlem grubu çok büyük", "remote", remote, "adet", len(txs))
-		ps.txGate.penalize(group)
+		ps.txGate.penalize(id)
 		return
 	}
 	if ps.Blockchain.BelowMinChainWork() {
 		return
 	}
-	if !ps.txGate.allow(group, len(txs)) {
-		ps.log.Debug("işlem hız sınırı ya da ceza: grup bırakıldı", "remote", remote, "adet", len(txs))
+	if !ps.txGate.allow(id, len(txs)) {
+		ps.log.Debug("işlem hız sınırı ya da ceza: işlem grubu bırakıldı", "remote", remote, "adet", len(txs))
 		return
 	}
 	for _, tx := range txs {
@@ -430,7 +434,7 @@ func (ps *P2PServer) handleTxs(remote, group string, txs []core.Transaction) {
 		case rejectNone:
 		case rejectInvalid:
 			ps.log.Debug("eşten bilinen geçersiz işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote)
-			ps.txGate.penalize(group)
+			ps.txGate.penalize(id)
 			return
 		default:
 			continue
@@ -444,12 +448,12 @@ func (ps *P2PServer) handleTxs(remote, group string, txs []core.Transaction) {
 			// Öncül henüz gelmedi (gruplar yer değiştirebilir): yetim tamponu (orphans.go).
 			if !ps.bufferOrphan(tx, time.Now()) {
 				ps.log.Debug("eşten geçersiz yetim işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote)
-				ps.txGate.penalize(group)
+				ps.txGate.penalize(id)
 				return
 			}
 		case invalidTx(err):
 			ps.log.Debug("eşten geçersiz işlem; grubun kalanı bırakıldı, eş cezalı", "remote", remote, "err", err)
-			ps.txGate.penalize(group)
+			ps.txGate.penalize(id)
 			return
 		default:
 			// Durum farkı ya da yineleme: olağan, log taşkını olmasın.
@@ -533,7 +537,7 @@ func (ps *P2PServer) reply(conn net.Conn, remote string, m message) {
 
 // serveHeaders konum belirleyiciye göre başlık sunar. Ağdan gelen her özet biçimce
 // denetlenir; başlıklar indeksten okunur (disk okuması yok).
-func (ps *P2PServer) serveHeaders(conn net.Conn, remote, group string, locator []string) {
+func (ps *P2PServer) serveHeaders(conn net.Conn, remote string, id peerID, locator []string) {
 	if len(locator) > core.MaxLocatorHashes {
 		ps.log.Debug("konum belirleyici çok uzun", "remote", remote, "adet", len(locator))
 		return
@@ -544,25 +548,25 @@ func (ps *P2PServer) serveHeaders(conn net.Conn, remote, group string, locator [
 			return
 		}
 	}
-	ok, lvl := ps.acquireServe(group)
+	ok, lvl := ps.acquireServe(id)
 	if !ok {
 		return
 	}
-	defer ps.releaseServe(group, lvl)
+	defer ps.releaseServe(id, lvl)
 	ps.reply(conn, remote, message{Type: msgHeaders, Headers: ps.Blockchain.HeadersAfter(locator, core.MaxHeadersPerMsg)})
 }
 
 // serveBlock indeksteki bir bloğu sunar; eşzamanlı sunum serves havuzuyla sınırlıdır.
-func (ps *P2PServer) serveBlock(conn net.Conn, remote, group, hash string) {
+func (ps *P2PServer) serveBlock(conn net.Conn, remote string, id peerID, hash string) {
 	if !core.IsHashHex(hash) {
 		ps.log.Debug("geçersiz özet", "remote", remote)
 		return
 	}
-	ok, lvl := ps.acquireServe(group)
+	ok, lvl := ps.acquireServe(id)
 	if !ok {
 		return
 	}
-	defer ps.releaseServe(group, lvl)
+	defer ps.releaseServe(id, lvl)
 	b, err := ps.Blockchain.BlockByHash(hash)
 	if err != nil {
 		ps.reply(conn, remote, message{Type: msgBlock})
@@ -574,22 +578,22 @@ func (ps *P2PServer) serveBlock(conn net.Conn, remote, group, hash string) {
 // acquireServe önce adres grubunun, sonra ortak sunum yuvalarından birini alır; yuva kısa
 // sürede boşalmazsa istek yanıtsız kapanır.
 // İkinci değer, yuvanın hangi korunma düzeyiyle alındığıdır (releaseServe'e verilir).
-func (ps *P2PServer) acquireServe(group string) (bool, level) {
-	if !ps.serveQuota.acquire(group, quotaWait) {
-		ps.log.Debug("adres grubu başına sunum sınırı aşıldı", "group", group)
+func (ps *P2PServer) acquireServe(id peerID) (bool, level) {
+	if !ps.serveQuota.acquire(id.group, quotaWait) {
+		ps.log.Debug("adres grubu başına sunum sınırı aşıldı", "group", id.group)
 		return false, levelNone
 	}
-	lvl := ps.prot.levelOf(group)
+	lvl := ps.prot.levelOf(id)
 	if !ps.serves.acquire(lvl, quotaWait) {
-		ps.serveQuota.release(group)
+		ps.serveQuota.release(id.group)
 		return false, levelNone
 	}
 	return true, lvl
 }
 
-func (ps *P2PServer) releaseServe(group string, lvl level) {
+func (ps *P2PServer) releaseServe(id peerID, lvl level) {
 	ps.serves.release(lvl)
-	ps.serveQuota.release(group)
+	ps.serveQuota.release(id.group)
 }
 
 // request bir eşe tek bir istek gönderip tek bir yanıt okur. Desteklenmeyen sürümdeki yanıt

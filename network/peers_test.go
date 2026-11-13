@@ -49,14 +49,14 @@ func TestProtectionRecentBlocks(t *testing.T) {
 	p := newProtection()
 	p.addConfigured("eş")
 	for i := 0; i < maxRecentBlockGroups+2; i++ {
-		p.noteBlock(fmt.Sprint("g", i))
+		p.noteBlock(pid(fmt.Sprint("g", i)))
 	}
-	if p.isProtected("g0") || p.isProtected("g1") || !p.isProtected("g2") || !p.isProtected("eş") {
+	if p.isProtected(pid("g0")) || p.isProtected(pid("g1")) || !p.isProtected(pid("g2")) || !p.isProtected(pid("eş")) {
 		t.Fatal("en eski iki grup düşmeli, yapılandırılmış eş kalmalı")
 	}
-	p.noteBlock("g2") // yeniden blok getirdi: en yeni olur
-	p.noteBlock("yeni")
-	if !p.isProtected("g2") || p.isProtected("g3") || len(p.recent) != maxRecentBlockGroups {
+	p.noteBlock(pid("g2")) // yeniden blok getirdi: en yeni olur
+	p.noteBlock(pid("yeni"))
+	if !p.isProtected(pid("g2")) || p.isProtected(pid("g3")) || len(p.recent) != maxRecentBlockGroups {
 		t.Fatalf("en yeniye göre güncellenmedi: %v", p.recent)
 	}
 }
@@ -66,24 +66,24 @@ func TestDiscourage(t *testing.T) {
 	p := newProtection()
 	now := time.Unix(1_900_000_000, 0)
 	p.now = func() time.Time { return now }
-	p.discourage("g")
+	p.discourage(pid("g"), discouragePeriod)
 	now = now.Add(discouragePeriod - time.Second)
-	if !p.isDiscouraged("g") {
+	if !p.isDiscouraged(pid("g")) {
 		t.Fatal("süre içinde geri çevrilmedi")
 	}
 	now = now.Add(time.Second)
-	if p.isDiscouraged("g") {
+	if p.isDiscouraged(pid("g")) {
 		t.Fatal("süre bitince geri çevrilmeye devam edildi")
 	}
 	for i := 0; i < maxDiscouraged+5; i++ {
-		p.discourage(fmt.Sprint("k", i))
+		p.discourage(pid(fmt.Sprint("k", i)), discouragePeriod)
 	}
 	if len(p.discouraged) > maxDiscouraged {
 		t.Fatalf("tablo %d kayda büyüdü", len(p.discouraged))
 	}
 	p.addConfigured("eş")
-	p.discourage("eş")
-	if p.isDiscouraged("eş") {
+	p.discourage(pid("eş"), discouragePeriod)
+	if p.isDiscouraged(pid("eş")) {
 		t.Fatal("yapılandırılmış eş geri çevrildi")
 	}
 }
@@ -91,7 +91,7 @@ func TestDiscourage(t *testing.T) {
 func TestAddPeerProtectsGroup(t *testing.T) {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
 	ps.AddPeer("203.0.113.5:8001")
-	if !ps.prot.isProtected(peerGroup("203.0.113.9")) || ps.prot.isProtected(peerGroup("203.0.114.9")) {
+	if !ps.prot.isProtected(peerIDFor("203.0.113.9")) || ps.prot.isProtected(peerIDFor("203.0.114.9")) {
 		t.Fatal("yapılandırılmış eşin /24 grubu korunmalı, başkası değil")
 	}
 }
@@ -110,16 +110,16 @@ func TestHandleBlockProtectsAndDiscourages(t *testing.T) {
 	}
 	bad := *b
 	bad.Nonce++ // özet artık başlığa uymaz
-	ps.handleBlock("r", "kötü", &bad)
-	if !ps.prot.isDiscouraged("kötü") || ps.prot.isProtected("kötü") {
+	ps.handleBlock("r", pid("kötü"), &bad)
+	if !ps.prot.isDiscouraged(pid("kötü")) || ps.prot.isProtected(pid("kötü")) {
 		t.Fatal("geçersiz blok gönderen grup geri çevrilmedi")
 	}
-	ps.handleBlock("r", "iyi", b)
-	if bc.TipHash() != b.Hash || !ps.prot.isProtected("iyi") || ps.prot.isDiscouraged("iyi") {
+	ps.handleBlock("r", pid("iyi"), b)
+	if bc.TipHash() != b.Hash || !ps.prot.isProtected(pid("iyi")) || ps.prot.isDiscouraged(pid("iyi")) {
 		t.Fatal("ucu uzatan blok getiren grup korunmadı")
 	}
-	ps.handleBlock("r", "geç", b) // bilinen blok: koruma kazandırmaz
-	if ps.prot.isProtected("geç") {
+	ps.handleBlock("r", pid("geç"), b) // bilinen blok: koruma kazandırmaz
+	if ps.prot.isProtected(pid("geç")) {
 		t.Fatal("bilinen blok koruma kazandırdı")
 	}
 }
@@ -152,7 +152,7 @@ func TestMalformedMessage(t *testing.T) {
 // Geri çevrilen grubun bağlantısı kabul anında kapanır.
 func TestDiscouragedClosedAtAccept(t *testing.T) {
 	n := startNode(t, time.Hour)
-	n.ps.prot.discourage(peerGroup("127.0.0.1"))
+	n.ps.prot.discourage(peerIDFor("127.0.0.1"), discouragePeriod)
 	conn, err := net.Dial("tcp", n.addr)
 	if err != nil {
 		t.Fatal(err)

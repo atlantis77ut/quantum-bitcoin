@@ -86,14 +86,6 @@ func peerGroup(host string) string {
 	return ip.Mask(net.CIDRMask(48, 128)).String() + "/48"
 }
 
-func groupOf(a net.Addr) string {
-	host, _, err := net.SplitHostPort(a.String())
-	if err != nil {
-		return a.String()
-	}
-	return peerGroup(host)
-}
-
 // deadlineWriter her parçadan önce yazma süresini tazeler; toplam süre end ile sınırlıdır.
 type deadlineWriter struct {
 	conn  net.Conn
@@ -126,9 +118,10 @@ func (w *deadlineWriter) Write(p []byte) (int, error) {
 // Gelen işlem mesajlarının adres grubu başına sınırları. Her geçerli biçimli işlem bir ML-DSA
 // doğrulaması ister ve havuz kilidi altında doğrulanır; kotalar yalnızca eşzamanlılığı sınırlar,
 // bu yüzden işlem sayısı ayrıca zamana bağlı sınırlanır. Dürüst eş yalnızca kendi kabul ettiği
-// işlemleri yayar: geçersiz biçimli ya da imzalı işlem gönderen grubun işlemleri bir süre
-// bırakılır (imzayı değiştirerek her mesajda yeni kimlikli bir işlem üretmek ret önbelleğini
-// aşardı). Tor/ters vekil arkasındaki eşler tek grup sayılır ve cezayı paylaşır.
+// işlemleri yayar: geçersiz biçimli ya da imzalı işlem gönderen eşin (iç anahtarın) işlemleri
+// bir süre bırakılır (imzayı değiştirerek her mesajda yeni kimlikli bir işlem üretmek ret
+// önbelleğini aşardı). Hız kovası dış grubundur. Tor/ters vekil arkasındaki eşler tek adres
+// sayılır, kovayı ve cezayı paylaşır.
 const (
 	txRatePerSec  = 64 // dürüst ağ en çok ~17 işlem/sn onaylar (1000 işlem / 60 sn)
 	txRateBurst   = 256
@@ -136,33 +129,37 @@ const (
 	maxTxGateKeys = 10_000
 )
 
-// txGate adres grubu başına işlem belirteç kovası ve ceza süresidir.
+// txGate dış grup başına işlem belirteç kovası ve iç anahtar başına ceza süresidir; grupta
+// pencere içinde innerEscalateK farklı iç anahtar cezalanırsa ceza bütün gruba yükselir
+// (innerkey.go).
 type txGate struct {
 	mu      sync.Mutex
 	now     func() time.Time
-	buckets map[string]*txBucket
+	buckets map[string]*txBucket // dış grup → kova
+	bans    map[string]time.Time // iç anahtar ya da yükseltilmiş grup → ceza sonu
+	esc     *escalator
 }
 
 type txBucket struct {
-	tokens      float64
-	last        time.Time
-	bannedUntil time.Time
+	tokens float64
+	last   time.Time
 }
 
 func newTxGate() *txGate {
-	return &txGate{now: time.Now, buckets: map[string]*txBucket{}}
+	return &txGate{now: time.Now, buckets: map[string]*txBucket{}, bans: map[string]time.Time{},
+		esc: newEscalator()}
 }
 
-// allow grubun n işlemini kabul etmeye izin verir; ceza süresindeki ya da kovası yetmeyen
-// grup reddedilir.
-func (g *txGate) allow(group string, n int) bool {
+// allow eşin n işlemini kabul etmeye izin verir; iç anahtarı ya da grubu ceza süresindeyse ya
+// da grubun kovası yetmiyorsa reddedilir.
+func (g *txGate) allow(id peerID, n int) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
-	b := g.entryLocked(group, now)
-	if now.Before(b.bannedUntil) {
+	if g.bannedLocked(id.inner, now) || g.bannedLocked(id.group, now) {
 		return false
 	}
+	b := g.entryLocked(id.group, now)
 	b.tokens = min(txRateBurst, b.tokens+now.Sub(b.last).Seconds()*txRatePerSec)
 	b.last = now
 	if b.tokens < float64(n) {
@@ -172,18 +169,64 @@ func (g *txGate) allow(group string, n int) bool {
 	return true
 }
 
-// penalize grubun işlemlerini badTxPenalty boyunca bırakır.
-func (g *txGate) penalize(group string) {
+func (g *txGate) bannedLocked(key string, now time.Time) bool {
+	until, ok := g.bans[key]
+	if !ok {
+		return false
+	}
+	if !now.Before(until) {
+		delete(g.bans, key)
+		return false
+	}
+	return true
+}
+
+// penalize eşin iç anahtarının işlemlerini badTxPenalty boyunca bırakır; grupta pencere içinde
+// innerEscalateK farklı iç anahtar cezalandıysa bütün grubunkileri. Grubu zaten cezalı eş yeni
+// kayıt açmaz: tek bir /48 her yeni /64 ile tabloyu dolduramaz.
+func (g *txGate) penalize(id peerID) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
-	g.entryLocked(group, now).bannedUntil = now.Add(badTxPenalty)
+	if g.bannedLocked(id.group, now) {
+		return
+	}
+	g.banLocked(id.inner, now)
+	if g.esc.note(id, now) {
+		g.banLocked(id.group, now)
+	}
 }
 
-// entryLocked grubun kaydını döndürür, yoksa açar. Tablo doluysa önce dolu kovalı ve cezasız
-// kayıtlar silinir; yine doluysa rastgele bir kayıt silinir (map sırası rastgeledir): çok sayıda
-// grupla tabloyu cezalı kayıtlarla dolduran saldırgan yeni dürüst eşleri kilitleyemez, en çok
-// kendi cezalarının bir kısmını sıfırlar. Tablo maxTxGateKeys'i aşmaz.
+// banLocked anahtarı badTxPenalty boyunca bırakır; süren daha uzun ceza kısalmaz. Tablo doluysa
+// süresi dolanlar, yine doluysa kayıtların onda biri rastgele silinir (map sırası rastgeledir;
+// tam tarama en çok her maxTxGateKeys/10 yeni kayıtta bir yapılır): tabloyu cezalı kayıtlarla
+// dolduran saldırgan yeni dürüst eşleri kilitleyemez, ama başka eşlerin cezalarını da
+// düşürebilir; bunun için çok sayıda grup gerekir (grup başına en çok innerEscalateK iç anahtar
+// ve bir grup kaydı). Tablo maxTxGateKeys'i aşmaz.
+func (g *txGate) banLocked(key string, now time.Time) {
+	until := now.Add(badTxPenalty)
+	if old, ok := g.bans[key]; ok {
+		if old.After(until) {
+			return
+		}
+	} else if len(g.bans) >= maxTxGateKeys {
+		for k, u := range g.bans {
+			if !now.Before(u) {
+				delete(g.bans, k)
+			}
+		}
+		for k := range g.bans {
+			if len(g.bans) <= maxTxGateKeys-maxTxGateKeys/10 {
+				break
+			}
+			delete(g.bans, k)
+		}
+	}
+	g.bans[key] = until
+}
+
+// entryLocked grubun kovasını döndürür, yoksa açar. Tablo doluysa önce dolu kovalar, yine
+// doluysa rastgele bir kayıt silinir; tablo maxTxGateKeys'i aşmaz.
 func (g *txGate) entryLocked(group string, now time.Time) *txBucket {
 	if b, ok := g.buckets[group]; ok {
 		return b
@@ -204,8 +247,7 @@ func (g *txGate) entryLocked(group string, now time.Time) *txBucket {
 
 func (g *txGate) pruneLocked(now time.Time) {
 	for k, b := range g.buckets {
-		full := b.tokens+now.Sub(b.last).Seconds()*txRatePerSec >= txRateBurst
-		if full && !now.Before(b.bannedUntil) {
+		if b.tokens+now.Sub(b.last).Seconds()*txRatePerSec >= txRateBurst {
 			delete(g.buckets, k)
 		}
 	}
