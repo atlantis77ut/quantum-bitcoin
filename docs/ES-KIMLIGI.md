@@ -80,9 +80,9 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
    - Bir pencerede *k* farklı iç anahtar cezalanırsa bütün grup cezalanır.
    - Bir /48 sahibi bedavaya ~65.000 /64 alır. Bunu *k* yükseltmesi ve dış sınırlar bağlar; durum bugünden kötü değildir.
    - `ErrBadDifficulty` 1 sa geri çevirme yerine kademeli cezalandırılır (sürüm farkıyla dürüst eş düşmesin).
-4. **Gelen ve NAT arkasındaki eşe ulaşma.** İki seçenek:
-   - Yalnızca yapılandırılmış eşlere giden kalıcı bağlantı.
-   - "Yeni uç olunca yanıtla" uzun yoklama isteği.
+4. **Gelen ve NAT arkasındaki eşe ulaşma** (kapandı: feat/tip-longpoll, uzun yoklama seçildi; ayrıntı `network/tippoll.go` belgesinde). İki seçenek vardı:
+   - Yalnızca yapılandırılmış eşlere giden kalıcı bağlantı (seçilmedi).
+   - "Yeni uç olunca yanıtla" uzun yoklama isteği (seçildi: `waittip`/`tip`, protokol sürümü 2; bekleyen istekler ayrı, paylı ve grup başına kotalı bir yuva havuzunda durur).
    
    İkisinde de gelen tarafta oturum açılmaz, tahliye gerekmez.
 
