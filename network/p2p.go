@@ -88,8 +88,10 @@ type message struct {
 // dürüst eşte de olur).
 //
 // minPeerVersion 0'dır: sürüm alanından önceki (alanı göndermeyen) düğümler de kabul edilir.
+// Sürüm 2 uç beklemesini (msgWaitTip/msgTip, tippoll.go) ekledi; yeni bir istek türü olduğundan
+// eski eşlerle uyumludur.
 const (
-	protocolVersion uint32 = 1
+	protocolVersion uint32 = 2
 	minPeerVersion  uint32 = 0
 	localServices   uint64 = 0 // henüz tanımlı yetenek biti yok
 )
@@ -167,6 +169,17 @@ type P2PServer struct {
 	senders   map[string]*peerSender
 	send      func(peer string, data []byte) error
 
+	// Uç bekleme (tippoll.go). tipCh uç değişince kapatılıp yenilenir, quit Serve dönünce
+	// kapanır; ikisi tipMu altındadır. tipWait Serve'den önce ayarlanır (testler kısaltır), sonra
+	// yalnızca okunur.
+	waits       *slotPool
+	waitQuota   *groupQuota
+	tipWait     time.Duration
+	tipMu       sync.Mutex
+	tipCh       chan struct{}
+	quit        <-chan struct{}
+	lastTipSync atomic.Int64 // uç beklemesinin son senkronizasyon tetiği (tipEpoch'tan beri ns)
+
 	txGate  *txGate      // gelen işlem hız sınırı ve geçersiz işlem cezası (quota.go)
 	rejects *rejectCache // eşlerden gelen ve bir daha geçerli olamayacak işlemler (rejectcache.go)
 	orphans *orphanPool  // öncülü gelmemiş eş işlemleri (orphans.go)
@@ -217,6 +230,11 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		lastMempoolSync:  map[string]time.Time{},
 		presyncBackoff:   map[string]*presyncPenalty{},
 		senders:          map[string]*peerSender{},
+
+		waits:     newSlotPool(maxConcurrentWaits, reservedWaits),
+		waitQuota: newGroupQuota(waitsPerGroup),
+		tipWait:   tipWaitHold,
+		tipCh:     make(chan struct{}),
 	}
 	ps.send = ps.sendTo
 	return ps
@@ -260,8 +278,10 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 
 	stop := make(chan struct{})
 	defer close(stop)
+	ps.setQuit(stop)
 	ps.TriggerSync() // açılışta hemen senkronize ol
 	go ps.syncLoop(stop)
+	go ps.tipPollLoop(stop)
 	go ps.relayLoop(stop)
 	go ps.txRelayLoop(stop)
 	go ps.orphanLoop(stop)
@@ -358,6 +378,8 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 		ps.serveMempool(conn, remote, id)
 	case msgGetTxs:
 		ps.serveTxs(conn, remote, id, msg.TxIDs)
+	case msgWaitTip:
+		ps.serveWaitTip(conn, remote, id, msg.Hash)
 	default:
 		ps.log.Debug("bilinmeyen mesaj türü", "remote", remote, "type", msg.Type)
 	}
@@ -977,7 +999,10 @@ func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, loc []string, 
 }
 
 // relay bloğu yayın kuyruğuna koyar; kuyruk doluysa atar (eşler onu senkronizasyonla alır).
+// Ucu değiştiren her yol (gelen blok, senkronizasyon, madenci) buradan geçer: uç bekleyenler
+// kuyruk dolu olsa da uyanır.
 func (ps *P2PServer) relay(b *core.Block) {
+	ps.notifyTip()
 	select {
 	case ps.relayCh <- b:
 	default:
