@@ -1,6 +1,8 @@
 package network
 
 import (
+	"io"
+	"net"
 	"testing"
 	"time"
 
@@ -34,6 +36,29 @@ func TestSendBucket(t *testing.T) {
 	}
 }
 
+// sinkPeer gelen bağlantıları okuyup atan bir eş adresidir.
+func sinkPeer(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				io.Copy(io.Discard, c)
+				c.Close()
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
 func fakeBatch(start, n int) []core.Transaction {
 	out := make([]core.Transaction, n)
 	for i := range out {
@@ -46,7 +71,8 @@ func fakeBatch(start, n int) []core.Transaction {
 // taşma gider. Kuyrukta işlem varken taşma boşaltılmaz.
 func TestRelayTickHoldsBatchAndOverflow(t *testing.T) {
 	bc := newChain(t)
-	ps := NewP2PServer("127.0.0.1:0", bc) // eş yok: yayın kimseye gitmez
+	ps := NewP2PServer("127.0.0.1:0", bc)
+	ps.AddPeer(sinkPeer(t))
 	from := fundKey(t, bc)
 	tx := policyTx(t, ps.Mempool, from, 5)
 	if _, err := ps.Mempool.Add(tx); err != nil {
@@ -88,6 +114,7 @@ func TestRelayTickHoldsBatchAndOverflow(t *testing.T) {
 // Uzun bir pencerede gönderilen işlem sayısı ani pay + oran × süreyi aşmaz.
 func TestRelayBudgetWindow(t *testing.T) {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
+	ps.AddPeer(sinkPeer(t))
 	t0 := time.Unix(1_900_000_000, 0)
 	st := &txRelayState{bucket: newSendBucket(t0)}
 	const secs = 30
@@ -103,5 +130,32 @@ func TestRelayBudgetWindow(t *testing.T) {
 	sent := ps.txsSent.Load()
 	if limit := int64(relayBurst + secs*relayRatePerSec); sent > limit || sent < limit-2*maxTxsPerMsg {
 		t.Fatalf("%d sn'de %d işlem gönderildi, üst sınır %d", secs, sent, limit)
+	}
+}
+
+// Yapılandırılmış eş yoksa grup ve taşma kova harcanmadan atılır.
+func TestRelayNoPeersSpendsNothing(t *testing.T) {
+	ps := NewP2PServer("127.0.0.1:0", newChain(t))
+	ps.txOverflow.mu.Lock()
+	for i := 0; i < 3; i++ {
+		ps.txOverflow.pushLocked(fakeID(uint64(100 + i)))
+	}
+	ps.txOverflow.mu.Unlock()
+	stop := make(chan struct{})
+	defer close(stop)
+
+	t0 := time.Unix(1_900_000_000, 0)
+	st := &txRelayState{batch: fakeBatch(0, maxTxsPerMsg), bucket: sendBucket{tokens: 10, last: t0}}
+	ps.relayTick(st, t0, stop)
+	if len(st.batch) != 0 || ps.txOverflow.len() != 0 || ps.txsSent.Load() != 0 {
+		t.Fatalf("eşsiz: grup %d, taşma %d, gönderilen %d", len(st.batch), ps.txOverflow.len(), ps.txsSent.Load())
+	}
+	if got := st.bucket.avail(t0); got != 10 {
+		t.Fatalf("eşsizken kova harcandı: %d", got)
+	}
+	ps.txOverflow.mu.Lock()
+	defer ps.txOverflow.mu.Unlock()
+	if len(ps.txOverflow.set) != 0 {
+		t.Fatal("taşma kümesi boşaltılmadı")
 	}
 }

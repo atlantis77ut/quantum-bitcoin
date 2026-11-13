@@ -66,6 +66,16 @@ func (o *txOverflow) take(n int) []string {
 	return out
 }
 
+// clear taşmayı boşaltır (eş yokken; atılanlar havuzda kalır).
+func (o *txOverflow) clear() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, id := range o.ids {
+		delete(o.set, id)
+	}
+	o.ids = nil
+}
+
 func (o *txOverflow) len() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
