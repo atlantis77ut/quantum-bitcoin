@@ -44,6 +44,8 @@ func TestMinChainWorkRelayAndMiner(t *testing.T) {
 	}
 	src.ps.BroadcastBlock(b)
 	waitTip(t, control, b.Hash) // yayın kontrol düğümüne ulaştı
+	// Yayın beklemez: eşikli düğüme gönderim de bitsin (kuyruk boşalınca çalışan durur).
+	waitFor(t, "eşikli düğüme yayın bitmedi", src.ps.senderFor(addr).idle)
 
 	old := minWorkWait
 	minWorkWait = 10 * time.Millisecond
