@@ -125,6 +125,11 @@ type P2PServer struct {
 	rejects *rejectCache // eşlerden gelen ve bir daha geçerli olamayacak işlemler (rejectcache.go)
 	orphans *orphanPool  // öncülü gelmemiş eş işlemleri (orphans.go)
 
+	// restored geri yüklenen, ilk senkronizasyondan sonra bir kez yayılacak işlem kimlikleridir
+	// (restorerelay.go).
+	restoredMu sync.Mutex
+	restored   map[string]struct{}
+
 	// syncRounds tamamlanan senkronizasyon turu sayısıdır (testler için).
 	syncRounds atomic.Int64
 
@@ -206,6 +211,7 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	go ps.relayLoop(stop)
 	go ps.txRelayLoop(stop)
 	go ps.orphanLoop(stop)
+	go ps.restoredRelayLoop(stop)
 
 	for {
 		conn, err := listener.Accept()
