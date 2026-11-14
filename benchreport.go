@@ -159,8 +159,11 @@ func newBenchReport(params *core.Params, dev *gpu.Device, allowNonGPU bool, thre
 }
 
 // writeBenchReport raporu girintili JSON olarak yazar.
-func writeBenchReport(path string, r benchReport) error {
-	data, err := json.MarshalIndent(r, "", "  ")
+func writeBenchReport(path string, r benchReport) error { return writeJSONFile(path, r) }
+
+// writeJSONFile v'yi girintili JSON olarak yazar.
+func writeJSONFile(path string, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}

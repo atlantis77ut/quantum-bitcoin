@@ -41,9 +41,16 @@ func main() {
 	gpuDevice := flag.Int("gpu-device", 0, "Kazım için OpenCL aygıtı (-gpu-list ile listelenir)")
 	gpuBatch := flag.Uint64("gpu-batch", 0, "GPU turundaki nonce sayısı (0: ~100 ms'ye ölçülerek seçilir)")
 	gpuList := flag.Bool("gpu-list", false, "OpenCL aygıtlarını listeler ve çıkar")
-	benchRuns := flag.Int("bench-runs", 1, "-bench-hashrate ölçüm sayısı; 1'den büyükse önce bir ısınma ölçümü atılır, ortanca raporlanır")
-	benchOut := flag.String("bench-out", "", "-bench-hashrate raporunun yazılacağı JSON dosyası (docs/GPU-OLCUM.md)")
+	benchRuns := flag.Int("bench-runs", 1, "-bench-hashrate ve -bench-propagation ölçüm sayısı; hashrate'te 1'den büyükse önce bir ısınma ölçümü atılır, ortanca raporlanır")
+	benchOut := flag.String("bench-out", "", "-bench-hashrate (docs/GPU-OLCUM.md) ya da -bench-propagation (docs/YAYILIM-OLCUM.md) raporunun yazılacağı JSON dosyası")
 	benchAllowNonGPU := flag.Bool("bench-allow-non-gpu", false, "GPU ölçümünde GPU olmayan OpenCL aygıtına izin verir (yalnızca CI/pocl; sonuç GPU hashrate'i değildir)")
+	benchProp := flag.Bool("bench-propagation", false, "Dolu bloğun boyutunu, doğrulama süresini ve kısıtlı bağlantılarda yayılımını ölçer, yazdırır ve çıkar (docs/YAYILIM-OLCUM.md)")
+	propTxs := flag.Int("bench-prop-txs", core.MaxTxPerBlock, "-bench-propagation blok başına işlem sayısı")
+	propHops := flag.Int("bench-prop-hops", 3, "-bench-propagation kazıcı dışındaki düğüm sayısı (hatta atlama sayısı)")
+	propTopo := flag.String("bench-prop-topology", network.TopologyLine, "-bench-propagation topolojisi: line, star-leaf (yaprak kazar) ya da star-hub (merkez kazar)")
+	propMbit := flag.Float64("bench-prop-mbit", 20, "-bench-propagation her düğümün yükleme hızı (Mbit/sn)")
+	propLatency := flag.Duration("bench-prop-latency", 50*time.Millisecond, "-bench-propagation bağlantı başına tek yön gecikme")
+	propTimeout := flag.Duration("bench-prop-timeout", 2*time.Minute, "-bench-propagation bir ölçümde bloğun bütün düğümlere ulaşması için beklenen en uzun süre")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -51,6 +58,11 @@ func main() {
 	if (*tlsCert == "") != (*tlsKey == "") {
 		slog.Error("tls-cert ve tls-key birlikte verilmeli")
 		os.Exit(2)
+	}
+	if *benchProp {
+		// Ölçüm kendi geçici regtest zincirlerini kurar; -network ve -db kullanılmaz.
+		os.Exit(runPropBench(network.PropConfig{Txs: *propTxs, Hops: *propHops, Topology: *propTopo, Mbit: *propMbit,
+			Latency: *propLatency, Timeout: *propTimeout}, *benchRuns, *benchOut))
 	}
 
 	// 2. Blockchain
