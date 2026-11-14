@@ -3,12 +3,17 @@ package core
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// acceptAll bloğu n çağrıyla aynı anda kabul ettirir ve hataları döndürür.
+// acceptAll bloğu n çağrıyla aynı anda kabul ettirir ve hataları döndürür. Test zincirinin
+// saati (newTestChain) eşzamanlı çağrıya uygun değildir; aynı noktadan atomik bir saatle sürer.
 func acceptAll(bc *Blockchain, b *Block, n int) []error {
+	var clock atomic.Int64
+	clock.Store(bc.now())
+	bc.now = func() int64 { return clock.Add(1) }
 	errs := make([]error, n)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
