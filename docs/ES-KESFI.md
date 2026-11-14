@@ -123,7 +123,7 @@
     - Yuva bekleyen gönderim, tutanlar parça yazdıkça bekler.
     - 2 sn hiç parça yazamayan ya da dürüst alıcının isteyeceği hızın gerisinde kalan tutanın yuvasını bekleyenlerden yalnızca biri devralır. Böylece her takılan eş eşzamanlılığı en çok bir artırır.
     - Dolu blok için iki kopyada ~2 Mbit/sn yukarı bant alıcıların asgari hızını karşılar.
-  - Senkronizasyonla ya da uç beklemesiyle bir eşten indirilen blok o eşe geri itilmez. Gelen bağlantıyla itilen blok kaynağına geri itilebilir (yankı): kaynak portu geçicidir, IP ile eşleştirmek aynı IP'deki (aynı makine, NAT) başka bir düğümü atlayabilirdi.
+  - Senkronizasyonla ya da uç beklemesiyle bir eşten indirilen blok o eşe geri itilmez. Gelen bağlantıyla itilen blok da kaynağına geri itilmez (yankı; kapandı: feat/echo-dedup): her mesaj gönderenin dinleme portunu taşır (`Port`), kaynak bağlantının IP'si ile bu port birleştirilip eş listesiyle IP ayrıştırılarak karşılaştırılır. Port bildirmeyen eski düğüme ve adla yapılandırılmış eşe (ad çözülmez) yankı eskisi gibi gider; aynı dış IP'nin arkasındaki iki düğümden biri ötekinin portunu bildirirse öteki itmeyi kaçırır ve bloğu uç beklemesiyle ya da senkronizasyonla alır.
 - **Yayılım ölçümü:** 60/30 sn ölçümü bu düzeltmeden sonra ve dolu blokla yapılır. Bu, "bugünkü taşımayla" kararına uyar, çünkü taşıma oturumsuz kalır. Araç: `-bench-propagation` ([YAYILIM-OLCUM.md](YAYILIM-OLCUM.md)); ölçüm henüz yapılmadı.
 
 ### 4.6 Gömülü başlangıç listesi
