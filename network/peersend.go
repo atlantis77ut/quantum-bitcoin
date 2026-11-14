@@ -49,6 +49,7 @@ const (
 type peerSender struct {
 	mu        sync.Mutex
 	blocks    [][]byte
+	ids       []pushID // blocks ile aynı sırada kopya kimlikleri (uyandırma kapısı)
 	txs       [][]byte
 	running   bool
 	fails     int
@@ -67,20 +68,36 @@ func popFront(q *[][]byte) []byte {
 
 // push mesajı kuyruğa koyar; yeni bir çalışan başlatılması gerekiyorsa true döner.
 func (s *peerSender) push(data []byte, block bool, now time.Time) bool {
+	if block {
+		start, _ := s.pushBlock(data, pushID{}, now)
+		return start
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if block {
-		if len(s.blocks) == peerBlockQueue {
-			popFront(&s.blocks)
-		}
-		s.blocks = append(s.blocks, data)
-	} else {
-		if now.Before(s.openUntil) || len(s.txs) == peerTxQueue {
-			s.dropped++
-			return false
-		}
-		s.txs = append(s.txs, data)
+	if now.Before(s.openUntil) || len(s.txs) == peerTxQueue {
+		s.dropped++
+		return false
 	}
+	s.txs = append(s.txs, data)
+	return s.startLocked()
+}
+
+// pushBlock id kopyasını kuyruğa koyar; kuyruk doluysa en eskiyi atar ve kimliğini dropped'ta
+// döndürür.
+func (s *peerSender) pushBlock(data []byte, id pushID, now time.Time) (start bool, dropped pushID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.blocks) == peerBlockQueue {
+		popFront(&s.blocks)
+		dropped = popFrontID(&s.ids)
+	}
+	s.blocks = append(s.blocks, data)
+	s.ids = append(s.ids, id)
+	return s.startLocked(), dropped
+}
+
+// startLocked çalışan yoksa onu başlatılmış işaretler ve true döner.
+func (s *peerSender) startLocked() bool {
 	if s.running {
 		return false
 	}
@@ -88,24 +105,30 @@ func (s *peerSender) push(data []byte, block bool, now time.Time) bool {
 	return true
 }
 
+func popFrontID(q *[]pushID) pushID {
+	h := (*q)[0]
+	*q = append((*q)[:0], (*q)[1:]...)
+	return h
+}
+
 // next sıradaki mesajı verir (önce bloklar); kuyruk boşsa çalışanı durdurur.
 func (s *peerSender) next() ([]byte, bool) {
-	data, _, ok := s.nextItem()
+	data, _, _, ok := s.nextItem()
 	return data, ok
 }
 
-// nextItem next gibidir; mesajın blok olup olmadığını da söyler.
-func (s *peerSender) nextItem() (data []byte, block, ok bool) {
+// nextItem next gibidir; mesajın blok olup olmadığını ve blok kopyasının kimliğini de söyler.
+func (s *peerSender) nextItem() (data []byte, id pushID, block, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
 	case len(s.blocks) > 0:
-		return popFront(&s.blocks), true, true
+		return popFront(&s.blocks), popFrontID(&s.ids), true, true
 	case len(s.txs) > 0:
-		return popFront(&s.txs), false, true
+		return popFront(&s.txs), pushID{}, false, true
 	}
 	s.running = false
-	return nil, false, false
+	return nil, pushID{}, false, false
 }
 
 // discard kuyrukları boşaltır (eş etkin kümeden çıktı, backup.go); çalışanı yoksa true. Çalışan
@@ -115,6 +138,7 @@ func (s *peerSender) discard() bool {
 	defer s.mu.Unlock()
 	clear(s.blocks)
 	s.blocks = s.blocks[:0]
+	s.ids = s.ids[:0]
 	clear(s.txs)
 	s.txs = s.txs[:0]
 	return !s.running
@@ -180,18 +204,48 @@ func (ps *P2PServer) enqueueSend(peer string, data []byte, block bool, now time.
 	}
 }
 
+// enqueueBlock özeti hash olan bloğu eşin kuyruğuna koyar; itme evrelerini uyandırma kapısına
+// işler (wakegate.go).
+func (ps *P2PServer) enqueueBlock(peer string, data []byte, hash string, now time.Time) {
+	id, ok := ps.wake.queue(peer, hash, now)
+	if !ok {
+		return // aynı blok eşe zaten bekliyor ya da yazılıyor
+	}
+	s := ps.senderFor(peer)
+	start, dropped := s.pushBlock(data, id, now)
+	ps.wake.finish(peer, dropped, phaseDropped, now)
+	if start {
+		go ps.sendLoop(peer, s)
+	}
+}
+
 // sendLoop eşin kuyruğunu sırayla gönderir ve kuyruk boşalınca biter. Erken başarısız blok
 // itmesi bir kez yeniden denenir (push.go).
 func (ps *P2PServer) sendLoop(peer string, s *peerSender) {
 	for {
-		data, block, ok := s.nextItem()
+		data, id, block, ok := s.nextItem()
 		if !ok {
 			return
 		}
-		err := ps.pushOnce(peer, data, block)
-		if block && errors.Is(err, errPushEarly) && s.healthy() && ps.retryWorth(s) {
-			ps.log.Debug("blok itmesi erken başarısız, yeniden deneniyor", "peer", peer, "err", err)
-			err = ps.pushOnce(peer, data, block)
+		err := ps.pushOnce(peer, data, id, block)
+		if errors.Is(err, errPushCancelled) {
+			continue // uyandırma kapısı iptal etti (wakegate.go): ne başarı ne hata
+		}
+		if block && errors.Is(err, errPushEarly) && s.healthy() {
+			// Yeniden deneme beklenirken itme yazılmıyor: kapı onu bekliyor sayar ve iptal edebilir.
+			ps.wake.requeue(peer, id, time.Now())
+			if ps.retryWorth(s) {
+				ps.log.Debug("blok itmesi erken başarısız, yeniden deneniyor", "peer", peer, "err", err)
+				// Kapı yeniden denemeyi iptal ettiyse ilk hata sayılır.
+				if err2 := ps.pushOnce(peer, data, id, block); !errors.Is(err2, errPushCancelled) {
+					err = err2
+				}
+			}
+		}
+		if err == nil {
+			ps.wake.finish(peer, id, phaseSent, time.Now())
+		} else {
+			ps.wake.finish(peer, id, phaseFailed, time.Now())
 		}
 		if err != nil {
 			ps.log.Warn("mesaj eşe gönderilemedi", "peer", peer, "err", err)

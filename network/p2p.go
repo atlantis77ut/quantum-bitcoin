@@ -221,6 +221,10 @@ type P2PServer struct {
 	senders   map[string]*peerSender
 	send      func(peer string, data []byte) error
 
+	// wake blok başına yayın ve eş başına itme durumudur (wakegate.go): bloğu itmeyle alacak
+	// eşin uç beklemesi o blok için hemen uyandırılmaz. Kendi kilidi vardır.
+	wake wakeGate
+
 	// İtme taşıması (push.go): pushLim Serve'den önce ayarlanır (testler kısaltır), sonra
 	// yalnızca okunur; pushSlots blok itme yuvalarıdır.
 	pushLim   pushLimits
@@ -483,7 +487,7 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 	case msgGetTxs:
 		ps.serveTxs(conn, remote, id, msg.TxIDs)
 	case msgWaitTip:
-		ps.serveWaitTip(conn, remote, id, msg.Hash)
+		ps.serveWaitTip(conn, remote, id, msg.Hash, pushSource(remote, msg.Port))
 	case msgGetAddr:
 		ps.seeProbe(msg.Probe) // sunum kotasından önce: kota doluyken de kendine bağlanma anlaşılır
 		ps.serveGetAddr(conn, remote, id, msg.Network)
@@ -1143,14 +1147,17 @@ func (ps *P2PServer) relay(b *core.Block) {
 	ps.relayFrom(b, "")
 }
 
-// relayFrom relay gibidir; blok from eşinden indirildiyse o eşe geri itilmez (push.go).
+// relayFrom relay gibidir; blok from eşinden indirildiyse o eşe geri itilmez (push.go). Uç
+// bekleyenler yayın durumu uyandırma kapısına işlendikten sonra uyandırılır (wakegate.go).
 func (ps *P2PServer) relayFrom(b *core.Block, from string) {
-	ps.notifyTip()
 	select {
 	case ps.relayCh <- relayItem{b: b, from: from}:
+		ps.wake.relayed(b.Hash, from, true, time.Now())
 	default:
+		ps.wake.relayed(b.Hash, from, false, time.Now())
 		ps.log.Debug("yayın kuyruğu dolu, blok yayınlanmadı", "hash", b.Hash)
 	}
+	ps.notifyTip()
 }
 
 // relayLoop tek bir işçiyle yayın yapar: yavaş eşler gelen bağlantı yuvalarını tutmaz.
@@ -1190,6 +1197,10 @@ func (ps *P2PServer) broadcastFrom(m message, skip string) {
 	now := time.Now()
 	for _, peer := range ps.activePeers() {
 		if skip != "" && samePeer(peer, skip) {
+			continue
+		}
+		if block && m.Block != nil {
+			ps.enqueueBlock(peer, data, m.Block.Hash, now)
 			continue
 		}
 		ps.enqueueSend(peer, data, block, now)
