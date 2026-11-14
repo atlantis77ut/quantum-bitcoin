@@ -48,7 +48,7 @@
 - **Eş değiştirme ölçütü taşıma hatalarını saymamalıdır.**
   - Dolu sunucu yanıt vermeden kapatır. Eski sürüm bilinmeyen türü yanıtsız bırakır. Uç beklemesinde "meşgul" hata sayılmaz.
   - Bu durumları sayan bir ölçüt, saldırgana dürüst eşleri kendi kayıtlarıyla değiştirtir ve sürüm geçişinde eski düğümleri bozuk işaretletir.
-  - Bozuk işaret yalnızca durumdan bağımsız, kanıtlı ihlalde konur: `neverHonestBlock`, `malformedMessage`, yanlış ağ. `headerRejected` kullanılmaz; o `ErrBadDifficulty`, `ErrBadPrevHash` ve `ErrKnownInvalid`'i de içerir.
+  - Bozuk işaret yalnızca durumdan bağımsız, kanıtlı ihlalde konur: `neverHonestBlock`, `malformedMessage`, yanlış ağ, havuz eşitlemesinde `invalidTx`. `headerRejected` kullanılmaz; o `ErrBadDifficulty`, `ErrBadPrevHash` ve `ErrKnownInvalid`'i de içerir.
 - **Ön-senkronizasyon durumu eşin adres dizgisine bağlıdır.**
   - Eş değiştikçe her yeni eşle ayrı bir ön-senkronizasyon başlar.
   - Değiştirilen eşin ertelemesi budanırsa, "erteleme başına bir tam doğrulama" sınırı operatörün seçtiği eş sayısından tablodaki kayıt sayısına kayar.

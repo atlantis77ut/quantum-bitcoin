@@ -113,8 +113,10 @@ func (ps *P2PServer) pullMempool(peer string, stop <-chan struct{}) (int, error)
 				added++
 				full = 0
 			case invalidTx(err):
+				// Durumdan bağımsız, kanıtlı ihlal: yedek bozuk işaretlenip çıkarılır (backup.go).
 				// Yapılandırılmış eş geri çevrilmez; tek yaptırım turu kesmektir. İşlem önbelleğe
 				// girdiğinden sonraki turlar onu istemez ve kesilmez.
+				ps.noteViolation(peer, err)
 				return added, fmt.Errorf("%w: geçersiz işlem: %v", errBadResponse, err)
 			case errors.Is(err, core.ErrMempoolFull):
 				if full++; full >= pullFullStop {
