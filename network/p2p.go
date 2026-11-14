@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,6 +81,10 @@ type message struct {
 	// Probe yedek adayı sınamasının belirtecidir (backup.go): kendi sunucumuz görürse aday
 	// kendimiziz. Eski düğümler alanı yok sayar.
 	Probe string `json:"probe,omitempty"`
+	// Port gönderenin dinleme portudur (0: dinlemiyor ya da eski düğüm; eski düğümler alanı yok
+	// sayar). Gelen bağlantının kaynak portu geçicidir; itilen blok bu portla kaynağına geri
+	// itilmez (yankı). Doğrulanmaz: gönderen yalnızca kendi IP'sindeki bir adresi atlatabilir.
+	Port uint16 `json:"port,omitempty"`
 }
 
 // Protokol sürümü (düğüm politikası, uzlaşma kuralı değil). Kalıcı oturumlar gibi taşıma
@@ -96,7 +101,8 @@ type message struct {
 // minPeerVersion 0'dır: sürüm alanından önceki (alanı göndermeyen) düğümler de kabul edilir.
 // Sürüm 2 uç beklemesini (msgWaitTip/msgTip, tippoll.go), sürüm 3 adres öğrenmeyi
 // (msgGetAddr/msgAddr, addr.go) ekledi; ikisi de yeni istek türleri olduğundan eski eşlerle
-// uyumludur.
+// uyumludur. Port alanı (yankı) isteğe bağlı bir alandır, eski düğümler yok sayar; sürüm
+// değişmedi.
 const (
 	protocolVersion uint32 = 3
 	minPeerVersion  uint32 = 0
@@ -117,6 +123,42 @@ func stamped(m message) message {
 	return m
 }
 
+// stamp stamped gibidir; dinliyorsak dinleme portumuzu da yazar (Port).
+func (ps *P2PServer) stamp(m message) message {
+	m = stamped(m)
+	m.Port = uint16(ps.listenPort.Load())
+	return m
+}
+
+// pushSource gelen itmenin kaynağının dinleme adresidir: bağlantının IP'si ve eşin bildirdiği
+// port. Port bildirilmemişse "" (kaynak bilinmez, yankı atlanmaz).
+func pushSource(remote string, port uint16) string {
+	host, _, err := net.SplitHostPort(remote)
+	if port == 0 || err != nil {
+		return ""
+	}
+	return net.JoinHostPort(host, strconv.Itoa(int(port)))
+}
+
+// samePeer iki eş adresinin aynı düğüm olup olmadığını söyler. IP'ler ayrıştırılarak
+// karşılaştırılır (yazım farkı, ör. IPv6 kısaltması ya da IPv4'ün IPv6 biçimi, eşleşmeyi
+// bozmasın); ad çözülmez, adla yapılandırılmış eş yalnızca aynı yazımla eşleşir.
+func samePeer(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ah, ap, err := net.SplitHostPort(a)
+	if err != nil {
+		return false
+	}
+	bh, bp, err := net.SplitHostPort(b)
+	if err != nil || ap != bp {
+		return false
+	}
+	ai, bi := net.ParseIP(ah), net.ParseIP(bh)
+	return ai != nil && bi != nil && ai.Equal(bi)
+}
+
 // versionOK eşin bildirdiği sürümün kabul edilip edilmediğini söyler; daha yeni sürümler
 // kabul edilir (bilinmeyen alanlar yok sayılır).
 func (ps *P2PServer) versionOK(v uint32) bool {
@@ -130,6 +172,9 @@ type P2PServer struct {
 
 	mu    sync.RWMutex
 	peers []string
+
+	// listenPort Serve'ün dinleyicisinin portudur (0: dinlemiyor); stamp her mesaja yazar.
+	listenPort atomic.Uint32
 
 	// Ortak yuva havuzları; her birinin bir payı korunan gruplara ayrılmıştır (peers.go).
 	conns   *slotPool
@@ -332,6 +377,9 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	stop := make(chan struct{})
 	defer close(stop)
 	ps.setQuit(stop)
+	if a, ok := listener.Addr().(*net.TCPAddr); ok {
+		ps.listenPort.Store(uint32(a.Port))
+	}
 	ps.TriggerSync() // açılışta hemen senkronize ol
 	go ps.syncLoop(stop)
 	go ps.tipPollLoop(stop)
@@ -422,7 +470,7 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 	switch msg.Type {
 	case msgBlock:
 		if msg.Block != nil {
-			ps.handleBlock(remote, id, msg.Block)
+			ps.handleBlockFrom(remote, id, msg.Block, pushSource(remote, msg.Port))
 		}
 	case msgGetHeaders:
 		ps.serveHeaders(conn, remote, id, msg.Locator)
@@ -454,6 +502,12 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 // Ucumuzu uzatan yeni bir bloğu getiren eş korunanlara girer; durumdan bağımsız geçersiz blok
 // gönderen eş geri çevrilir, beklenen hedefi taşımayan blok kademeli cezalanır (peers.go).
 func (ps *P2PServer) handleBlock(remote string, id peerID, b *core.Block) {
+	ps.handleBlockFrom(remote, id, b, "")
+}
+
+// handleBlockFrom handleBlock gibidir; source itmenin kaynağının dinleme adresidir (pushSource),
+// blok uç olursa oraya geri itilmez.
+func (ps *P2PServer) handleBlockFrom(remote string, id peerID, b *core.Block, source string) {
 	// Yeni düğüme sahte düşük işli zincir blok blok yutturulamasın (bkz. core/minwork.go);
 	// gerçek zincir eşikten geçen başlık zinciriyle senkronizasyondan gelir.
 	if ps.Blockchain.RelayBelowMinWork(b) {
@@ -473,7 +527,7 @@ func (ps *P2PServer) handleBlock(remote string, id peerID, b *core.Block) {
 		ps.log.Info("eşten gelen blok kabul edildi", "remote", remote, "index", b.Index, "uc", tip)
 		if tip == b.Hash {
 			ps.prot.noteBlock(id)
-			ps.relay(b)
+			ps.relayFrom(b, source)
 		}
 	case errors.Is(err, core.ErrBadPrevHash):
 		ps.log.Debug("ebeveyni bilinmeyen blok, senkronizasyon tetiklendi", "remote", remote, "index", b.Index)
@@ -614,7 +668,7 @@ func (ps *P2PServer) txRelayLoop(stop <-chan struct{}) {
 func (ps *P2PServer) reply(conn net.Conn, remote string, m message) {
 	w := &deadlineWriter{conn: conn, chunk: writeChunk, per: chunkWriteTimeout,
 		end: time.Now().Add(transferTimeout)}
-	if err := json.NewEncoder(w).Encode(stamped(m)); err != nil {
+	if err := json.NewEncoder(w).Encode(ps.stamp(m)); err != nil {
 		ps.log.Debug("yanıt gönderilemedi", "remote", remote, "err", err)
 	}
 }
@@ -692,7 +746,7 @@ func (ps *P2PServer) request(peer string, req message, limit int64) (*message, e
 	if err := conn.SetDeadline(time.Now().Add(transferTimeout)); err != nil {
 		return nil, err
 	}
-	if err := json.NewEncoder(conn).Encode(stamped(req)); err != nil {
+	if err := json.NewEncoder(conn).Encode(ps.stamp(req)); err != nil {
 		return nil, err
 	}
 	var resp message
@@ -1124,9 +1178,9 @@ func (ps *P2PServer) broadcast(m message) {
 	ps.broadcastFrom(m, "")
 }
 
-// broadcastFrom broadcast gibidir; skip eşini atlar (mesajın kaynağı).
+// broadcastFrom broadcast gibidir; skip eşini atlar (mesajın kaynağı; samePeer ile).
 func (ps *P2PServer) broadcastFrom(m message, skip string) {
-	data, err := json.Marshal(stamped(m))
+	data, err := json.Marshal(ps.stamp(m))
 	if err != nil {
 		ps.log.Error("yayın mesajı kodlanamadı", "type", m.Type, "err", err)
 		return
@@ -1135,7 +1189,7 @@ func (ps *P2PServer) broadcastFrom(m message, skip string) {
 	block := m.Type == msgBlock
 	now := time.Now()
 	for _, peer := range ps.activePeers() {
-		if skip != "" && peer == skip {
+		if skip != "" && samePeer(peer, skip) {
 			continue
 		}
 		ps.enqueueSend(peer, data, block, now)

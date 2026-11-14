@@ -78,6 +78,7 @@ type Blockchain struct {
 	log      *slog.Logger
 	now      func() int64 // testlerde saat sabitlemek için
 	rejected rejectCache
+	inflight inflightSet // tam doğrulaması süren bloklar (inflight.go); kendi kilidi vardır
 	// blockCache yalnızca API'nin gövde okumaları içindir (bkz. blockcache.go); kendi kilidi vardır.
 	blockCache *blockCache
 
@@ -273,19 +274,31 @@ func (bc *Blockchain) AddBlock(transactions []Transaction, minerAddress string) 
 // kalıcı olarak geçersiz bloklar önbelleğe alınır ki aynı blok tekrar tekrar
 // gönderilerek CPU ve kilit tüketilemesin.
 func (bc *Blockchain) AcceptBlock(b *Block) error {
+	for {
+		busy, err := bc.acceptBlock(b)
+		if busy == nil {
+			return err
+		}
+		<-busy
+	}
+}
+
+// acceptBlock AcceptBlock'un tek denemesidir. busy nil değilse aynı blok başka bir çağrıda
+// tam doğrulamadadır; err anlamsızdır ve busy kapanınca yeniden denenir.
+func (bc *Blockchain) acceptBlock(b *Block) (busy <-chan struct{}, err error) {
 	if bc.rejected.has(b.Hash) {
-		return ErrKnownInvalid
+		return nil, ErrKnownInvalid
 	}
 	// Başlık hataları önbelleğe alınmaz: özet yalnızca başlığı kapsar ve gövde ancak Merkle
 	// kökü doğrulandıktan sonra özete bağlıdır. Aksi halde saldırgan dürüst bir başlığa çöp
 	// gövde ekleyerek o özeti her yerde "geçersiz" diye zehirleyebilirdi.
 	if err := bc.bitsGate(b); err != nil {
 		bc.log.Debug("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
-		return err
+		return nil, err
 	}
 	if err := bc.checkHeader(b); err != nil {
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
-		return err
+		return nil, err
 	}
 	// Ebeveyne göre ucuz kontroller (bilinen blok, bilinmeyen/geçersiz ebeveyn, yükseklik,
 	// medyan zaman, yan zincir sınırları) imza doğrulamasından önce okuma kilidiyle yapılır:
@@ -302,7 +315,7 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 	if retry {
 		bc.mu.Lock()
 		defer bc.mu.Unlock()
-		return bc.retryKnownLocked(b.Hash)
+		return nil, bc.retryKnownLocked(b.Hash)
 	}
 	if perr != nil {
 		if errors.Is(perr, ErrBadPrevHash) {
@@ -310,7 +323,7 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 		} else if !errors.Is(perr, ErrKnownBlock) {
 			bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", perr)
 		}
-		return perr
+		return nil, perr
 	}
 	// FTL yalnızca yerel saate bağlıdır; imza doğrulamasından önce bakılır ve önbelleğe
 	// alınmaz: gelecek tarihli blok tekrar gönderilerek ML-DSA doğrulaması yaptırılamaz, saat
@@ -318,12 +331,32 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 	if ahead := b.Timestamp - bc.now(); ahead > MaxFutureDrift {
 		bc.log.Debug("blok reddedildi: zaman çok ileride (saatinizi NTP ile doğrulayın)",
 			"index", b.Index, "hash", b.Hash, "ileri_sn", ahead, "ftl_sn", MaxFutureDrift)
-		return ErrTimestampFuture
+		return nil, ErrTimestampFuture
+	}
+	// Aynı blok başka bir yoldan aynı anda doğrulanıyorsa imzalar ikinci kez doğrulanmaz
+	// (inflight.go): o bitince AcceptBlock baştan denenir. release, aşağıdaki bc.mu.Unlock'tan
+	// sonra çalışır (defer sırası); kayıt kilidi bc.mu tutulurken alınmaz.
+	release, busy := bc.inflight.claim(b.Hash)
+	if busy != nil {
+		return busy, nil
+	}
+	defer release()
+	// Yukarıdaki ön denetimler kayıttan önceydi: blok bu arada başka bir çağrıda doğrulanıp
+	// saklanmış ya da gövdesi reddedilmiş olabilir (o çağrı kaydı saklamadan ya da önbelleğe
+	// almadan sonra bırakır). Öyleyse imzalar yeniden doğrulanmaz.
+	if bc.rejected.has(b.Hash) {
+		return nil, ErrKnownInvalid
+	}
+	bc.mu.RLock()
+	_, perr = bc.precheckLocked(b)
+	bc.mu.RUnlock()
+	if errors.Is(perr, ErrKnownBlock) {
+		return retryNow, nil
 	}
 	if err := bc.checkBody(b); err != nil {
 		bc.rejected.add(b.Hash) // gövde Merkle köküyle özete bağlı: hata içeriğe özgü ve kalıcı
 		bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
-		return err
+		return nil, err
 	}
 
 	bc.mu.Lock()
@@ -332,9 +365,9 @@ func (bc *Blockchain) AcceptBlock(b *Block) error {
 		if !errors.Is(err, ErrKnownBlock) {
 			bc.log.Warn("blok reddedildi", "index", b.Index, "hash", b.Hash, "neden", err)
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return nil, nil
 }
 
 // orphanEasyShift: ebeveyni bilinmeyen blok ucun bir sonraki hedefinden en fazla 2^orphanEasyShift
