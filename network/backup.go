@@ -31,7 +31,7 @@ import (
 // değiştirmez (tippoll.go). Bozuk işaret (backupLimits.badFor) yalnızca durumdan
 // bağımsız, kanıtlı ihlalde konur: başka ağ kimliği, JSON sözdizimi bozuk yanıt
 // (malformedMessage), dürüst eşin göndermeyeceği başlık veya blok (neverHonestBlock) ya da havuz
-// eşitlemesinde geçersiz işlem (invalidTx).
+// eşitlemesinde imza dışı geçersiz işlem (invalidTx; imza hatası işaret koymaz, mempoolsync.go).
 // Yapılandırılmış eşlere eskisi gibi hiçbir işaret konmaz.
 
 // backupLimits yedek kullanım eşikleridir; Serve'den önce ayarlanır (testler kısaltır).
