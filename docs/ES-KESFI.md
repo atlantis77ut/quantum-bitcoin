@@ -124,7 +124,7 @@
     - 2 sn hiç parça yazamayan ya da dürüst alıcının isteyeceği hızın gerisinde kalan tutanın yuvasını bekleyenlerden yalnızca biri devralır. Böylece her takılan eş eşzamanlılığı en çok bir artırır.
     - Dolu blok için iki kopyada ~2 Mbit/sn yukarı bant alıcıların asgari hızını karşılar.
   - Senkronizasyonla ya da uç beklemesiyle bir eşten indirilen blok o eşe geri itilmez. Gelen bağlantıyla itilen blok kaynağına geri itilebilir (yankı): kaynak portu geçicidir, IP ile eşleştirmek aynı IP'deki (aynı makine, NAT) başka bir düğümü atlayabilirdi.
-- **Yayılım ölçümü:** 60/30 sn ölçümü bu düzeltmeden sonra ve dolu blokla yapılır. Bu, "bugünkü taşımayla" kararına uyar, çünkü taşıma oturumsuz kalır.
+- **Yayılım ölçümü:** 60/30 sn ölçümü bu düzeltmeden sonra ve dolu blokla yapılır. Bu, "bugünkü taşımayla" kararına uyar, çünkü taşıma oturumsuz kalır. Araç: `-bench-propagation` ([YAYILIM-OLCUM.md](YAYILIM-OLCUM.md)); ölçüm henüz yapılmadı.
 
 ### 4.6 Gömülü başlangıç listesi
 
@@ -157,7 +157,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 
 - **Ağ büyümesi operatörlere bağlıdır.** Yeni dinleyiciler kendiliğinden bulunmaz; biri onları `-peer` ile yapılandırmalıdır.
 - **NAT arkasındaki madenci** itme için yapılandırılmış eşlerine, onlar düşünce yedeklere muhtaçtır.
-- **Topoloji gömülü liste düğümlerinde yoğunlaşır.** Liste işletmecileri yarışlarda öne geçer (γ). Bunun ölçüsü yayılım ölçümünde ayrıca bakılmalıdır.
+- **Topoloji gömülü liste düğümlerinde yoğunlaşır.** Liste işletmecileri yarışlarda öne geçer (γ). Bunun ölçüsü yayılım ölçümünde ayrıca bakılmalıdır (`-bench-prop-topology star-leaf`, [YAYILIM-OLCUM.md](YAYILIM-OLCUM.md)).
 - **`getaddr` yanıtı yanıtlayanın yapılandırma ilişkilerini açığa çıkarır** (topoloji çıkarımı).
 - **Düğüm kendi adresini öğrenebilir:** yanıtlayanın yapılandırılmış eşi bizsek adresimiz tabloya girer. Yedek seçimi kendine bağlanmayı sınama belirteciyle ayıklar.
 - **Birincil rol lansmandan sonra ayrı karar ister:**
