@@ -443,6 +443,10 @@ func (p *throttleProxy) accept() {
 
 func (p *throttleProxy) serve(src net.Conn) {
 	defer p.wg.Done()
+	// TCP el sıkışması (SYN, SYN-ACK) bir gidiş-dönüştür: istemci veriyi ancak 2·latency sonra
+	// gönderebilir. İtme her blokta yeni bağlantı açar (peersend.go sendTo), bu yüzden her atlamada
+	// ödenir. Bu arada istemcinin yazdıkları çekirdek tamponunda bekler.
+	time.Sleep(2 * p.latency)
 	dst, err := net.Dial("tcp", p.target)
 	if err != nil {
 		src.Close()

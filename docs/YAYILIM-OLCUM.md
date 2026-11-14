@@ -17,7 +17,7 @@ S bayt blok, R bit/sn yukarı hat, L tek yön gecikme ve V çözümleme + doğru
 
   t_atlama ≈ 8·S / R + 3·L + V
 
-(TCP bağlantısı 2·L, ilk baytın varışı L.) Depola-ilet yüzünden h atlamalık hatta T ≈ h · t_atlama olur. Bir düğüm k eşe iterse, aynı anda en çok 2 kopya gider ve hat paylaşılır. Bu yüzden k'nci eş yaklaşık ⌈k/2⌉ · 2 · 8·S / R sonra bloğu alır.
+(TCP el sıkışması 2·L, ilk baytın varışı L. İtme her blokta yeni bağlantı açar; proxy el sıkışmayı da benzetir.) Depola-ilet yüzünden h atlamalık hatta T ≈ h · t_atlama olur. Bir düğüm k eşe iterse, aynı anda en çok 2 kopya gider ve hat paylaşılır. Bu yüzden k'nci eş yaklaşık ⌈k/2⌉ · 2 · 8·S / R sonra bloğu alır.
 
 Örnek: dolu blok (1000 işlem) ~7 MiB, yani ~60 Mbit (kesin değer raporun `wire_bytes` alanıdır). 20 Mbit/sn hatta 60 / 20 = 3 sn, artı 0,15 sn gecikme, artı V. 3 atlamada ~10 sn.
 
@@ -74,7 +74,7 @@ Proxy'nin alıcı sınırlarını doğru uyguladığını doğrular (CI için fa
 ./qbtc -bench-propagation -bench-prop-hops 1 -bench-prop-mbit 0.8 -bench-prop-latency 25ms
 ```
 
-0,8 Mbit/sn'de dolu blok 128 KiB/sn asgari hızın altında kalır; alıcı ~60 sn'de keser, `reached` 0 olur ve uyarı çıkar.
+0,8 Mbit/sn'de (~100 KB/sn) dolu blok 128 KiB/sn asgari hızın altında kalır; alıcının süresi 10 sn + okunan / 128 KiB/sn olduğundan ~40 sn'de keser, `reached` 0 olur ve zaman aşımından sonra uyarı çıkar.
 
 ```bash
 ./qbtc -bench-propagation -bench-prop-hops 1 -bench-prop-mbit 2 -bench-prop-latency 25ms

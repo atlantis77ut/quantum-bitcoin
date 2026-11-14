@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"quantum-bitcoin/core"
 )
 
 // Hat bayt baytı sıraya koyar: boş hatta çıkış n/hız sonra, dolu hatta öncekinin ardından.
@@ -69,13 +71,13 @@ func TestThrottleProxy(t *testing.T) {
 	if data := <-got; !bytes.Equal(data, payload) {
 		t.Fatalf("iletilen %d bayt, gönderilen %d", len(data), len(payload))
 	}
-	if want := 250*time.Millisecond + 2*latency; elapsed < want {
+	if want := 250*time.Millisecond + 4*latency; elapsed < want { // el sıkışma + gidiş + yanıt
 		t.Fatalf("iletim %v sürdü, hat en az %v ister", elapsed, want)
 	}
 }
 
-// Yüksek hız·gecikmede gecikme hattı hızı düşürmez: 4 MiB, 100 Mbit ve 200 ms'de ~0,54 sn
-// sürer; sabit 16 parçalık kuyrukla (16 parça / 200 ms ≈ 1,3 MB/sn) ~3,2 sn sürerdi.
+// Yüksek hız·gecikmede gecikme hattı hızı düşürmez: 4 MiB, 100 Mbit ve 200 ms'de el sıkışmayla
+// ~0,94 sn sürer; sabit 16 parçalık kuyrukla (16 parça / 200 ms ≈ 1,3 MB/sn) ~3,6 sn sürerdi.
 func TestThrottleProxyHighBDP(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -112,7 +114,7 @@ func TestThrottleProxyHighBDP(t *testing.T) {
 	if n := <-got; n != len(payload) {
 		t.Fatalf("iletilen %d bayt", n)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
+	if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
 		t.Fatalf("iletim %v sürdü; kuyruk hız·gecikmeyi taşımıyor", elapsed)
 	}
 }
@@ -141,6 +143,35 @@ func TestPropConfigValidate(t *testing.T) {
 			t.Fatalf("bozuk ayar %d kabul edildi: %v", i, err)
 		}
 	}
+}
+
+// Dolu blok (core.MaxTxPerBlock işlem) mesaj sınırına sığar ve itmeyle bir atlama gider; aracın
+// varsayılan yolu. Uzun sürdüğü için -short'ta atlanır (CI'da koşar).
+func TestPropagationBenchFullBlock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("dolu blok uzun sürer")
+	}
+	dir := t.TempDir()
+	f, err := NewPropFixture(dir, core.MaxTxPerBlock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Block.Transactions) != core.MaxTxPerBlock+1 || f.WireBytes > maxBlockMessageBytes {
+		t.Fatalf("blok %d işlem, %d bayt (sınır %d)", len(f.Block.Transactions), f.WireBytes, maxBlockMessageBytes)
+	}
+	if _, err := f.BenchBlock(filepath.Join(dir, "block")); err != nil {
+		t.Fatal(err)
+	}
+	c := PropConfig{Txs: core.MaxTxPerBlock, Hops: 1, Topology: TopologyLine, Mbit: 1000,
+		Latency: time.Millisecond, Timeout: time.Minute, Dir: filepath.Join(dir, "run")}
+	run, err := f.BenchPropagation(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Arrival) != 1 || run.Arrival[0] < 0 {
+		t.Fatalf("dolu blok ulaşmadı: %v", run.Arrival)
+	}
+	t.Logf("dolu blok: %d bayt, ulaşma %v", f.WireBytes, run.Arrival[0])
 }
 
 // Küçük bir blokla iki katman uçtan uca: blok ölçümü taze zincirde kabul eder; blok her
