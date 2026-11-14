@@ -108,6 +108,18 @@ func (s *peerSender) nextItem() (data []byte, block, ok bool) {
 	return nil, false, false
 }
 
+// discard kuyrukları boşaltır (eş etkin kümeden çıktı, backup.go); çalışanı yoksa true. Çalışan
+// sürmekte olan gönderimi bitirince boş kuyrukta durur.
+func (s *peerSender) discard() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.blocks)
+	s.blocks = s.blocks[:0]
+	clear(s.txs)
+	s.txs = s.txs[:0]
+	return !s.running
+}
+
 // hasBlock kuyrukta bekleyen blok olup olmadığını söyler.
 func (s *peerSender) hasBlock() bool {
 	s.mu.Lock()

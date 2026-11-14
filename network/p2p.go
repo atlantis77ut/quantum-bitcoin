@@ -77,6 +77,9 @@ type message struct {
 	// Adres öğrenme (addr.go): Network gönderenin genesis özeti, Addrs "ip:port" listesidir.
 	Network string   `json:"network,omitempty"`
 	Addrs   []string `json:"addrs,omitempty"`
+	// Probe yedek adayı sınamasının belirtecidir (backup.go): kendi sunucumuz görürse aday
+	// kendimiziz. Eski düğümler alanı yok sayar.
+	Probe string `json:"probe,omitempty"`
 }
 
 // Protokol sürümü (düğüm politikası, uzlaşma kuralı değil). Kalıcı oturumlar gibi taşıma
@@ -180,9 +183,11 @@ type P2PServer struct {
 
 	// Adres öğrenme (addr.go). discover, addrs, seeds ve aralıklar Serve'den önce ayarlanır
 	// (EnableDiscovery; testler aralıkları kısaltır), sonra yalnızca okunur. localAddrs
-	// (regtest) yönlendirilemeyen adresleri de kabul ettirir. reached yapılandırılmış eşlere ve
-	// sorulan kaynaklara son başarılı isteği, wrongNet `getaddr` yanıtı başka ağ kimliği taşıyan
-	// kaynakların yanıtta verilmeyeceği zamanı tutar; ikisi de o eş kümesiyle sınırlıdır.
+	// (regtest) yönlendirilemeyen adresleri de kabul ettirir. reached istek yapılan eşlere
+	// (yapılandırılmış eşler, gömülü liste, yedekler ve sınanan adaylar) son başarılı isteği tutar;
+	// keşif açıkken yönetici döngüsü adres kaynakları ve yedekler dışındakileri budar (backup.go).
+	// wrongNet `getaddr` yanıtı başka ağ kimliği taşıyan kaynakların yanıtta verilmeyeceği zamanı
+	// tutar; adres kaynaklarıyla sınırlıdır.
 	discover      bool
 	addrs         *AddrBook
 	seeds         []string
@@ -192,6 +197,17 @@ type P2PServer struct {
 	reachedMu     sync.Mutex
 	reached       map[string]reachedPeer
 	wrongNet      map[string]time.Time
+
+	// Yedek kullanım (backup.go). backups ps.mu altındadır; backupLim Serve'den önce ayarlanır
+	// (testler kısaltır), sonra yalnızca okunur. probes bekleyen sınama belirteçleri, selfAddrs
+	// kendimiz olduğu görülen adresler (en çok maxSelfAddrs), seedMarks gömülü liste adaylarının
+	// işaretleridir; üçü probeMu altındadır.
+	backups   []string
+	backupLim backupLimits
+	probeMu   sync.Mutex
+	probes    map[string]bool
+	selfAddrs map[string]bool
+	seedMarks map[string]seedMark
 
 	// Uç bekleme (tippoll.go). tipCh uç değişince kapatılıp yenilenir, quit Serve dönünce
 	// kapanır; ikisi tipMu altındadır. tipWait Serve'den önce ayarlanır (testler kısaltır), sonra
@@ -260,6 +276,10 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		addrScanEvery:    addrScanInterval,
 		reached:          map[string]reachedPeer{},
 		wrongNet:         map[string]time.Time{},
+		backupLim:        defaultBackupLimits(),
+		probes:           map[string]bool{},
+		selfAddrs:        map[string]bool{},
+		seedMarks:        map[string]seedMark{},
 
 		waits:     newSlotPool(maxConcurrentWaits, reservedWaits),
 		waitQuota: newGroupQuota(waitsPerGroup),
@@ -286,7 +306,8 @@ func (ps *P2PServer) AddPeer(addr string) {
 	ps.protectPeer(addr)
 }
 
-// Peers eş listesinin bir kopyasını döndürür.
+// Peers yapılandırılmış eşlerin bir kopyasını döndürür (yedekler dahil değil: activePeers,
+// backup.go).
 func (ps *P2PServer) Peers() []string {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
@@ -321,6 +342,7 @@ func (ps *P2PServer) Serve(listener net.Listener) error {
 	go ps.relayGateLoop(stop)
 	if ps.discover && ps.addrs != nil {
 		go ps.addrLoop(stop)
+		go ps.backupLoop(stop)
 	}
 
 	for {
@@ -415,6 +437,7 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 	case msgWaitTip:
 		ps.serveWaitTip(conn, remote, id, msg.Hash)
 	case msgGetAddr:
+		ps.seeProbe(msg.Probe) // sunum kotasından önce: kota doluyken de kendine bağlanma anlaşılır
 		ps.serveGetAddr(conn, remote, id, msg.Network)
 	case msgAddr:
 		// Adres yalnızca kendi isteğimize yanıt olarak alınır; kendiliğinden gelen yok sayılır.
@@ -674,6 +697,9 @@ func (ps *P2PServer) request(peer string, req message, limit int64) (*message, e
 	}
 	var resp message
 	if err := json.NewDecoder(io.LimitReader(conn, limit)).Decode(&resp); err != nil {
+		if malformedMessage(err) {
+			ps.noteViolation(peer, err) // yalnızca yedeğe işaret konur (backup.go)
+		}
 		return nil, err
 	}
 	if !ps.versionOK(resp.Version) {
@@ -702,7 +728,9 @@ func (ps *P2PServer) syncLoop(stop <-chan struct{}) {
 		case <-t.C:
 		case <-ps.syncCh:
 		}
-		for _, peer := range ps.Peers() {
+		peers := ps.activePeers()
+		ps.pruneSyncState(peers, time.Now())
+		for _, peer := range peers {
 			err := ps.syncFrom(peer, stop)
 			if err != nil {
 				ps.log.Warn("eşle senkronizasyon başarısız", "peer", peer, "err", err)
@@ -817,7 +845,7 @@ func lowWorkHeaderLimit(window int) int {
 
 // presyncBackedOff eşle yeni ön-senkronizasyonun ertelenip ertelenmediğini söyler.
 func (ps *P2PServer) presyncBackedOff(peer string) bool {
-	pen := ps.presyncBackoff[peer]
+	pen := ps.presyncBackoff[ps.presyncKey(peer)]
 	return pen != nil && time.Now().Before(pen.until)
 }
 
@@ -825,15 +853,16 @@ func (ps *P2PServer) presyncBackedOff(peer string) bool {
 // başlar ya da ikiye katlanır; değilse erteleme sıfırlanır.
 func (ps *P2PServer) dropPresync(peer string, failed bool, reason error) {
 	delete(ps.presyncs, peer)
+	key := ps.presyncKey(peer)
 	if !failed {
-		delete(ps.presyncBackoff, peer)
+		delete(ps.presyncBackoff, key)
 		return
 	}
 	d := presyncBackoffMin
-	if pen := ps.presyncBackoff[peer]; pen != nil {
+	if pen := ps.presyncBackoff[key]; pen != nil {
 		d = min(2*pen.delay, presyncBackoffMax)
 	}
-	ps.presyncBackoff[peer] = &presyncPenalty{until: time.Now().Add(d), delay: d}
+	ps.presyncBackoff[key] = &presyncPenalty{until: time.Now().Add(d), delay: d}
 	ps.log.Info("ön-senkronizasyon bırakıldı, eşle yenisi ertelendi", "peer", peer, "erteleme", d, "neden", reason)
 }
 
@@ -931,6 +960,9 @@ func (ps *P2PServer) presyncHeaders(peer string, p *core.Presync, stopped func()
 			if errors.Is(err, core.ErrTimestampFuture) {
 				return nil // geçici: kalan başlıklar sonraki turda
 			}
+			if neverHonestBlock(err) {
+				ps.noteViolation(peer, err)
+			}
 			return fmt.Errorf("%w: %v", errPresyncInvalid, err)
 		}
 		if p.Done() {
@@ -995,6 +1027,9 @@ func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped fun
 			return fmt.Errorf("%w: blok %s", errBadResponse, h)
 		}
 		if err := bc.AcceptBlock(resp.Block); err != nil && !errors.Is(err, core.ErrKnownBlock) {
+			if neverHonestBlock(err) {
+				ps.noteViolation(peer, err)
+			}
 			return fmt.Errorf("blok %d: %w", resp.Block.Index, err)
 		}
 		got[h] = true
@@ -1030,6 +1065,9 @@ func (ps *P2PServer) syncHeaders(peer string, s *core.HeaderSync, loc []string, 
 		if _, err := s.Add(resp.Headers); err != nil {
 			if errors.Is(err, core.ErrTimestampFuture) || errors.Is(err, core.ErrSyncLimit) {
 				return nil
+			}
+			if neverHonestBlock(err) {
+				ps.noteViolation(peer, err)
 			}
 			return err
 		}
@@ -1096,7 +1134,7 @@ func (ps *P2PServer) broadcastFrom(m message, skip string) {
 	data = append(data, '\n') // json.Encoder biçimi; kuyruklar yalnızca okur
 	block := m.Type == msgBlock
 	now := time.Now()
-	for _, peer := range ps.Peers() {
+	for _, peer := range ps.activePeers() {
 		if skip != "" && peer == skip {
 			continue
 		}

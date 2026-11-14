@@ -185,6 +185,12 @@ type addrEntry struct {
 	BadUntil    int64  `json:"bad_until,omitempty"`
 }
 
+// fresh kaydın tazeliğidir: bir kaynağın son verdiği ya da yedek olarak son başarıyla kullanıldığı
+// an. Süre dolumu ve en eskinin düşmesi buna bakar; kaynaklar susunca kullanılan yedek silinmez.
+func (e *addrEntry) fresh() int64 {
+	return max(e.LastSeen, e.LastSuccess)
+}
+
 // addrMeta tablonun ait olduğu ağ ve kayıt biçimidir.
 type addrMeta struct {
 	Version int    `json:"version"`
@@ -274,11 +280,11 @@ func (b *AddrBook) load(now time.Time) error {
 	if err := it.Error(); err != nil {
 		return err
 	}
-	// En yeni görülenler önce: sınırlar diskteki fazlalığı en eskilerden budar.
-	sort.Slice(stored, func(i, j int) bool { return stored[i].LastSeen > stored[j].LastSeen })
+	// En tazeler önce: sınırlar diskteki fazlalığı en eskilerden budar.
+	sort.Slice(stored, func(i, j int) bool { return stored[i].fresh() > stored[j].fresh() })
 	perSource := map[string]int{}
 	for _, e := range stored {
-		if now.Unix()-e.LastSeen > int64(addrExpiry/time.Second) || len(b.entries) >= addrTableMax ||
+		if now.Unix()-e.fresh() > int64(addrExpiry/time.Second) || len(b.entries) >= addrTableMax ||
 			perSource[e.Source] >= addrPerSource {
 			continue
 		}
@@ -363,18 +369,24 @@ func (b *AddrBook) learn(src string, addrs []string, known func(string) bool, no
 		changed = true
 	}
 	if changed {
-		if err := b.saveLocked(); err != nil && !errors.Is(err, leveldb.ErrClosed) {
-			b.log.Warn("eş adresi tablosu kaydedilemedi", "err", err)
-		}
+		b.saveLogged()
 	}
 	return added
 }
 
-// expireLocked addrExpiry boyunca hiçbir kaynağın vermediği kayıtları siler.
+// saveLogged tabloyu yazar; hata yalnızca loglanır (kapalı tablo sessizce atlanır).
+func (b *AddrBook) saveLogged() {
+	if err := b.saveLocked(); err != nil && !errors.Is(err, leveldb.ErrClosed) {
+		b.log.Warn("eş adresi tablosu kaydedilemedi", "err", err)
+	}
+}
+
+// expireLocked addrExpiry boyunca ne bir kaynağın verdiği ne de yedek olarak başarıyla
+// kullanılan kayıtları siler.
 func (b *AddrBook) expireLocked(now time.Time) bool {
 	changed := false
 	for addr, e := range b.entries {
-		if now.Unix()-e.LastSeen > int64(addrExpiry/time.Second) {
+		if now.Unix()-e.fresh() > int64(addrExpiry/time.Second) {
 			delete(b.entries, addr)
 			changed = true
 		}
@@ -382,16 +394,86 @@ func (b *AddrBook) expireLocked(now time.Time) bool {
 	return changed
 }
 
-// oldestLocked en eski görülen kaydın adresidir (tablo boş değilken).
+// oldestLocked en az taze kaydın adresidir (tablo boş değilken).
 func (b *AddrBook) oldestLocked() string {
 	old := ""
 	for addr, e := range b.entries {
-		if old == "" || e.LastSeen < b.entries[old].LastSeen ||
-			(e.LastSeen == b.entries[old].LastSeen && addr < old) {
+		if old == "" || e.fresh() < b.entries[old].fresh() ||
+			(e.fresh() == b.entries[old].fresh() && addr < old) {
 			old = addr
 		}
 	}
 	return old
+}
+
+// candidates yedek adaylarıdır (backup.go): bozuk işaretsiz, son başarısızlığı son başarısından
+// eski ya da retry'dan önce olan kayıtlar; önce en son başarıyla kullanılanlar, eşitlikte
+// rastgele sırada.
+func (b *AddrBook) candidates(now time.Time, retry time.Duration) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var list []*addrEntry
+	for _, e := range b.entries {
+		if e.BadUntil > now.Unix() ||
+			(e.LastFailure > e.LastSuccess && now.Unix()-e.LastFailure < int64(retry/time.Second)) {
+			continue
+		}
+		list = append(list, e)
+	}
+	rand.Shuffle(len(list), func(i, j int) { list[i], list[j] = list[j], list[i] })
+	sort.SliceStable(list, func(i, j int) bool { return list[i].LastSuccess > list[j].LastSuccess })
+	out := make([]string, len(list))
+	for i, e := range list {
+		out[i] = e.Addr
+	}
+	return out
+}
+
+// markSuccess yedeğin son başarısını işler. Bellekte her çağrıda güncellenir; tablo yalnızca ilk
+// başarıda, başarısızlıktan sonra ya da değer backupSuccessWrite kadar ilerleyince yazılır.
+func (b *AddrBook) markSuccess(addr string, at time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entries[addr]
+	if e == nil || at.IsZero() || at.Unix() <= e.LastSuccess {
+		return
+	}
+	write := at.Unix()-e.LastSuccess >= int64(backupSuccessWrite/time.Second) || e.LastFailure > e.LastSuccess
+	e.LastSuccess = at.Unix()
+	if write {
+		b.saveLogged()
+	}
+}
+
+// markFailure yedeğin ya da adayın son başarısızlığını yazar (taşıma hatası; işaret değil).
+// Yalnızca bellekte: diske tablonun bir sonraki yazımıyla gider, böylece her başarısız sınama
+// tabloyu yeniden yazmaz (kaybı yalnızca yeniden açılışta erken bir yeniden denemedir).
+func (b *AddrBook) markFailure(addr string, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e := b.entries[addr]; e != nil {
+		e.LastFailure = now.Unix()
+	}
+}
+
+// markBad kayda until'e kadar bozuk işaret koyar (kanıtlı ihlal).
+func (b *AddrBook) markBad(addr string, until time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e := b.entries[addr]; e != nil {
+		e.BadUntil = until.Unix()
+		b.saveLogged()
+	}
+}
+
+// remove kaydı siler (kendi adresimiz).
+func (b *AddrBook) remove(addr string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.entries[addr]; ok {
+		delete(b.entries, addr)
+		b.saveLogged()
+	}
 }
 
 // Len tablodaki adres sayısıdır.

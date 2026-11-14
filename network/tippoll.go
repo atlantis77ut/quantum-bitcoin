@@ -137,17 +137,32 @@ func (ps *P2PServer) serveWaitTip(conn net.Conn, remote string, id peerID, known
 	}
 }
 
-// tipPollLoop her yapılandırılmış eş için bir uç bekleme döngüsü başlatır; sonradan eklenen
-// eşler tipPollScan içinde fark edilir. Döngü sayısı yapılandırılmış eş sayısıyla sınırlıdır.
+// tipPollLoop her etkin eş (yapılandırılmış eşler ve yedekler, backup.go) için bir uç bekleme
+// döngüsü başlatır; eklenen eşler tipPollScan içinde fark edilir, çıkan eşin döngüsü kendi
+// durdurma kanalıyla durur. Döngü sayısı etkin eş sayısıyla sınırlıdır.
 func (ps *P2PServer) tipPollLoop(stop <-chan struct{}) {
-	started := map[string]bool{}
+	started := map[string]chan struct{}{}
+	defer func() {
+		for _, c := range started {
+			close(c)
+		}
+	}()
 	t := time.NewTicker(tipPollScan)
 	defer t.Stop()
 	for {
-		for _, p := range ps.Peers() {
-			if !started[p] {
-				started[p] = true
-				go ps.pollPeerTip(p, stop)
+		live := map[string]bool{}
+		for _, p := range ps.activePeers() {
+			live[p] = true
+			if started[p] == nil {
+				c := make(chan struct{})
+				started[p] = c
+				go ps.pollPeerTip(p, c)
+			}
+		}
+		for p, c := range started {
+			if !live[p] {
+				close(c)
+				delete(started, p)
 			}
 		}
 		select {
@@ -159,6 +174,8 @@ func (ps *P2PServer) tipPollLoop(stop <-chan struct{}) {
 }
 
 // pollPeerTip bir eşe art arda uç isteği açar; aralık son isteğin sonucuna bağlıdır (tipOutcome).
+// "Meşgul" yanıtı yalnızca aralığı uzatır, yedeği değiştirmez: sunucunun bekleme kotası istemci
+// grubuna bağlıdır, aynı gruptaki üçüncü taraf onu doldurabilir (ES-KESFI.md §4.4).
 func (ps *P2PServer) pollPeerTip(peer string, stop <-chan struct{}) {
 	known, fails := "", 0
 	for {
@@ -239,12 +256,19 @@ func (ps *P2PServer) adoptTip(peer string, h core.BlockHeader) tipOutcome {
 	if _, err := s.Add([]core.BlockHeader{h}); err != nil {
 		switch {
 		case errors.Is(err, core.ErrBadPrevHash):
-			// Eş birden çok blok önde ya da başka dalda: atalar senkronizasyonla gelir.
-			ps.triggerTipSync(time.Now())
+			// Eş birden çok blok önde ya da başka dalda: atalar senkronizasyonla gelir. Bu başlık
+			// PoW'dan önce, bedavaya reddedilir; yalnızca yapılandırılmış eşinki tetikler (yedek ve
+			// çıkarılmış yedeğin durmakta olan döngüsü tetiklemez; ES-KESFI.md §4.4).
+			if ps.isConfigured(peer) {
+				ps.triggerTipSync(time.Now())
+			}
 			return tipNeutral
 		case errors.Is(err, core.ErrTimestampFuture):
 			return tipNeutral // geçici; blok senkronizasyonla gelir
 		default:
+			if neverHonestBlock(err) {
+				ps.noteViolation(peer, err)
+			}
 			ps.log.Debug("eşin uç başlığı geçersiz", "peer", peer, "err", err)
 			return tipFailed
 		}
@@ -281,6 +305,9 @@ func (ps *P2PServer) adoptTip(peer string, h core.BlockHeader) tipOutcome {
 		ps.log.Debug("uç beklemesiyle alınan blok uca eklenemedi", "peer", peer, "err", err)
 		return tipNeutral
 	default:
+		if neverHonestBlock(err) {
+			ps.noteViolation(peer, err)
+		}
 		ps.log.Debug("uç beklemesiyle alınan blok reddedildi", "peer", peer, "err", err)
 		return tipFailed
 	}
