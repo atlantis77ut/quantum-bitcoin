@@ -198,9 +198,6 @@ func main() {
 	seeds := network.SeedPeers(params.Name)
 	if len(peers) == 0 {
 		peers = seeds
-		if len(seeds) == 0 {
-			slog.Warn("-peer verilmedi ve bu ağın gömülü başlangıç listesi boş: düğüm eşsiz çalışıyor", "network", params.Name)
-		}
 	}
 	for _, p := range peers {
 		p2p.AddPeer(p)
@@ -209,14 +206,26 @@ func main() {
 	// Adres öğrenme (network/addr.go): tablo zincir dizininin yanında ayrı bir LevelDB'dedir.
 	// Açılamazsa keşif bellekteki tabloyla sürer (ipucu önbelleğidir, durum değil). Tablo
 	// ertelenmiş bc.Close'dan önce kapanır; kapanıştan sonraki kayıtlar sessizce atlanır.
+	var book *network.AddrBook
 	if *discover {
-		book, err := network.OpenAddrBook(filepath.Clean(*dbPath)+"_peers", bc)
+		var err error
+		book, err = network.OpenAddrBook(filepath.Clean(*dbPath)+"_peers", bc)
 		if err != nil {
 			slog.Warn("eş adresi tablosu açılamadı; öğrenilen adresler bellekte tutulacak", "err", err)
 			book = network.MemoryAddrBook(bc)
 		}
 		defer book.Close()
 		p2p.EnableDiscovery(book, seeds)
+	}
+	// Yapılandırılmış eş yoksa keşif açıkken önceki çalıştırmanın tablosu hemen yedek olarak
+	// denenir (network/backup.go); tablo da boşsa düğüm eşsizdir.
+	if len(peers) == 0 {
+		if book != nil && book.Len() > 0 {
+			slog.Warn("-peer verilmedi ve bu ağın gömülü başlangıç listesi boş: yalnızca adres tablosundaki adresler yedek olarak kullanılacak",
+				"network", params.Name, "tablo", book.Len())
+		} else {
+			slog.Warn("-peer verilmedi ve bu ağın gömülü başlangıç listesi boş: düğüm eşsiz çalışıyor", "network", params.Name)
+		}
 	}
 
 	// 4. Borsa API sunucusu

@@ -48,7 +48,7 @@
 - **Eş değiştirme ölçütü taşıma hatalarını saymamalıdır.**
   - Dolu sunucu yanıt vermeden kapatır. Eski sürüm bilinmeyen türü yanıtsız bırakır. Uç beklemesinde "meşgul" hata sayılmaz.
   - Bu durumları sayan bir ölçüt, saldırgana dürüst eşleri kendi kayıtlarıyla değiştirtir ve sürüm geçişinde eski düğümleri bozuk işaretletir.
-  - Bozuk işaret yalnızca durumdan bağımsız, kanıtlı ihlalde konur: `neverHonestBlock`, `malformedMessage`, yanlış ağ. `headerRejected` kullanılmaz; o `ErrBadDifficulty`, `ErrBadPrevHash` ve `ErrKnownInvalid`'i de içerir.
+  - Bozuk işaret yalnızca durumdan bağımsız, kanıtlı ihlalde konur: `neverHonestBlock`, `malformedMessage`, yanlış ağ, havuz eşitlemesinde imza dışı `invalidTx`. `headerRejected` kullanılmaz; o `ErrBadDifficulty`, `ErrBadPrevHash` ve `ErrKnownInvalid`'i de içerir.
 - **Ön-senkronizasyon durumu eşin adres dizgisine bağlıdır.**
   - Eş değiştikçe her yeni eşle ayrı bir ön-senkronizasyon başlar.
   - Değiştirilen eşin ertelemesi budanırsa, "erteleme başına bir tam doğrulama" sınırı operatörün seçtiği eş sayısından tablodaki kayıt sayısına kayar.
@@ -72,7 +72,7 @@
   - `-peer` verilmezse gömülü başlangıç listesi (§4.6) yapılandırılmış eş yerine geçer.
   - `-peer` verilirse gömülü liste yedek havuzuna katılır.
 - **Keşfedilmiş eşler** yedektir: korumasızdır, az sayıdadır (en çok 4, /16 ve IPv6 /32 başına bir).
-  - Yalnızca yapılandırılmış eşlerin hepsine ulaşılamıyorken devreye girerler. Ölçüt: 10 dk boyunca hiçbir yapılandırılmış eşe hiçbir isteğin başarılı olmaması (açılıştan itibaren de sayılır).
+  - Yalnızca yapılandırılmış eşlerin hepsine ulaşılamıyorken devreye girerler. Ölçüt: 10 dk boyunca hiçbir yapılandırılmış eşe hiçbir isteğin başarılı olmaması (açılıştan itibaren de sayılır); yapılandırılmış eş hiç yoksa hemen.
   - Biri yeniden ulaşılır olunca, gecikmeli bir eşikle (histerezis: 10 dk kesintisiz, son başarı 2 dk içinde) çıkarılırlar.
   - Aday önce sınama belirteçli bir `getaddr` ile denenir: kendine bağlanma ve başka ağ elenir, sınama yanıtının adresleri öğrenilmez. Yapılandırılmış eşlerin ulaşılan IP'leri (DNS adının kopyası) aday olamaz.
   - Etkinken senkronizasyon, uç beklemesi, blok ve işlem itmesi ve havuz eşitlemesi onları da kapsar. NAT arkasındaki madencinin bloğu bu durumda da yayılır.

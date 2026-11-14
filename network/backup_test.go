@@ -3,10 +3,13 @@ package network
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"net"
 	"slices"
 	"testing"
 	"time"
+
+	"quantum-bitcoin/core"
 )
 
 // Yedekler yapılandırılmış eşlere after boyunca ulaşılamayınca devreye girer; yeniden ulaşılınca
@@ -338,5 +341,78 @@ func TestBackupMalformedMarkedBad(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if a.ps.isBackup(bad) {
 		t.Fatal("işaretli eş yeniden yedek oldu")
+	}
+}
+
+// Yapılandırılmış eş hiç yoksa beklenecek eş yoktur: yedekler after beklenmeden devreye girer.
+func TestBackupNoConfiguredPeers(t *testing.T) {
+	ps := NewP2PServer("127.0.0.1:0", newChain(t))
+	if at := ps.configuredLastOK(time.Now()); !at.IsZero() {
+		t.Fatalf("eşsiz düğümde son başarı %v", at)
+	}
+	ps.AddPeer("127.0.0.1:1")
+	if now := time.Now(); !ps.configuredLastOK(now).Equal(now) {
+		t.Fatal("yapılandırılmış eşle açılış anı kullanılmadı")
+	}
+
+	d := startNode(t, time.Hour)
+	a := startBackupNode(t, nil, nil, func(ps *P2PServer, self string) {
+		ps.backupLim.after = time.Hour
+		withTable(d.addr)(ps, self)
+	})
+	waitFor(t, "yapılandırılmış eş yokken yedek devreye girmedi", func() bool { return a.ps.isBackup(d.addr) })
+}
+
+// txPeer havuzunda yalnızca tx bulunan basit bir eştir: getmempool ve gettxs isteklerini yanıtlar.
+func txPeer(t *testing.T, tx core.Transaction) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	inv, _ := json.Marshal(stamped(message{Type: msgInv, TxIDs: []string{tx.ID()}}))
+	txs, _ := json.Marshal(stamped(message{Type: msgTxs, Txs: []core.Transaction{tx}}))
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			var m message
+			if json.NewDecoder(c).Decode(&m) == nil {
+				switch m.Type {
+				case msgGetMempool:
+					c.Write(append(inv, '\n'))
+				case msgGetTxs:
+					c.Write(append(txs, '\n'))
+				}
+			}
+			c.Close()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// Havuz eşitlemesinde geçersiz işlem (durumdan bağımsız, kanıtlı ihlal) gönderen yedek bozuk
+// işaretlenir ve hemen çıkarılır.
+func TestBackupInvalidTxMarkedBad(t *testing.T) {
+	bad := core.Transaction{Receiver: minerAddr(t), Amount: 0, Fee: core.MempoolMinFee, ExpiryHeight: 1}
+	peer := txPeer(t, bad)
+	bc := newChain(t)
+	ps := NewP2PServer("127.0.0.1:0", bc)
+	ps.EnableDiscovery(MemoryAddrBook(bc), nil)
+	ps.addrs.learn("kaynak", []string{peer}, none, time.Now())
+	ps.backups = []string{peer}
+	stop := make(chan struct{})
+	defer close(stop)
+	if n, err := ps.pullMempool(peer, stop); !errors.Is(err, errBadResponse) || n != 0 {
+		t.Fatalf("geçersiz işlemli çekme: %d, %v", n, err)
+	}
+	if ps.isBackup(peer) {
+		t.Fatal("geçersiz işlem gönderen yedek çıkarılmadı")
+	}
+	if e := ps.addrs.snapshot()[peer]; e.BadUntil <= time.Now().Unix() {
+		t.Fatalf("yedek bozuk işaretlenmedi: %+v", e)
 	}
 }

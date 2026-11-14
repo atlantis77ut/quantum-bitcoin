@@ -14,7 +14,8 @@ import (
 // yapılamazsa düğüm adres tablosundan (ve -peer verilmişse gömülü listeden) en çok
 // backupLimits.max yedek eş seçer. Yedekler senkronizasyon, uç beklemesi, blok ve işlem itmesi ve
 // havuz eşitlemesine katılır (activePeers). Bir yapılandırılmış eş backupLimits.exitAfter boyunca
-// kesintisiz ulaşılır olunca yedekler bırakılır (histerezis).
+// kesintisiz ulaşılır olunca yedekler bırakılır (histerezis). Yapılandırılmış eş hiç yoksa
+// (-peer verilmemiş, gömülü liste boş) yedekler beklemeden devreye girer.
 //
 // Yedekler korunmaz, adres kaynağı değildir ve `getaddr` yanıtında verilmez (bunlar yalnızca
 // Peers() ile çalışır); kazıcının kabul denetimi de yalnızca yapılandırılmış eşlere sorar (gövde
@@ -29,7 +30,8 @@ import (
 // aday backupLimits.retry sonra yeniden denenir. Uç beklemesindeki "meşgul" yanıtı yedeği
 // değiştirmez (tippoll.go). Bozuk işaret (backupLimits.badFor) yalnızca durumdan
 // bağımsız, kanıtlı ihlalde konur: başka ağ kimliği, JSON sözdizimi bozuk yanıt
-// (malformedMessage) ya da dürüst eşin göndermeyeceği başlık veya blok (neverHonestBlock).
+// (malformedMessage), dürüst eşin göndermeyeceği başlık veya blok (neverHonestBlock) ya da havuz
+// eşitlemesinde imza dışı geçersiz işlem (invalidTx; imza hatası işaret koymaz, mempoolsync.go).
 // Yapılandırılmış eşlere eskisi gibi hiçbir işaret konmaz.
 
 // backupLimits yedek kullanım eşikleridir; Serve'den önce ayarlanır (testler kısaltır).
@@ -306,10 +308,14 @@ func (ps *P2PServer) reachedAt(peer string) time.Time {
 }
 
 // configuredLastOK yapılandırılmış eşlere son başarılı isteğin anıdır; since'ten eskiyse since
-// (açılışta yedekler hemen devreye girmesin).
+// (açılışta yedekler hemen devreye girmesin). Yapılandırılmış eş hiç yoksa sıfırdır: beklenecek
+// bir eş olmadığından yedekler hemen devreye girer.
 func (ps *P2PServer) configuredLastOK(since time.Time) time.Time {
-	last := since
 	peers := ps.Peers()
+	if len(peers) == 0 {
+		return time.Time{}
+	}
+	last := since
 	ps.reachedMu.Lock()
 	defer ps.reachedMu.Unlock()
 	for _, p := range peers {
@@ -472,7 +478,11 @@ func (ps *P2PServer) backupLoop(stop <-chan struct{}) {
 		was := mode.active
 		switch active := mode.update(now, ps.configuredLastOK(started), lim); {
 		case active:
-			if !was {
+			switch {
+			case was:
+			case len(ps.Peers()) == 0:
+				ps.log.Warn("yapılandırılmış eş yok; yedek eşler devreye giriyor", "tablo", ps.addrs.Len())
+			default:
 				ps.log.Warn("hiçbir yapılandırılmış eşe ulaşılamıyor; yedek eşler devreye giriyor",
 					"sure", lim.after)
 			}
