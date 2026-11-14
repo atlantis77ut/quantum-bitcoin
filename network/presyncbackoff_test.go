@@ -61,7 +61,7 @@ func TestPresyncBackoff(t *testing.T) {
 	if err := ps.syncFrom(addr, stop); !errors.Is(err, errPresyncEnd) {
 		t.Fatalf("ilk tur: %v, beklenen errPresyncEnd", err)
 	}
-	pen := ps.presyncBackoff[addr]
+	pen := ps.presyncBackoff[ps.presyncKey(addr)]
 	if ps.presyncs[addr] != nil || pen == nil || pen.delay != presyncBackoffMin || !ps.presyncBackedOff(addr) {
 		t.Fatalf("erteleme %+v", pen)
 	}
@@ -78,14 +78,14 @@ func TestPresyncBackoff(t *testing.T) {
 	if err := ps.syncFrom(addr, stop); !errors.Is(err, errPresyncEnd) {
 		t.Fatalf("süre dolunca: %v, beklenen errPresyncEnd", err)
 	}
-	if d := ps.presyncBackoff[addr].delay; d != 2*presyncBackoffMin {
+	if d := ps.presyncBackoff[ps.presyncKey(addr)].delay; d != 2*presyncBackoffMin {
 		t.Fatalf("ikinci erteleme %v", d)
 	}
-	ps.presyncBackoff[addr] = &presyncPenalty{until: time.Now().Add(-time.Second), delay: presyncBackoffMax}
+	ps.presyncBackoff[ps.presyncKey(addr)] = &presyncPenalty{until: time.Now().Add(-time.Second), delay: presyncBackoffMax}
 	if err := ps.syncFrom(addr, stop); !errors.Is(err, errPresyncEnd) {
 		t.Fatal(err)
 	}
-	if d := ps.presyncBackoff[addr].delay; d != presyncBackoffMax {
+	if d := ps.presyncBackoff[ps.presyncKey(addr)].delay; d != presyncBackoffMax {
 		t.Fatalf("erteleme tavanı aşıldı: %v", d)
 	}
 	if dst.TipHash() == src.TipHash() {
@@ -110,7 +110,7 @@ func TestLowWorkHeadersBackoff(t *testing.T) {
 		if err := ps.syncFrom(addr, stop); !errors.Is(err, errLowWorkHeaders) {
 			t.Fatalf("tur %d: %v, beklenen errLowWorkHeaders", i, err)
 		}
-		if pen := ps.presyncBackoff[addr]; pen == nil || pen.delay != presyncBackoffMin || ps.presyncs[addr] != nil {
+		if pen := ps.presyncBackoff[ps.presyncKey(addr)]; pen == nil || pen.delay != presyncBackoffMin || ps.presyncs[addr] != nil {
 			t.Fatalf("tur %d: erteleme %+v", i, pen)
 		}
 	}
@@ -135,14 +135,14 @@ func TestPresyncBackoffKeepsExtension(t *testing.T) {
 	addr, _ := headerServer(t, src)
 
 	ps := NewP2PServer("127.0.0.1:0", dst)
-	ps.presyncBackoff[addr] = &presyncPenalty{until: time.Now().Add(time.Hour), delay: time.Hour}
+	ps.presyncBackoff[ps.presyncKey(addr)] = &presyncPenalty{until: time.Now().Add(time.Hour), delay: time.Hour}
 	if err := ps.syncFrom(addr, make(chan struct{})); err != nil {
 		t.Fatal(err)
 	}
 	if dst.TipHash() != src.TipHash() {
 		t.Fatal("ertelemedeki eşten uç uzatılmadı")
 	}
-	if ps.presyncBackoff[addr] == nil {
+	if ps.presyncBackoff[ps.presyncKey(addr)] == nil {
 		t.Fatal("ucu uzatmak ertelemeyi sıfırladı")
 	}
 }
@@ -157,7 +157,7 @@ func TestPresyncSuccessClearsBackoff(t *testing.T) {
 	mineN(t, dst, 25)
 	ps := NewP2PServer("127.0.0.1:0", dst)
 	ps.syncWindow = 8
-	ps.presyncBackoff[addr] = &presyncPenalty{until: time.Now().Add(-time.Second), delay: time.Hour}
+	ps.presyncBackoff[ps.presyncKey(addr)] = &presyncPenalty{until: time.Now().Add(-time.Second), delay: time.Hour}
 	stop := make(chan struct{})
 	defer close(stop)
 	for i := 0; dst.TipHash() != src.TipHash(); i++ {
@@ -166,7 +166,7 @@ func TestPresyncSuccessClearsBackoff(t *testing.T) {
 		}
 		ps.syncFrom(addr, stop) // ön-senkronizasyon son başlıkta biter; kalan iş sonraki turda
 	}
-	if ps.presyncBackoff[addr] != nil {
-		t.Fatalf("başarılı ön-senkronizasyon ertelemeyi sıfırlamadı: %+v", ps.presyncBackoff[addr])
+	if ps.presyncBackoff[ps.presyncKey(addr)] != nil {
+		t.Fatalf("başarılı ön-senkronizasyon ertelemeyi sıfırlamadı: %+v", ps.presyncBackoff[ps.presyncKey(addr)])
 	}
 }

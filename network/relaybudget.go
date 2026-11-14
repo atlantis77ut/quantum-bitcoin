@@ -73,11 +73,12 @@ type txRelayState struct {
 	bucket sendBucket
 }
 
-// hasPeers yapılandırılmış eş olup olmadığını söyler.
+// hasPeers etkin giden eş (yapılandırılmış ya da yedek, backup.go) olup olmadığını söyler:
+// yalnızca yedekle çalışan düğüm işlemleri sessizce atmasın.
 func (ps *P2PServer) hasPeers() bool {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
-	return len(ps.peers) > 0
+	return len(ps.peers)+len(ps.backups) > 0
 }
 
 // broadcastTxs bir işlem grubunu yayar; bütün işlem yayınları buradan geçer.

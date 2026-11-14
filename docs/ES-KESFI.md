@@ -1,6 +1,6 @@
 # Eş keşfi: tasarım notu
 
-**Durum:** kararlar verildi (kullanıcı, 2026-11-14, `devils-advocate` sonrası; bkz. §7). Önkoşul olan itme taşıması düzeltmesi kapandı (§4.5); adres öğrenme PR'ı sırada (§5). Bu not hiçbir uzlaşma kuralını değiştirmez; konu düğüm politikası ve P2P taşımasıdır. Kapanışlar ve kalanlar [MAINNET-ONCESI.md](MAINNET-ONCESI.md)'ye yazılır.
+**Durum:** kararlar verildi (kullanıcı, 2026-11-14, `devils-advocate` sonrası; bkz. §7). İtme taşıması düzeltmesi (§4.5), adres öğrenme ve yedek kullanım (§5) kapandı. Bu not hiçbir uzlaşma kuralını değiştirmez; konu düğüm politikası ve P2P taşımasıdır. Kapanışlar ve kalanlar [MAINNET-ONCESI.md](MAINNET-ONCESI.md)'ye yazılır.
 
 ## 1. Sorun
 
@@ -72,8 +72,9 @@
   - `-peer` verilmezse gömülü başlangıç listesi (§4.6) yapılandırılmış eş yerine geçer.
   - `-peer` verilirse gömülü liste yedek havuzuna katılır.
 - **Keşfedilmiş eşler** yedektir: korumasızdır, az sayıdadır (en çok 4, /16 ve IPv6 /32 başına bir).
-  - Yalnızca yapılandırılmış eşlerin hepsine ulaşılamıyorken devreye girerler. Ölçüt: belirli bir süre boyunca hiçbir yapılandırılmış eşe hiçbir isteğin başarılı olmaması.
-  - Biri yeniden ulaşılır olunca, gecikmeli bir eşikle (histerezis) çıkarılırlar.
+  - Yalnızca yapılandırılmış eşlerin hepsine ulaşılamıyorken devreye girerler. Ölçüt: 10 dk boyunca hiçbir yapılandırılmış eşe hiçbir isteğin başarılı olmaması (açılıştan itibaren de sayılır).
+  - Biri yeniden ulaşılır olunca, gecikmeli bir eşikle (histerezis: 10 dk kesintisiz, son başarı 2 dk içinde) çıkarılırlar.
+  - Aday önce sınama belirteçli bir `getaddr` ile denenir: kendine bağlanma ve başka ağ elenir, sınama yanıtının adresleri öğrenilmez. Yapılandırılmış eşlerin ulaşılan IP'leri (DNS adının kopyası) aday olamaz.
   - Etkinken senkronizasyon, uç beklemesi, blok ve işlem itmesi ve havuz eşitlemesi onları da kapsar. NAT arkasındaki madencinin bloğu bu durumda da yayılır.
 - **`-discover=false` keşfi tamamen kapatır** (borsa profili): yalnızca yapılandırılmış eşler kullanılır, `getaddr` sorulmaz ve adres verilmez (kullanıcı kararı 2026-11-14). Gelen `getaddr` bağlantıyı yanıtsız kapatmak yerine adressiz, yalnızca ağ kimliğiyle yanıtlanır (uygulama seçimi: soran yeniden deneme ertelemesine girmez; bedeli düğümün sürüm 3'ü ve ağını göstermesi).
 
@@ -82,14 +83,14 @@
 - **Adres yalnızca güvenilen eşlerden öğrenilir:** yapılandırılmış eşler ve gömülü liste. Kendini duyurma, besleyici yoklaması ve `new`/`tried` tablosu yoktur (lansmandan sonra, birincil rol için; §6).
 - **`getaddr` → `addr`** (istek/yanıt, protokol sürümü 3).
   - Yanıtlayan, kendi yapılandırılmış eşlerinden son dönemde başarıyla ulaştıklarını verir: operatörlerin seçtiği adresler, bir atlama.
-  - Yanıt sınırlıdır (en çok 32 adres, 8 KiB) ve genesis özeti taşır. Yanlış ağın yanıtı reddedilir ve kaynak uyarıyla 24 sa ertelenir; bozuk işaret yedek kullanımla (§5 madde 4) gelir.
+  - Yanıt sınırlıdır (en çok 32 adres, 8 KiB) ve genesis özeti taşır. Yanlış ağın yanıtı reddedilir ve kaynak uyarıyla 24 sa ertelenir; bozuk işaret yalnızca yedeğe ve adaya konur (§4.3).
   - Kendiliğinden gelen `addr` itmeleri yok sayılır. Yalnızca yönlendirilebilir adresler alınır (regtest hariç); NAT64 ve 6to4 adreslerinde gömülü IPv4 de denetlenir. Kaynak başına kayıt sayısı sınırlıdır.
 - **Ağ başına varsayılan port** ayrılır (kullanıcı kararı 2026-11-14): mainnet :8001, testnet :18001, regtest :28001. Testnet ve mainnet düğümleri birbirinin tablosuna karışmaz; ağ kimliği (genesis özeti) yanlış yapılandırmayı da yakalar.
 
 ### 4.3 Tablo ve kalıcılık
 
 - **Küçük tablo** (en çok 256 kayıt, kaynak başına 32). Her kayıt adres, kaynak, ilk ve son görülme, son başarı, son başarısızlık ve bozuk işaretini tutar. 7 gün hiçbir kaynağın vermediği kayıt silinir; dolu tabloda en eski görülen düşer.
-- **Bozuk işaret** yalnızca §3.2'deki kanıtlı ihlallerde konur ve 24 sa sürer. Taşıma hataları (EOF, zaman aşımı, meşgul) yalnızca yedek eşi sırayla değiştirir, işaret koymaz.
+- **Bozuk işaret** yalnızca §3.2'deki kanıtlı ihlallerde konur ve 24 sa sürer. Taşıma hataları (EOF, zaman aşımı) yalnızca yedek eşi sırayla değiştirir, işaret koymaz: 5 dk başarılı isteği olmayan yedek değişir, başarısız aday 30 dk sonra yeniden denenir. Tazelik son görülme ile son başarının yenisidir; kullanılan yedek kaynaklar susunca silinmez.
 - **Kalıcılık: `network/` paketinin sahibi olduğu ayrı bir LevelDB dizini** (teknik öneri).
   - Tablo LevelDB batch'iyle atomik yazılır.
   - Zincirin şema silinmesinden etkilenmez, kopyalardan dışlanabilir, `core/`'a API gerektirmez.
@@ -103,7 +104,7 @@
   - Uç bekleme döngüleri eş başına durdurma kanalıyla durur.
   - Gönderici kuyrukları silinir, çalışanları boşaltılır.
 - **Tetik tabanı eş başınadır.** Yapılandırılmış eşlerin tetiği bugünkü gibi kalır. Keşfedilmiş eşte ebeveyni bilinmeyen başlık tetik ya da öncelik vermez.
-- **Uç beklemesi:** art arda N "meşgul" yanıtında yedek eşin bekleme yuvası başka eşe geçer.
+- **Uç beklemesi:** "meşgul" yanıtı yedek eşi değiştirmez, yalnızca uç isteği aralığını uzatır; yedek senkronizasyonla kullanılmaya devam eder. Sunucunun bekleme kotası istemci grubuna bağlıdır: aynı gruptaki üçüncü taraf onu doldurup dürüst yedeği çıkarttırabilirdi.
 - **`hasPeers`** (yayın bütçesi) etkin giden eşlerin tamamını sayar. Aksi hâlde yalnızca yedekle çalışan düğüm işlemleri sessizce atar.
 - **Madencinin kabul denetimi** gövde kanıtıyla kalır.
 
@@ -146,7 +147,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
    - `-discover` bayrağı.
 
    Yalnızca öğrenme: giden kullanım değişmez.
-4. **Yedek kullanım:**
+4. **Yedek kullanım** (kapandı: feat/backup-peers, `network/backup.go`; kalanlar MAINNET-ONCESI.md madde 2):
    - erişilemezlik tespiti ve histerezis;
    - yedek eş seçimi;
    - döngülerle bağlantı ve eş başına durum temizliği (§4.4);
@@ -158,7 +159,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 - **NAT arkasındaki madenci** itme için yapılandırılmış eşlerine, onlar düşünce yedeklere muhtaçtır.
 - **Topoloji gömülü liste düğümlerinde yoğunlaşır.** Liste işletmecileri yarışlarda öne geçer (γ). Bunun ölçüsü yayılım ölçümünde ayrıca bakılmalıdır.
 - **`getaddr` yanıtı yanıtlayanın yapılandırma ilişkilerini açığa çıkarır** (topoloji çıkarımı).
-- **Düğüm kendi adresini öğrenebilir:** yanıtlayanın yapılandırılmış eşi bizsek adresimiz tabloya girer. Yedek kullanım kendine bağlanmayı ayıklamalıdır.
+- **Düğüm kendi adresini öğrenebilir:** yanıtlayanın yapılandırılmış eşi bizsek adresimiz tabloya girer. Yedek seçimi kendine bağlanmayı sınama belirteciyle ayıklar.
 - **Birincil rol lansmandan sonra ayrı karar ister:**
   - kendini duyurma ve besleyici yoklaması;
   - Bitcoin benzeri `new`/`tried` tablosu (IP başına kayıt tavanı, "dolu konumdaki iyi kaydı koru", "çıkarmadan önce sına");
