@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,6 +104,11 @@ func (api *APIServer) Handler() http.Handler {
 	// alarmı). Havuzdaki (onaylanmamış) işlemler burada görünmez.
 	// Kullanım: GET /transaction?id=<64 hex işlem kimliği>
 	mux.HandleFunc("/transaction", getOnly(api.handleTransaction))
+	// Ana zincirdeki bir işlemin bloğun Merkle köküne dahil olduğunu gösteren kanıt (Bitcoin
+	// makalesi §8, basitleştirilmiş ödeme doğrulaması). İstemci kökü bu yanıttan değil, kendisinin
+	// doğruladığı bir başlıktan (/headers, iş ve prev_hash bağı) almalıdır; biçim: core/merkle.go.
+	// Kullanım: GET /merkleproof?id=<64 hex işlem kimliği>
+	mux.HandleFunc("/merkleproof", getOnly(api.handleMerkleProof))
 	// Bir adresin ana zincirdeki işlemleri, yeniden eskiye sayfalı (gelen/giden, tutar, ücret,
 	// karşı taraf, onay). Sonraki sayfa için yanıttaki next before'a verilir. Havuzdakiler görünmez.
 	// Kullanım: GET /history?address=QBTC...[&limit=<1..200, varsayılan 50>][&before=<yükseklik:sıra>]
@@ -433,6 +439,48 @@ func (api *APIServer) handleTransaction(w http.ResponseWriter, r *http.Request) 
 		"index":         pos,
 		"confirmations": confirmations,
 		"transaction":   b.Transactions[pos],
+	})
+}
+
+// handleMerkleProof ana zincirdeki bir işlemin Merkle kanıtını işlem indeksinden döndürür. Kanıt
+// dahil olmayı kanıtlar; index ve tx_count başlıkla bağlanmaz. merkle_root, block_hash, height ve
+// confirmations da bu düğümün iddiasıdır: istemci kökü ve derinliği kendi doğruladığı başlık
+// zincirinden almalıdır.
+func (api *APIServer) handleMerkleProof(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if !core.IsHashHex(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik id parametresi"})
+		return
+	}
+	b, pos, confirmations, err := api.Blockchain.TxByID(id)
+	if errors.Is(err, core.ErrUnknownTx) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "işlem ana zincirde değil"})
+		return
+	}
+	if err != nil {
+		api.log.Error("işlem okunamadı", "txid", id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+	proof, err := core.MerkleProof(b.Transactions, pos)
+	if err != nil {
+		api.log.Error("merkle kanıtı üretilemedi", "txid", id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
+		return
+	}
+	hexProof := make([]string, len(proof))
+	for i := range proof {
+		hexProof[i] = hex.EncodeToString(proof[i][:])
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"txid":          id,
+		"block_hash":    b.Hash,
+		"height":        b.Index,
+		"index":         pos,
+		"tx_count":      len(b.Transactions),
+		"merkle_root":   b.MerkleRoot,
+		"proof":         hexProof,
+		"confirmations": confirmations,
 	})
 }
 
