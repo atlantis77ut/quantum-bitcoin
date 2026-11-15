@@ -121,6 +121,15 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 
 **Coinbase olgunluğuna dikkat edin.** Olgunluk ~4 saatlik blok sayısıdır (`TargetSpacing`'den: 60 sn'de 240, 30 sn'de 480 blok). Olgunluk derinliğinden derin bir reorg, alacaklandırılmış ertelenmiş madenci ödemelerini de geri alır.
 
+**Merkle kanıtıyla (SPV) doğrularken kökü kendiniz doğrulayın.** `GET /merkleproof?id=` bir işlemin bloğun Merkle köküne dahil olduğunu gösteren kanıtı verir (Bitcoin makalesi §8). Bloğun tamamını indirmeden ödemeyi doğrulamak için:
+- Kökü yanıttaki `merkle_root`'tan değil, kendinizin doğruladığı bir başlıktan alın: başlıkları (`/headers`) birden çok bağımsız düğümden çekin, iş kanıtını ve `prev_hash` bağını denetleyin, her başlığın `bits`'inin zorluk kuralına (ASERT, yalnızca ebeveyne bağlı) uyduğunu doğrulayın ve en az bir toplam iş (tam düğümdeki `MinChainWork` gibi) isteyin, en çok işi taşıyan zinciri seçin. Yalnızca özet ≤ hedef denetimi yetmez: sizi kuşatan bir düğüm kendi seçtiği kolay `bits`'li başlıklar verebilir. Kanıtı sunan düğümün kökü kanıtı anlamsız kılar.
+- İşlemi `/transaction`'dan alıp kimliğini kendiniz hesaplayın (`core/transaction.go`, `IDBytes`); düğümün bildirdiği `txid`'ye güvenmeyin.
+- Biçim: yaprak = SHA256(0x00 ‖ txid), düğüm = SHA256(0x01 ‖ sol ‖ sağ); n > 1 yaprakta sol alt ağaç n'den küçük en büyük ikinin kuvveti kadar yapraktır; `proof` kardeşleri yapraktan köke sıralar, her kardeşin yönü `index` ve `tx_count`'tan çıkar (`core.VerifyMerkleProof`). Son eleman kopyalanmaz (CVE-2012-2459 yok).
+- Kanıt yalnızca dahil olmayı kanıtlar: `index` ve `tx_count` başlıkla bağlanmaz, düğümün iddiasıdır (farklı bir sıra ve sayı aynı köke çıkabilir). İşlemin bloktaki sırasına dayanan bir karar vermeyin.
+- Hafif istemci işlemin geçerliliğini denetlemez, ana zincirin geçerli olduğuna güvenir: hashrate'in çoğunu ele geçiren biri geçersiz işlem içeren bir zinciri de kabul ettirebilir. Bu yüzden büyük tutarlarda tam düğüm çalıştırın.
+- Onay derinliğini de kendiniz hesaplayın: kanıttaki `block_hash`'in sizin doğruladığınız en çok işli başlık zincirinde olduğunu ve üzerindeki iş/blok sayısını kendi başlıklarınızdan bulun. Yanıttaki `confirmations`, `height` ve `block_hash` düğümün iddiasıdır; sizi kuşatan (eclipse) bir düğüm kendi özel dalındaki işlemi derin gösterebilir. Onay eşikleri yukarıdaki gibi kurulur.
+- Bir işlemin zincirde olmadığı kanıtlanamaz: 404 yalnızca bu düğümün görüşüdür.
+
 ## Kaynaklar
 
 - I. Eyal, E. G. Sirer, "Majority is not Enough: Bitcoin Mining is Vulnerable", Financial Cryptography 2014.
