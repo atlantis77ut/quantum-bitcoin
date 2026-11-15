@@ -4,10 +4,17 @@ package core
 const (
 	Coin           int64 = 100_000_000     // 1 QBTC = 10^8 taban birim; tüm tutarlar taban birim cinsindendir
 	CoinbaseSender       = "SYSTEM_REWARD" // Ödül işlemlerinin göndereni
-	MaxTxPerBlock        = 1000            // Coinbase hariç blok başına en fazla işlem (DoS sınırı)
+	MaxTxPerBlock        = 250             // Coinbase hariç blok başına en fazla işlem (bayt bütçesi, aşağıda)
 	MaxFutureDrift       = 5 * 60          // Saniye (FTL): blok zamanı yerel saatten en fazla bu kadar ileride olabilir
 	MedianTimeSpan       = 11              // Blok zamanı son N bloğun medyanından büyük olmalı
 )
+
+// MaxTxPerBlock blok başına bayt bütçesidir (kullanıcı kararı 2026-11-15, devils-advocate sonrası):
+// işlem dışı alanlar sabit uzunluklu (açık anahtar, imza, adresler) olduğundan sayı boyutu sınırlar,
+// dolu blok ~1,8 MB JSON'dur (işlem başına ~7,2 KB: base64 açık anahtar ve imza). Uzlaşma ücretsiz
+// işlemi kabul ettiğinden madenci kendi bloğunu bedava doldurabilir; disk büyümesinin tek sınırı
+// budur (bloklar diske JSON yazıldığından dolu bloklarda ~2,6 GB/gün, 60 sn'de). Genesis'ten
+// sonra artırmak hard fork, düşürmek madenci çoğunluğuyla yumuşak çatal ister.
 
 // MaxFutureDrift blok süresinin katı değil, mutlak bir süredir: dürüst düğümlerin saat
 // kayması blok süresiyle küçülmez (kullanıcı kararı, 2026-11-08). LWMA'nın pencere uzunluğu

@@ -159,6 +159,13 @@ func TestPropagationBenchFullBlock(t *testing.T) {
 	if len(f.Block.Transactions) != core.MaxTxPerBlock+1 || f.WireBytes > maxBlockMessageBytes {
 		t.Fatalf("blok %d işlem, %d bayt (sınır %d)", len(f.Block.Transactions), f.WireBytes, maxBlockMessageBytes)
 	}
+	// En kötü durum: işlemin değişken genişlikli alanları yalnızca dört tamsayıdır (tutar, ücret,
+	// son kullanma en çok 19, nonce en çok 20 hane; her biri en az 1). Coinbase, blok başlığı ve
+	// zarfın (port gibi) tamsayıları için 256 bayt pay. Mesaj sınırı en büyük geçerli bloğu
+	// taşımazsa geçerli bloklar yayılmaz ve ağ bölünür.
+	if worst := f.WireBytes + core.MaxTxPerBlock*(18*3+19) + 256; worst > maxBlockMessageBytes {
+		t.Fatalf("en kötü durum %d bayt, sınır %d", worst, maxBlockMessageBytes)
+	}
 	if _, err := f.BenchBlock(filepath.Join(dir, "block")); err != nil {
 		t.Fatal(err)
 	}

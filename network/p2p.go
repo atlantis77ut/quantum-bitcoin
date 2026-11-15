@@ -17,12 +17,12 @@ import (
 
 // P2P sınırları: güvenilmez eşlerden gelen veri için.
 const (
-	maxBlockMessageBytes   = 8 << 20 // Bir blok mesajı en fazla 8 MiB (1000 ML-DSA işlemi ~7,2 MiB JSON)
+	maxBlockMessageBytes   = 3 << 20 // Bir blok mesajı en fazla 3 MiB (250 ML-DSA işlemi ~1,8 MB JSON)
 	maxHeadersMessageBytes = 2 << 20 // 2000 başlık ~0,8 MiB JSON
 	connReadTimeout        = 10 * time.Second
 	dialTimeout            = 5 * time.Second
 	maxConcurrentConns     = 64
-	maxConcurrentDecodes   = 8  // Aynı anda çözümlenen büyük mesaj sayısı (bellek tavanı ~8×8 MiB)
+	maxConcurrentDecodes   = 8  // Aynı anda çözümlenen büyük mesaj sayısı (bellek tavanı ~8×3 MiB)
 	maxConcurrentServes    = 16 // Aynı anda sunulan blok/başlık yanıtı (bant genişliği tavanı)
 
 	syncInterval  = 30 * time.Second // Senkronizasyon hiç bitmez; "senkronuz" kararı zamana bağlı değildir
@@ -37,7 +37,7 @@ const (
 	txRelayQueueLen = 1024
 	txRelayInterval = time.Second
 
-	// transferTimeout bir istek yanıtının (en çok ~7 MiB blok) toplam aktarım süresidir:
+	// transferTimeout bir istek yanıtının (en çok ~2 MiB blok) toplam aktarım süresidir:
 	// ~1 Mbps bağlantıda dolu bir blok aktarılabilmeli. Sunum yuvası en fazla bu kadar tutulur.
 	transferTimeout = 60 * time.Second
 
