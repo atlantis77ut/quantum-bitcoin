@@ -275,6 +275,14 @@ func TestRejectsReplay(t *testing.T) {
 	}
 }
 
+// Blok işlem sınırı dondurulmuş bir uzlaşma değeridir; yanlışlıkla değişmesin.
+func TestMaxTxPerBlockFrozen(t *testing.T) {
+	if MaxTxPerBlock != 250 {
+		t.Fatalf("MaxTxPerBlock = %d, dondurulan 250", MaxTxPerBlock)
+	}
+}
+
+// Coinbase + MaxTxPerBlock+1 işlem: sınırın bir fazlası reddedilir.
 func TestRejectsTooManyTransactions(t *testing.T) {
 	bc := newTestChain(t)
 	m := newKey(t)

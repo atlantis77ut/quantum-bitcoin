@@ -35,7 +35,9 @@ const (
 	// 8: ASERT zorluk ayarlaması; indekste çapa zamanı.
 	// 9: ana zincir işlem indeksi (tx_<kimlik> → blok özeti ve sıra; txindex.go).
 	// 10: ana zincir adres geçmişi indeksi (atx_<adres>_<yükseklik>_<sıra>; addrindex.go).
-	schemaVersion = "10"
+	// 11: MaxTxPerBlock 1000'den 250'ye indi; saklı bloklar açılışta yeniden denetlenmediğinden
+	//     daha çok işlemli eski bloklar içeren dizin sessizce eski dalda kalırdı.
+	schemaVersion = "11"
 )
 
 var (
@@ -302,7 +304,7 @@ func (bc *Blockchain) acceptBlock(b *Block) (busy <-chan struct{}, err error) {
 	}
 	// Ebeveyne göre ucuz kontroller (bilinen blok, bilinmeyen/geçersiz ebeveyn, yükseklik,
 	// medyan zaman, yan zincir sınırları) imza doğrulamasından önce okuma kilidiyle yapılır:
-	// zincirdeki bir blok ya da yanlış ebeveynli blok yeniden gönderilerek ~1000 ML-DSA
+	// zincirdeki bir blok ya da yanlış ebeveynli blok yeniden gönderilerek ~250 ML-DSA
 	// doğrulaması yaptırılamasın. Ebeveyni bilinmeyen blok önbelleğe alınmaz; eksik atalar
 	// başlık öncelikli senkronizasyonla eşlerden çekilir.
 	bc.mu.RLock()
@@ -457,8 +459,8 @@ func (bc *Blockchain) checkBody(b *Block) error {
 		return ErrBadCoinbase
 	}
 	// İki geçiş: önce bütün ucuz kontroller (biçim, son kullanma), sonra bütün ML-DSA
-	// doğrulamaları. Tek geçişte 999 geçerli imzanın ardına konan tek bir süresi dolmuş
-	// işlem, blok reddedilmeden önce 999 imza doğrulaması yaptırırdı.
+	// doğrulamaları. Tek geçişte 249 geçerli imzanın ardına konan tek bir süresi dolmuş
+	// işlem, blok reddedilmeden önce 249 imza doğrulaması yaptırırdı.
 	for i := 1; i < len(b.Transactions); i++ {
 		tx := &b.Transactions[i]
 		if err := tx.checkFormat(); err != nil {

@@ -19,9 +19,9 @@ S bayt blok, R bit/sn yukarı hat, L tek yön gecikme ve V çözümleme + doğru
 
 (TCP el sıkışması 2·L, ilk baytın varışı L. İtme her blokta yeni bağlantı açar; proxy el sıkışmayı da benzetir.) Depola-ilet yüzünden h atlamalık hatta T ≈ h · t_atlama olur. Bir düğüm k eşe iterse, aynı anda en çok 2 kopya gider ve hat paylaşılır. Bu yüzden k'nci eş yaklaşık ⌈k/2⌉ · 2 · 8·S / R sonra bloğu alır.
 
-Örnek: dolu blok (1000 işlem) ~7 MiB, yani ~60 Mbit (kesin değer raporun `wire_bytes` alanıdır). 20 Mbit/sn hatta 60 / 20 = 3 sn, artı 0,15 sn gecikme, artı V. 3 atlamada ~10 sn.
+Örnek: dolu blok (250 işlem) ~1,8 MB, yani ~14,5 Mbit (kesin değer raporun `wire_bytes` alanıdır). 20 Mbit/sn hatta 14,5 / 20 ≈ 0,7 sn, artı 0,15 sn gecikme, artı V. 3 atlamada ~3 sn artı 3·V.
 
-Kaba eskime (stale) oranı p ≈ 1 − e^(−T / blok süresi). T = 10 sn için 60 sn'de ~%15, 30 sn'de ~%28 olur. T ≤ 1–2 sn şartı dolu blokta ancak çok yüksek hatlarda ya da boş/az dolu bloklarda sağlanır. Lansmanda bloklar boştur, sorun orada görünmez.
+Kaba eskime (stale) oranı p ≈ 1 − e^(−T / blok süresi). T = 3 sn için 60 sn'de ~%5, 30 sn'de ~%10 olur. T ≤ 1–2 sn şartı dolu blokta ancak çok yüksek hatlarda ya da boş/az dolu bloklarda sağlanır. Lansmanda bloklar boştur, sorun orada görünmez.
 
 ## Çalıştırma
 
@@ -33,7 +33,7 @@ go build -o qbtc . && ./qbtc -bench-propagation -bench-runs 5 -bench-out yayilim
 
 | Bayrak | Varsayılan | Anlamı |
 |---|---|---|
-| `-bench-prop-txs` | 1000 (`MaxTxPerBlock`) | blok başına işlem (coinbase hariç) |
+| `-bench-prop-txs` | 250 (`MaxTxPerBlock`) | blok başına işlem (coinbase hariç) |
 | `-bench-prop-hops` | 3 | kazıcı dışındaki düğüm sayısı |
 | `-bench-prop-topology` | `line` | `line`, `star-leaf`, `star-hub` |
 | `-bench-prop-mbit` | 20 | her düğümün yukarı hattı, Mbit/sn (en çok 10.000) |

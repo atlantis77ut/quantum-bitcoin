@@ -33,11 +33,11 @@
 - **İtilen mesaja iki tarafta da tek bir 10 sn süre verilir.**
   - Gönderende `sendTo` mesajın tamamını tek bir yazma süresiyle yazar.
   - Alıcıda `handleConnection` tek bir okuma süresiyle çözümler; çözümleme yuvası için de ayrıca 10 sn bekletebilir.
-- **Sonuç: 7,2 MiB'lık dolu blok, eş başına ~6 Mbit/sn'den yavaş bağlantıdan itilemez.**
+- **Sonuç: 7,2 MiB'lık dolu blok (o zamanki 1000 işlem sınırıyla; şimdi 250 işlem, ~1,8 MB), eş başına ~6 Mbit/sn'den yavaş bağlantıdan itilemez.**
   - Kopyalar paralel gider. Ev bağlantısından birkaç eşe itilen dolu blok hiçbirine ulaşmayabilir.
   - Başarısız blok itmesi yeniden kuyruğa girmez.
 - **Saldırgan dürüst blokları ucuza doldurabilir.**
-  - Bedeli: en düşük ücretle 1.000 işlem, blok başına ~0,01 QBTC; gönderen başına havuz sınırı yüzünden ~40 fonlu hesap gerekir.
+  - Bedeli: en düşük ücretle 250 işlem, blok başına ~0,0025 QBTC; gönderen başına havuz sınırı yüzünden ~10 fonlu hesap gerekir (madenci kendi bloğunu bedava doldurur).
   - Sonuç: ev madencilerinin blokları seçici olarak kaybolur.
 - **Korumasız alım payı küçüktür.** Açık çözümleme payı 5'tir, grup başına 1. 5 grup yavaş gönderimle korumasız itmeleri cezasız düşürebilir.
 - Lansmanda bloklar boş olduğu için sorun testte görünmez. 60/30 sn yayılım ölçümü dolu blokla ve bu düzeltmeden sonra yapılmalıdır.
@@ -55,7 +55,7 @@
 - **30 dk'lık bayat uç kuralı eclipse'i yakalamaz.** Azınlık dalını besleyen saldırgan ucu ilerletmeye devam eder; ASERT o dalı saatler içinde kolaylaştırır.
 - **Çapalar var olan bir eclipse'i yeniden başlatmaya taşır.** Zincir dizininde dururlarsa kopyalanan her dizinle çoğalırlar.
 - **"Sende var mı" sorusu oyunlanabilir.**
-  - Hep "yok" diyen eş her blokta 7,2 MiB çeker.
+  - Hep "yok" diyen eş her blokta dolu bloğu (o zaman 7,2 MiB, şimdi ~1,8 MB) çeker.
   - Hep "var" diyen eş, madencinin "blok hiçbir eşte yok" uyarısını susturur.
   - Madencinin kabul denetiminde gövde kanıtı (`PeerHasBlock`) kalmalıdır.
 

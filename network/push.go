@@ -11,7 +11,7 @@ import (
 
 // İtme taşıması (docs/ES-KESFI.md §4.5; kullanıcı kararı 2026-11-14; düğüm politikası, uzlaşma
 // kuralı değil). Tek mesajlı bağlantıda itilen mesaja (blok, işlem grubu) eskiden gönderende ve
-// alıcıda tek bir 10 sn süre verilirdi: 7,2 MiB'lık dolu blok eş başına ~6 Mbit/sn'den yavaş
+// alıcıda tek bir 10 sn süre verilirdi: o zamanki 7,2 MiB'lık dolu blok eş başına ~6 Mbit/sn'den yavaş
 // bağlantıdan hiç gidemez, başarısız blok itmesi de yeniden denenmezdi.
 //
 // Alıcı: okuma süresi her okumadan önce tazelenir ve üç sınırın en erkenidir: şimdi + recvGrace
@@ -30,8 +30,8 @@ import (
 // earlyBytes yazılmışken koptu) retryDelay sonra bir kez yeniden denenir; eşin son gönderimi
 // başarılıysa ve kuyrukta daha yeni blok yoksa (beklemeden önce ve sonra bakılır). Alıcı,
 // yuvası doluyken bağlantıyı okumadan kapatınca yazılan yalnızca iki uçtaki çekirdek
-// tamponlarıdır; geniş alan bağlantısında bunlar ~1 MB'ı geçmez, eşik (2 MiB) dolu bloğun üçte
-// birinin altındadır. Ayrım sezgiseldir: tamponu büyük bağlantıda (ör. aynı makinede, okumayan
+// tamponlarıdır; geniş alan bağlantısında bunlar ~1 MB'ı geçmez. Eşik (2 MiB) dolu bloktan
+// (~1,8 MB, MaxTxPerBlock 250) büyüktür: kopan her itme erken sayılır ve bir kez daha denenir. Ayrım sezgiseldir: tamponu büyük bağlantıda (ör. aynı makinede, okumayan
 // alıcıda bile ~2,5 MB) dolu alıcıya giden itme geç sayılabilir, asgari hızın çok altındaki
 // bağlantıda kesilen itme erken sayılıp bir kez daha denenebilir. İki uçtaki tamponlara sığan
 // itme (lansmandaki küçük bloklar) gönderende hiç başarısız görünmez: alıcı okumadan kapatırsa

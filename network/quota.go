@@ -131,7 +131,7 @@ func (w *deadlineWriter) Write(p []byte) (int, error) {
 // önbelleğini aşardı). Hız kovası dış grubundur. Tor/ters vekil arkasındaki eşler tek adres
 // sayılır, kovayı ve cezayı paylaşır.
 const (
-	txRatePerSec  = 64 // dürüst ağ en çok ~17 işlem/sn onaylar (1000 işlem / 60 sn)
+	txRatePerSec  = 64 // dürüst ağ en çok ~4 işlem/sn onaylar (250 işlem / 60 sn)
 	txRateBurst   = 256
 	badTxPenalty  = 10 * time.Minute
 	maxTxGateKeys = 10_000
