@@ -608,7 +608,7 @@ func (ps *P2PServer) handleTxs(remote string, id peerID, txs []core.Transaction)
 func invalidTx(err error) bool {
 	for _, e := range []error{core.ErrBadSignature, core.ErrBadSender, core.ErrBadReceiver,
 		core.ErrSelfTransfer, core.ErrNonPositiveAmount, core.ErrNegativeFee, core.ErrBadExpiry,
-		core.ErrUnexpectedCoinbase} {
+		core.ErrUnexpectedCoinbase, core.ErrUnexpectedCommit} {
 		if errors.Is(err, e) {
 			return true
 		}

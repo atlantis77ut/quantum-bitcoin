@@ -30,7 +30,7 @@ func openTestChain(t *testing.T, dir string) *Blockchain {
 func blockOn(t *testing.T, bc *Blockchain, parent *Block, miner string, txs ...Transaction) *Block {
 	t.Helper()
 	h := parent.Index + 1
-	cb := Transaction{Sender: CoinbaseSender, Receiver: miner, Amount: BlockSubsidy(h, bc.params), IsCoinbase: true}
+	cb := Transaction{Sender: CoinbaseSender, Receiver: miner, Amount: BlockSubsidy(h, bc.params), IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)}
 	for _, tx := range txs {
 		cb.Amount += tx.Fee
 	}

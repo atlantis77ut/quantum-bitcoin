@@ -191,12 +191,12 @@ func TestChainFollowsSchedule(t *testing.T) {
 
 	// Yükseklik 31 üçüncü dönemde (ödül InitialSubsidy/4): ilk dönem ödülünü isteyen blok.
 	other := newKey(t)
-	greedy := Transaction{Sender: CoinbaseSender, Receiver: other.Address, Amount: p.InitialSubsidy, IsCoinbase: true}
+	greedy := Transaction{Sender: CoinbaseSender, Receiver: other.Address, Amount: p.InitialSubsidy, IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)}
 	b := craftBlock(t, bc, []Transaction{greedy})
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadCoinbase) {
 		t.Fatalf("eski ödül: %v", err)
 	}
-	honest := Transaction{Sender: CoinbaseSender, Receiver: other.Address, Amount: BlockSubsidy(31, &p), IsCoinbase: true}
+	honest := Transaction{Sender: CoinbaseSender, Receiver: other.Address, Amount: BlockSubsidy(31, &p), IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)}
 	if err := bc.AcceptBlock(craftBlock(t, bc, []Transaction{honest})); err != nil {
 		t.Fatalf("doğru ödül reddedildi: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestRejectsNonPositiveHeight(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, idx := range []int64{0, -1, -1 << 40, -1 << 63} {
-		cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, IsCoinbase: true, Nonce: uint64(idx)}
+		cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize), Nonce: uint64(idx)}
 		b := &Block{Index: idx, Timestamp: bc.now(), Transactions: []Transaction{cb}, PrevHash: tip.Hash}
 		mineAt(t, bc, b)
 		if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadIndex) {

@@ -114,7 +114,7 @@ func TestEveryFieldIsCommitted(t *testing.T) {
 	if n := reflect.TypeOf(Block{}).NumField(); n != 9 {
 		t.Fatalf("Block alan sayısı %d: yeni alan başlığa bağlandı mı? Testi güncelle", n)
 	}
-	if n := reflect.TypeOf(Transaction{}).NumField(); n != 9 {
+	if n := reflect.TypeOf(Transaction{}).NumField(); n != 10 {
 		t.Fatalf("Transaction alan sayısı %d: yeni alan imzaya/kimliğe bağlandı mı? Testi güncelle", n)
 	}
 
@@ -122,7 +122,7 @@ func TestEveryFieldIsCommitted(t *testing.T) {
 	base := &Block{Version: BlockVersion, Index: 7, Timestamp: 1000, Bits: 0x1f00ffff, Nonce: 3,
 		PrevHash: strings.Repeat("11", 32),
 		Transactions: []Transaction{
-			{Sender: CoinbaseSender, Receiver: bob.Address, Amount: testReward, Nonce: 7, IsCoinbase: true},
+			{Sender: CoinbaseSender, Receiver: bob.Address, Amount: testReward, Nonce: 7, IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)},
 			signedTxFee(t, alice, bob.Address, Coin, 5, 1),
 		}}
 	base.MerkleRoot = base.ComputeMerkleRoot()
@@ -156,6 +156,7 @@ func TestEveryFieldIsCommitted(t *testing.T) {
 		"PublicKey":    func(tx *Transaction) { tx.PublicKey = flipFirst(tx.PublicKey) },
 		"Signature":    func(tx *Transaction) { tx.Signature = flipFirst(tx.Signature) },
 		"IsCoinbase":   func(tx *Transaction) { tx.IsCoinbase = !tx.IsCoinbase },
+		"Commitment":   func(tx *Transaction) { tx.Commitment = []byte{1} },
 	}
 	for name, mut := range txMut {
 		b := *base

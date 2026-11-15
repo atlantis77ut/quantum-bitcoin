@@ -37,7 +37,9 @@ const (
 	// 10: ana zincir adres geçmişi indeksi (atx_<adres>_<yükseklik>_<sıra>; addrindex.go).
 	// 11: MaxTxPerBlock 1000'den 250'ye indi; saklı bloklar açılışta yeniden denetlenmediğinden
 	//     daha çok işlemli eski bloklar içeren dizin sessizce eski dalda kalırdı.
-	schemaVersion = "11"
+	// 12: işlem kimliği v3 (gövde ve tanık ayrı özetlenir), imza alanı v5, coinbase taahhüt
+	//     yuvası, yeniden kazılmış regtest/testnet genesis'i.
+	schemaVersion = "12"
 )
 
 var (
@@ -455,7 +457,8 @@ func (bc *Blockchain) checkBody(b *Block) error {
 	cb := &b.Transactions[0]
 	if !cb.IsCoinbase || cb.Sender != CoinbaseSender || cb.Fee != 0 ||
 		!crypto.IsValidAddress(cb.Receiver) || cb.Nonce != uint64(b.Index) ||
-		len(cb.PublicKey) != 0 || len(cb.Signature) != 0 || cb.ExpiryHeight != 0 {
+		len(cb.PublicKey) != 0 || len(cb.Signature) != 0 || cb.ExpiryHeight != 0 ||
+		len(cb.Commitment) != CoinbaseCommitmentSize { // içerik denetlenmez (transaction.go)
 		return ErrBadCoinbase
 	}
 	// İki geçiş: önce bütün ucuz kontroller (biçim, son kullanma), sonra bütün ML-DSA

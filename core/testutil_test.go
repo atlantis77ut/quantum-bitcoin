@@ -143,7 +143,7 @@ func requireFirstEpoch(t *testing.T, bc *Blockchain) {
 }
 
 func coinbaseTo(addr string) Transaction {
-	return Transaction{Sender: CoinbaseSender, Receiver: addr, Amount: testReward, IsCoinbase: true}
+	return Transaction{Sender: CoinbaseSender, Receiver: addr, Amount: testReward, IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)}
 }
 
 // coinbaseWithFees ödül + verilen işlemlerin ücretleri kadar coinbase üretir.

@@ -52,6 +52,7 @@ func NewGenesisBlock(p *Params) (*Block, error) {
 		Amount:     0,
 		Nonce:      0, // yükseklik
 		IsCoinbase: true,
+		Commitment: make([]byte, CoinbaseCommitmentSize),
 	}
 	block := &Block{
 		Version:      BlockVersion,

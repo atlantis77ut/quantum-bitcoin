@@ -88,6 +88,7 @@ func (bc *Blockchain) NewTemplate(transactions []Transaction, minerAddress strin
 		Amount:     subsidy + fees,
 		Nonce:      uint64(height), // yükseklik: her coinbase'in kimliği benzersiz olur
 		IsCoinbase: true,
+		Commitment: make([]byte, CoinbaseCommitmentSize),
 	}
 	mtp, err := bc.mtpLocked(tip.Hash, nil)
 	if err != nil {
