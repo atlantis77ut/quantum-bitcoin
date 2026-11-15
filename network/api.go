@@ -550,7 +550,8 @@ func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
 // handleConfirmations blok sayısının yanında iş ve zamana dayalı onay bilgisini döndürür
 // (bkz. core/confirm.go): entegrasyonlar confirmations, elapsed_seconds ve work eşiklerinin
 // üçünü birlikte kullanmalı; deep_reorg_alarm ya da below_min_chain_work true ise hiçbir
-// onaya güvenilmez.
+// onaya güvenilmez. attacker_success, payı 0,10–0,40 olan saldırganın attacker_success_depth
+// blok geriden yetişme olasılığıdır (Nakamoto modeli, core/attack.go).
 func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("hash")
 	if !core.IsHashHex(hash) {
@@ -563,7 +564,7 @@ func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"hash":                 hash,
 		"confirmations":        c.Blocks,
 		"elapsed_seconds":      c.ElapsedSeconds,
@@ -571,8 +572,26 @@ func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request
 		"work_in_start_blocks": api.Blockchain.WorkInBlocks(c.Work),
 		"deep_reorg_alarm":     c.DeepReorg,
 		"below_min_chain_work": c.BelowMinWork,
-	})
+	}
+	// Saldırganın yetişme olasılığı (core/attack.go): blok ana zincirde değilse ya da alarm
+	// varsa verilmez (onaylara güvenilmez).
+	if c.Blocks > 0 && !c.DeepReorg && !c.BelowMinWork {
+		z := core.AttackDepth(c, api.Blockchain.TargetSpacing())
+		probs := make(map[string]float64, len(attackShares))
+		for _, q := range attackShares {
+			probs[q.key] = core.AttackerSuccess(q.share, z)
+		}
+		resp["attacker_success_depth"] = z
+		resp["attacker_success"] = probs
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
+
+// attackShares /confirmations'ın yetişme olasılığını verdiği saldırgan hashrate paylarıdır.
+var attackShares = []struct {
+	key   string
+	share float64
+}{{"0.10", 0.10}, {"0.20", 0.20}, {"0.30", 0.30}, {"0.40", 0.40}}
 
 // handleSubmitTx imzalı bir işlemi havuza alır. Düğüm senkronize değilken (en az zincir
 // işinin altında) durum eski olduğundan işlem kabul edilmez.
