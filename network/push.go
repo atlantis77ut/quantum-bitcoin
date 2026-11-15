@@ -189,10 +189,18 @@ type relayItem struct {
 }
 
 // pushOnce mesajı eşe bir kez gönderir; blok gövdesi blok itme yuvasıyla gider.
-func (ps *P2PServer) pushOnce(peer string, data []byte, block bool) error {
+func (ps *P2PServer) pushOnce(peer string, data []byte, id pushID, block bool) error {
 	if block {
+		// Uyandırma kapısı (wakegate.go) bekleyen itmeyi iptal etmiş olabilir: yuva beklenmez;
+		// yuva beklenirken iptal edildiyse yazılmaz. begin, iptal ile kilit altında yarışır.
+		if !ps.wake.alive(peer, id) {
+			return errPushCancelled
+		}
 		ps.pushSlots.acquire(peer, &ps.pushLim)
 		defer ps.pushSlots.release(peer)
+		if !ps.wake.begin(peer, id, time.Now()) {
+			return errPushCancelled
+		}
 	}
 	return ps.send(peer, data)
 }

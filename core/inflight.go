@@ -15,6 +15,20 @@ type inflightSet struct {
 	m  map[string]chan struct{}
 }
 
+// AwaitValidation özeti hash olan bloğun tam doğrulaması sürüyorsa bitmesini bekler ve true
+// döner; sürmüyorsa hemen false. Salt okumadır: ağ katmanı aynı gövdeyi ikinci kez indirmeden
+// önce kullanır.
+func (bc *Blockchain) AwaitValidation(hash string) bool {
+	bc.inflight.mu.Lock()
+	c := bc.inflight.m[hash]
+	bc.inflight.mu.Unlock()
+	if c == nil {
+		return false
+	}
+	<-c
+	return true
+}
+
 // retryNow kapalı bir kanaldır: AcceptBlock'un beklemeden baştan denemesini sağlar.
 var retryNow = func() <-chan struct{} {
 	c := make(chan struct{})

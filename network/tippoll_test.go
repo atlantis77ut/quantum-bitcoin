@@ -26,9 +26,15 @@ func tipTestServer(t *testing.T, bc *core.Blockchain) *P2PServer {
 // waitTipReply serveWaitTip'i bir boru üzerinde çalıştırır; yanıt gelirse kanala yazılır.
 func waitTipReply(t *testing.T, ps *P2PServer, id peerID, known string) <-chan message {
 	t.Helper()
+	return waitTipReplyFrom(t, ps, id, known, "")
+}
+
+// waitTipReplyFrom waitTipReply gibidir; source isteyenin dinleme adresidir (pushSource).
+func waitTipReplyFrom(t *testing.T, ps *P2PServer, id peerID, known, source string) <-chan message {
+	t.Helper()
 	a, b := net.Pipe()
 	t.Cleanup(func() { a.Close(); b.Close() })
-	go ps.serveWaitTip(b, "r", id, known)
+	go ps.serveWaitTip(b, "r", id, known, source)
 	out := make(chan message, 1)
 	go func() {
 		var m message

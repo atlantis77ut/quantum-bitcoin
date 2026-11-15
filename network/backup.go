@@ -237,8 +237,12 @@ func (ps *P2PServer) candidateBad(addr string, until time.Time) {
 func (ps *P2PServer) discardSender(peer string) {
 	ps.sendersMu.Lock()
 	defer ps.sendersMu.Unlock()
-	if s := ps.senders[peer]; s != nil && s.discard() {
-		delete(ps.senders, peer)
+	if s := ps.senders[peer]; s != nil {
+		idle := s.discard()
+		ps.wake.forget(peer) // boşaltmadan sonra: kuyruktan silinen itme kapıda beklemez
+		if idle {
+			delete(ps.senders, peer)
+		}
 	}
 }
 
@@ -249,7 +253,12 @@ func (ps *P2PServer) pruneSenders(active []string) {
 	ps.sendersMu.Lock()
 	defer ps.sendersMu.Unlock()
 	for p, s := range ps.senders {
-		if !live[p] && s.discard() {
+		if live[p] {
+			continue
+		}
+		idle := s.discard()
+		ps.wake.forget(p)
+		if idle {
 			delete(ps.senders, p)
 		}
 	}

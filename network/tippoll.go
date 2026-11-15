@@ -95,7 +95,7 @@ func (ps *P2PServer) setQuit(q <-chan struct{}) {
 // serveWaitTip ucumuz known'dan farklı olunca ya da tipWait dolunca uç başlığıyla yanıtlar.
 // Bekleme yuvası ya da grup kotası doluysa, ya da düğüm en az zincir işinin altındaysa hemen
 // boş msgTip döner. Sunucu kapanırsa yanıtsız döner.
-func (ps *P2PServer) serveWaitTip(conn net.Conn, remote string, id peerID, known string) {
+func (ps *P2PServer) serveWaitTip(conn net.Conn, remote string, id peerID, known, source string) {
 	if known != "" && !core.IsHashHex(known) {
 		ps.log.Debug("geçersiz özet", "remote", remote)
 		return
@@ -117,18 +117,34 @@ func (ps *P2PServer) serveWaitTip(conn net.Conn, remote string, id peerID, known
 	defer hold.Stop()
 	recheck := time.NewTicker(tipWaitRecheck)
 	defer recheck.Stop()
+	// İsteyen, bloğu itmeyle alacak eşimizse yeni uç için hemen uyandırılmaz (wakegate.go).
+	peer := ps.pushTarget(source)
 	expired := false
 	for {
 		// Bildirim kanalı uç okunmadan önce alınır: arada değişen uç kaçmaz.
 		changed, quit := ps.tipSignal()
 		h := ps.Blockchain.TipHeader()
-		if h.Hash != known || expired {
+		var gate <-chan time.Time
+		if h.Hash != known {
+			if ps.wakeReady(peer, h.Hash, time.Now()) {
+				ps.reply(conn, remote, message{Type: msgTip, Headers: []core.BlockHeader{h}})
+				return
+			}
+			gate = time.After(wakeGatePoll)
+		}
+		if expired {
+			// Kapı hâlâ bekletiyor (itme sürüyor): istekteki uçla yanıtlanır, istemci "değişmedi"
+			// sayıp yeniden açar. İstekteki uç bilinmiyorsa güncel uçla.
+			if kh, ok := ps.Blockchain.HeaderByHash(known); ok && h.Hash != known {
+				h = kh
+			}
 			ps.reply(conn, remote, message{Type: msgTip, Headers: []core.BlockHeader{h}})
 			return
 		}
 		select {
 		case <-changed:
 		case <-recheck.C:
+		case <-gate:
 		case <-hold.C:
 			expired = true
 		case <-quit:
@@ -280,6 +296,13 @@ func (ps *P2PServer) adoptTip(peer string, h core.BlockHeader) tipOutcome {
 		// Daha çok işli başka dal (başlık gerçek PoW taşır): yeniden düzenleme senkronizasyonla.
 		ps.triggerTipSync(time.Now())
 		return tipNeutral
+	}
+	// Aynı blok bu arada başka bir yoldan (ör. itmeyle) gelip doğrulanıyorsa gövde ikinci kez
+	// indirilmez: doğrulama bitince başlık bilinir.
+	if bc.AwaitValidation(h.Hash) {
+		if _, ok := bc.HeaderByHash(h.Hash); ok {
+			return tipNeutral
+		}
 	}
 	resp, err := ps.request(peer, message{Type: msgGetBlock, Hash: h.Hash}, maxBlockMessageBytes)
 	if err != nil {

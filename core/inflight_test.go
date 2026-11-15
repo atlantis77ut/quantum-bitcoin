@@ -118,3 +118,23 @@ func TestAcceptBlockWaitsForInflight(t *testing.T) {
 		t.Fatal("kayıt bırakılmadı")
 	}
 }
+
+// AwaitValidation doğrulaması süren blokta bitişi bekler, sürmeyende hemen döner.
+func TestAwaitValidation(t *testing.T) {
+	bc := newTestChain(t)
+	if bc.AwaitValidation("yok") {
+		t.Fatal("doğrulanmayan blok beklendi")
+	}
+	release, _ := bc.inflight.claim("h")
+	done := make(chan bool, 1)
+	go func() { done <- bc.AwaitValidation("h") }()
+	select {
+	case <-done:
+		t.Fatal("doğrulaması süren blok beklenmedi")
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	if !<-done {
+		t.Fatal("bekleme sonucu yanlış")
+	}
+}
