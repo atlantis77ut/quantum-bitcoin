@@ -105,8 +105,9 @@ func (api *APIServer) Handler() http.Handler {
 	// Kullanım: GET /transaction?id=<64 hex işlem kimliği>
 	mux.HandleFunc("/transaction", getOnly(api.handleTransaction))
 	// Ana zincirdeki bir işlemin bloğun Merkle köküne dahil olduğunu gösteren kanıt (Bitcoin
-	// makalesi §8, basitleştirilmiş ödeme doğrulaması). İstemci kökü bu yanıttan değil, kendisinin
-	// doğruladığı bir başlıktan (/headers, iş ve prev_hash bağı) almalıdır; biçim: core/merkle.go.
+	// makalesi §8, basitleştirilmiş ödeme doğrulaması). İstemci kökü ve onay derinliğini bu yanıttan
+	// değil, kendisinin doğruladığı başlık zincirinden (/headers, iş, zorluk ve prev_hash bağı)
+	// almalıdır; biçim: core/merkle.go.
 	// Kullanım: GET /merkleproof?id=<64 hex işlem kimliği>
 	mux.HandleFunc("/merkleproof", getOnly(api.handleMerkleProof))
 	// Bir adresin ana zincirdeki işlemleri, yeniden eskiye sayfalı (gelen/giden, tutar, ücret,
