@@ -167,16 +167,23 @@ func TestConfirmationsEndpoint(t *testing.T) {
 			continue
 		}
 		var body struct {
-			Confirmations int64   `json:"confirmations"`
-			Alarm         bool    `json:"deep_reorg_alarm"`
-			Elapsed       int64   `json:"elapsed_seconds"`
-			Work          string  `json:"work"`
-			WorkBlocks    float64 `json:"work_in_start_blocks"`
-			BelowMinWork  bool    `json:"below_min_chain_work"`
+			Confirmations int64              `json:"confirmations"`
+			Alarm         bool               `json:"deep_reorg_alarm"`
+			Elapsed       int64              `json:"elapsed_seconds"`
+			Work          string             `json:"work"`
+			WorkBlocks    float64            `json:"work_in_start_blocks"`
+			BelowMinWork  bool               `json:"below_min_chain_work"`
+			Depth         *int64             `json:"attacker_success_depth"`
+			Attack        map[string]float64 `json:"attacker_success"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || body.Confirmations != 1 || body.Alarm ||
 			body.Elapsed != 0 || body.Work == "" || body.Work == "0" || body.WorkBlocks != 1 || body.BelowMinWork {
 			t.Fatalf("yanıt %+v, hata %v", body, err)
+		}
+		// Uçtaki blok: derinlik 0, her pay için olasılık 1.
+		if body.Depth == nil || *body.Depth != 0 || len(body.Attack) != 4 || body.Attack["0.10"] != 1 ||
+			body.Attack["0.40"] != 1 {
+			t.Fatalf("yetişme olasılığı: derinlik %v, %v", body.Depth, body.Attack)
 		}
 	}
 }

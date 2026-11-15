@@ -88,7 +88,23 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 **`/confirmations` göstergelerini birlikte kullanın.** Şu alanlar birlikte değerlendirilmelidir:
 - `confirmations`: blok sayısı.
 - `work` / `work_in_start_blocks`: birikmiş iş.
-- `elapsed_seconds`: medyan zamanla geçen süre. Son 11 bloğun çoğunu kazan biri bu değeri en çok 300 sn şişirebilir.
+- `elapsed_seconds`: medyan zamanla geçen süre. Ucun son 11 bloğunun çoğunu kazan biri bu değeri 300 sn'ye kadar şişirebilir; işlem bloğunun çevresindeki blokların çoğunu da kazandıysa onun medyan zamanını geride tutarak daha fazla.
+- `attacker_success`: hashrate payı 0,10, 0,20, 0,30 ve 0,40 olan saldırganın `attacker_success_depth` blok geriden yetişme olasılığı (aşağıda). Blok ana zincirde değilse ya da alarm varsa verilmez.
+
+**Yetişme olasılığını modelin sınırlarıyla okuyun.** `attacker_success`, Bitcoin makalesinin (Nakamoto 2008, §11) hesabıdır: payı q olan saldırgan işlem bloğunun üzerine z blok eklendiğinde gizli bir dalla başlar, ilerlemesi Poisson dağılır ve geride kaldığı her bloğu (q/p) olasılıkla kapatır. Makalenin tablosundan, P < %0,1 için gereken z:
+
+| q | 0,10 | 0,15 | 0,20 | 0,25 | 0,30 | 0,35 | 0,40 | 0,45 |
+|---|---|---|---|---|---|---|---|---|
+| z | 5 | 8 | 11 | 15 | 24 | 41 | 89 | 340 |
+
+- **z nasıl seçilir:** işlem bloğunun üzerindeki blok sayısı (`confirmations` − 1), iki sınırın küçüğüyle kısılır. Model dürüst blokların işlem bloğuyla aynı zorlukta ve beklenen sürede geldiğini varsayar; duraklamadan sonra taban zorluğunda gelen bir blok seli z'yi şişirmemelidir.
+  - İş: üstteki işin işlem bloğunun kendi işi cinsinden blok sayısı. Duraklamadan önce kazılmış bir işlemin üzerindeki sel az iş taşır ve sayılmaz.
+  - Süre: (`elapsed_seconds` − 300) / `TargetSpacing`. 300 sn, ucun medyan zamanının ileri itilebileceği paydır; işlem bloğunun çevresindeki blokların çoğunu kazan biri süreyi bundan fazla da şişirebilir.
+  - Bu yüzden ilk ~6 blokta (60 sn'de) derinlik 0, olasılık 1 görünür; hashrate işlemden sonra düştüyse derinlik blok sayısından küçük çıkar. Bu temkinlidir, hata değildir.
+  - Duraklama sırasında sabit pay varsayımı da çöker: dürüst ağ dururken saldırgan gizli dalında tek başına kazar. Uzun bir duraklamadan sonra olasılık yerine iş ve süre eşiklerine bakın. Kullanılan z `attacker_success_depth`'tir; 10.000'den derin bloklar için 10.000'deki değer (bir üst sınır) verilir.
+- **60 sn blok:** z blok burada Bitcoin'in 10 dakikalık bloklarına göre 10 kat daha kısa süre demektir. Olasılık blok sayısına bağlıdır, süreye değil; ama hashrate kiralayan saldırganın maliyeti süreyle büyür, bu yüzden aynı z daha ucuza denenir (yukarıdaki kârlılık hesabı).
+- **Model iyimserdir:** sabit hashrate payı ve Poisson blok zamanları varsayar; selfish mining yoktur. Yetim bloklar dürüst hashrate'in bir kısmını boşa harcatır ve saldırganın payını fiilen büyütür (60 sn'de Bitcoin'den daha çok): yan blok oranı s ise saldırganın fiilî payı yaklaşık q / (q + p·(1 − s))'dir. q de bilinmez: tablodaki satırlar varsayımdır, ölçüm değildir.
+- Olasılık kârlılık hesabının yerine geçmez; q ≥ 0,5'te 1'dir ve hiçbir derinlik yetmez.
 
 **Alarmları doğru okuyun.** `deep_reorg_alarm` ya da `below_min_chain_work` true ise hiçbir onaya güvenmeyin. Ama **alarmın false olması güvenli olduğunuz anlamına gelmez**:
 - Derin reorg alarmı ~2 saatlik blok sayısından (`TargetSpacing`'den: 60 sn'de 120, 30 sn'de 240 blok) derin reorg'da kalıcı olarak açılır. Eşik süreye değil blok sayısına bağlıdır: hashrate çökerse bu kadar blok çok daha uzun sürer, taban zorluğunda bir blok selinde dakikalar içinde dolar.
@@ -98,7 +114,7 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 - Alarm tek düğümün gözlemidir; reorg sırasında kapalı olan düğüm onu görmez.
 - Alarmı yalnızca operatör, olayı inceledikten sonra kapatabilir (`-clear-reorg-alarm`).
 
-**Ağı dışarıdan izleyin.** Düğüm API'sinde şu an hashrate ya da yetim/yan blok oranı uç noktası yoktur; izleme birden çok bağımsız düğüm ve dış araçlarla yapılmalıdır. Şunlar çekimleri durdurma sinyalidir:
+**Ağı dışarıdan izleyin.** Düğümün `/mininginfo` ucu tek düğümün gözlediği hashrate tahminini ve yan blok oranını (`stale_rate`) verir; ama bu bir düğümün görüşüdür, izleme birden çok bağımsız düğüm ve dış araçlarla yapılmalıdır. Şunlar çekimleri durdurma sinyalidir:
 - blok aralığının ya da zorluğun ani değişmesi,
 - birden çok düğümde farklı uç görülmesi,
 - reorg sıklığının artması.

@@ -10,9 +10,10 @@ import "math/big"
 //   - Work: bloğun ve üzerine eklenen tüm blokların toplam işi (onu geri almak için yeniden
 //     yapılması gereken iş). Taban zorluğundaki sel neredeyse iş eklemez.
 //   - ElapsedSeconds: ucun medyan zamanı ile bloğun medyan zamanı arasındaki fark. Saniyeler
-//     içinde kazılan bir sel onu ancak gerçek saat kadar ilerletir; son 11 bloğun çoğunu
-//     kazan biri damgaları FTL'ye dayayarak en çok FTL (300 sn) kadar şişirebilir, eşikler
-//     bu payı hesaba katmalıdır.
+//     içinde kazılan bir sel onu ancak gerçek saat kadar ilerletir; ucun son 11 bloğunun
+//     çoğunu kazan biri damgaları FTL'ye dayayarak FTL (300 sn) kadar şişirebilir, bloğun
+//     çevresindeki blokların çoğunu da kazandıysa onun medyan zamanını geride tutarak daha
+//     fazla; eşikler bu payı hesaba katmalıdır.
 //   - Blocks: klasik onay sayısı.
 //
 // Entegrasyonlar (borsa vb.) üçünü birden eşik olarak kullanmalı; ayrıca derin reorg alarmı
@@ -23,6 +24,7 @@ import "math/big"
 type Confirmation struct {
 	Blocks         int64    // uç = 1; ana zincirde değilse 0
 	Work           *big.Int // bloğun ve torunlarının toplam işi (ana zincirde değilse 0)
+	BlockWork      *big.Int // bloğun kendi işi (ana zincirde değilse nil); bkz. AttackDepth
 	ElapsedSeconds int64    // MTP(uç) − MTP(blok); ana zincirde değilse 0
 	DeepReorg      bool     // derin reorg alarmı: onaylara güvenilmez
 	BelowMinWork   bool     // uç en az zincir işinin altında: düğüm senkronize değil
@@ -51,6 +53,7 @@ func (bc *Blockchain) ConfirmationOf(hash string) (Confirmation, error) {
 		parentWork = p.work
 	}
 	c.Work.Sub(bc.tip.work, parentWork)
+	c.BlockWork = new(big.Int).Sub(e.work, parentWork)
 	tipMTP, err := bc.mtpLocked(bc.tip.Hash, nil)
 	if err != nil {
 		return c, err
