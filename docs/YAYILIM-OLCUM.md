@@ -147,7 +147,13 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 | 11,66 sn (star-hub, 10 Mbit/sn) | %17,7 | %32,2 |
 | 22,24 sn (line, 2 Mbit/sn) | %31,0 | %52,4 |
 
-**Karar bu belgede verilmez.** Hangi hücrenin (bağlantı hızı, topoloji) belirleyici profil sayılacağını kullanıcı seçer; 60/30 kararı `devils-advocate` sonrası kullanıcınındır.
+**Belirleyici profil (kullanıcı kararı, 2026-11-16):** 20 Mbit/sn yukarı hat, 3 atlamalı hat, 50 ms tek yön; en geç düğüm 2,70 sn. Bu, 30 sn için konan ≤1–2 sn eşiğini karşılamaz; dondurulmuş kurala göre blok süresi 60 sn kalır. 60/30 kararının son hâli `devils-advocate` sonrası kullanıcınındır.
+
+**`devils-advocate` (2026-11-16): "60 sn'de kal" kararı ZAYIF.**
+- Ana itiraz: `MaxTxPerBlock` (250) `TargetSpacing`'den türetilmez; 30 sn'yi 250 işlemle ölçmek "30 sn + iki kat hacim" demektir. Eşit hacimde 30 sn blok ~125 işlem, ~0,9 MB'tır. 100 işlemlik blok seçilen profilde 1,36 sn ölçüldü, 125 işlem için doğrusal tahmin ~1,6 sn (ölçülmedi); bu ≤1–2 sn eşiğinin içindedir. 250 işlem sınırı da dondurulmuş bir karardır, 125'e inmek ayrıca kullanıcı kararı ister.
+- Diğer itirazlar: blok ağda JSON + base64 gider (ikili kodlama süreyi kabaca ~2,1 sn'ye indirir, tahmin); işlemler önceden yayıldığı için kompakt blok dürüst bloğu boş bloğun ~0,47 sn'sine yaklaştırabilir. Geri alınamaz uzlaşma parametresi geri alınabilir taşıma seçimlerine bağlanmış olur.
+- 60 sn lehine: benzetim iyimserdir (yeni bağlantı başına TCP yavaş başlangıcı, gerçekte muhtemelen ~4 sn); ücretsiz işlemle doldurulmuş blokta kompakt blok yardım etmez; gömülü liste işletmecisinin star-leaf avantajı (20 Mbit/sn'de 6,08 sn) 30 sn'de iki kat kötüleşir; emisyon ve iş/zamana bağlı onay güvenliği iki seçenekte de aynıdır.
+- Kararı değiştirecek ölçümler: (a) `-bench-prop-txs 125`, 20 Mbit/sn, 3 atlama, 50 ms; ≤2 sn çıkarsa soru "30 sn + 125 işlem" olarak yeniden açılır; (b) kıtalar arası 3 makineli gerçek ölçüm (>4 sn çıkarsa 60 sn kesinleşir); (c) lansmandan önce ikili kodlama ya da kompakt blok yapılacaksa ölçüm onunla yenilenir.
 
 ## Kalanlar ve sınırlar
 
