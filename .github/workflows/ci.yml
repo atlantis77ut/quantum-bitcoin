@@ -56,6 +56,15 @@ jobs:
       - name: Biçim
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
 
+      - name: GECICI tekrar (TestMinerMinesAndPeerAccepts x100)
+        continue-on-error: true
+        run: |
+          export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
+          go test -race -count=100 -v -run 'TestMinerMinesAndPeerAccepts$' ./network/ > /tmp/repro.log 2>&1 || true
+          echo "PASS: $(grep -c -- '--- PASS: TestMinerMinesAndPeerAccepts' /tmp/repro.log)"
+          echo "FAIL: $(grep -c -- '--- FAIL: TestMinerMinesAndPeerAccepts' /tmp/repro.log)"
+          grep -A2 -- '--- FAIL: TestMinerMinesAndPeerAccepts' /tmp/repro.log | grep miner_test | sort | uniq -c | head -20
+
       - name: Derleme, vet, test
         run: |
           export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
