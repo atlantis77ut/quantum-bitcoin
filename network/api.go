@@ -114,8 +114,8 @@ func (api *APIServer) Handler() http.Handler {
 	// karşı taraf, onay). Sonraki sayfa için yanıttaki next before'a verilir. Havuzdakiler görünmez.
 	// Kullanım: GET /history?address=QBTC...[&limit=<1..200, varsayılan 50>][&before=<yükseklik:sıra>]
 	mux.HandleFunc("/history", getOnly(api.handleHistory))
-	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm true ise onaylara
-	// güvenilmemeli ve operatöre danışılmalıdır.
+	// Onay sayısı (borsalar yatırımları bununla onaylar). deep_reorg_alarm ya da
+	// missing_data_alarm true ise onaylara güvenilmemeli ve operatöre danışılmalıdır.
 	// Kullanım: GET /confirmations?hash=<64 hex blok özeti>
 	mux.HandleFunc("/confirmations", getOnly(api.handleConfirmations))
 	// Kazım izleme özeti: son N bloğun işi, MTP'ye dayalı süresi, tahmini hashrate, zorluk ve bu
@@ -584,6 +584,7 @@ func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
 		"stale_blocks":         m.StaleBlocks,
 		"target_spacing":       m.TargetSpacing,
 		"deep_reorg_alarm":     m.DeepReorg,
+		"missing_data_alarm":   m.MissingData,
 		"below_min_chain_work": m.BelowMinWork,
 	}
 	if m.WindowBlocks > 0 {
@@ -598,9 +599,9 @@ func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
 
 // handleConfirmations blok sayısının yanında iş ve zamana dayalı onay bilgisini döndürür
 // (bkz. core/confirm.go): entegrasyonlar confirmations, elapsed_seconds ve work eşiklerinin
-// üçünü birlikte kullanmalı; deep_reorg_alarm ya da below_min_chain_work true ise hiçbir
-// onaya güvenilmez. attacker_success, payı 0,10–0,40 olan saldırganın attacker_success_depth
-// blok geriden yetişme olasılığıdır (Nakamoto modeli, core/attack.go).
+// üçünü birlikte kullanmalı; deep_reorg_alarm, missing_data_alarm ya da below_min_chain_work
+// true ise hiçbir onaya güvenilmez. attacker_success, payı 0,10–0,40 olan saldırganın
+// attacker_success_depth blok geriden yetişme olasılığıdır (Nakamoto modeli, core/attack.go).
 func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("hash")
 	if !core.IsHashHex(hash) {
@@ -620,11 +621,12 @@ func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request
 		"work":                 c.Work.String(), // ondalık; JSON sayısı 2^53'ü aşabilir
 		"work_in_start_blocks": api.Blockchain.WorkInBlocks(c.Work),
 		"deep_reorg_alarm":     c.DeepReorg,
+		"missing_data_alarm":   c.MissingData,
 		"below_min_chain_work": c.BelowMinWork,
 	}
 	// Saldırganın yetişme olasılığı (core/attack.go): blok ana zincirde değilse ya da alarm
 	// varsa verilmez (onaylara güvenilmez).
-	if c.Blocks > 0 && !c.DeepReorg && !c.BelowMinWork {
+	if c.Blocks > 0 && !c.DeepReorg && !c.MissingData && !c.BelowMinWork {
 		z := core.AttackDepth(c, api.Blockchain.TargetSpacing())
 		probs := make(map[string]float64, len(attackShares))
 		for _, q := range attackShares {

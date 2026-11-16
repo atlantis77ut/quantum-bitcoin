@@ -35,6 +35,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
 	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
 	clearAlarm := flag.Bool("clear-reorg-alarm", false, "Kalıcı derin reorg alarmını temizler ve çıkar (olay incelendikten sonra)")
+	clearDataAlarm := flag.Bool("clear-data-alarm", false, "Kalıcı eksik veri alarmını (diskte olmayan blok gövdesi ya da undo kaydı) temizler ve çıkar (disk incelendikten sonra)")
 	mineThreads := flag.Int("mine-threads", 0, "Kazım iş parçacığı sayısı (0: tüm çekirdekler)")
 	benchHashrate := flag.Duration("bench-hashrate", 0, "Q-BTC başlığında hashrate'i bu süre ölçer, yazdırır ve çıkar (ör. 30s)")
 	mineGPU := flag.Bool("mine-gpu", false, "Kazımı OpenCL aygıtında yapar (-tags opencl ile derlenmiş olmalı)")
@@ -184,7 +185,21 @@ func main() {
 		// Düğüm çalışmaya devam etmez: bayrak servis yapılandırmasında kalırsa her yeniden
 		// başlatma (açılıştaki kurtarmanın yeni alarmı dahil) alarmı sessizce silerdi.
 		slog.Info("derin reorg alarmı işlendi; düğüm bayraksız yeniden başlatılmalı")
-		return
+	}
+	if *clearDataAlarm {
+		rec, err := bc.ClearMissingDataAlarm()
+		if err != nil {
+			slog.Error("eksik veri alarmı temizlenemedi", "err", err)
+			os.Exit(1)
+		}
+		if rec == nil {
+			slog.Info("temizlenecek eksik veri alarmı yok")
+		}
+		// -clear-reorg-alarm gibi: bayrak yapılandırmada kalırsa her açılış alarmı silerdi.
+		slog.Info("eksik veri alarmı işlendi; düğüm bayraksız yeniden başlatılmalı")
+	}
+	if *clearAlarm || *clearDataAlarm {
+		return // iki bayrak birlikte verilirse ikisi de işlenir
 	}
 
 	// 3. P2P sunucusu ve eşler
