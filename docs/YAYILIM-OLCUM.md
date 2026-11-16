@@ -155,6 +155,19 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 - 60 sn lehine: benzetim iyimserdir (yeni bağlantı başına TCP yavaş başlangıcı, gerçekte muhtemelen ~4 sn); ücretsiz işlemle doldurulmuş blokta kompakt blok yardım etmez; gömülü liste işletmecisinin star-leaf avantajı (20 Mbit/sn'de 6,08 sn) 30 sn'de iki kat kötüleşir; emisyon ve iş/zamana bağlı onay güvenliği iki seçenekte de aynıdır.
 - Kararı değiştirecek ölçümler: (a) `-bench-prop-txs 125`, 20 Mbit/sn, 3 atlama, 50 ms; ≤2 sn çıkarsa soru "30 sn + 125 işlem" olarak yeniden açılır; (b) kıtalar arası 3 makineli gerçek ölçüm (>4 sn çıkarsa 60 sn kesinleşir); (c) lansmandan önce ikili kodlama ya da kompakt blok yapılacaksa ölçüm onunla yenilenir.
 
+**Eşit hacim ölçümü (2026-11-16, `profile: doluluk`, Actions çalıştırması 43872087301, 5 ölçüm, 3 atlamalı hat, 50 ms):**
+
+| Blok | Bayt | Doğrulama | 10 Mbit/sn | 20 Mbit/sn |
+|---|---|---|---|---|
+| 250 işlem (60 sn'de saniyede ~4,2 işlem) | 1.809.264 | 38,6 ms | 4,93 sn | 2,76 sn |
+| 125 işlem (30 sn'de aynı hacim) | 904.889 | 18,9 ms | 2,69 sn | 1,61 sn |
+
+- Ölçümler kararlıdır: 20 Mbit/sn'de beş ölçümün yayılımı 1 ms içinde.
+- Doğrulama bu çalıştırmada ilkinden yavaş çıktı (aynı makine sınıfı, 22 → 38 ms); yayılımın yanında yine küçüktür.
+- Seçilen profilde 125 işlemlik blok 1,61 sn ile ≤2 sn eşiğinin içindedir. (a) koşulu sağlandı: soru "30 sn + 125 işlem" olarak yeniden açılır.
+- Kaba bayat tahmini: 30 sn + 125 işlem %5,2; 60 sn + 250 işlem %4,5 (10 Mbit/sn'de %8,6 ve %7,9). Aynı işlem hacminde iki seçenek benzer bayat oranı, 30 sn yarı ilk onay süresi verir.
+- Karar verilmez: 30 sn'ye inmek blok süresi kararının yanında `MaxTxPerBlock`'u (250, dondurulmuş) 125'e indirmeyi ya da `TargetSpacing`'den türetmeyi de ister; ikisi de kullanıcı kararıdır ve uygulanmadan önce `devils-advocate` ile sınanır. (b) gerçek çok makineli ölçüm ve (c) taşıma iyileştirmeleri açıktır.
+
 ## Kalanlar ve sınırlar
 
 - **Star-hub hücreleri iki itme yuvasını ölçmez.** Döngü arayüzünde MSS ~32–64 KB olduğundan Linux gönderen soketin tamponunu ~2,6 MB'a büyütür ve ~1,8 MB'lık bloğun tamamı çekirdek tamponuna sığar. Düğümün yazması blok kısıtlı hattan geçmeden biter, itme yuvası erken boşalır ve 8 kopya birlikte gider. Kanıt: 10 Mbit/sn'de 8 yaprak ikişer ikişer (~2,9 / 5,8 / 8,7 / 11,6 sn) değil, hepsi ~11,6 sn'de geldi. 2 Mbit/sn'de her kopya 0,25 Mbit/sn'ye düşer, alıcının asgari hızının altında kalır ve hiçbir yaprağa ulaşmaz; bu hücre ölçüm yapıntısıdır, düğüm hatası değildir.
