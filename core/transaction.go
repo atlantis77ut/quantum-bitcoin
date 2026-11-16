@@ -33,7 +33,7 @@ const txIDTag = "QBTC-TXID-v3"
 // kapsamaya devam eder: imzası değiştirilmiş bir kopya başka kimlik taşır, ret önbellekleri bir
 // dürüst kimliği zehirleyemez. Tanık ayrı özetlendiği için ileride eski bloklarda imza ve açık
 // anahtar 32 baytlık özetle budanabilir ve hafif istemci işlem içeriğini gövde ve tanık özetiyle
-// (~185 bayt) Merkle köküne karşı doğrulayabilir. Açık anahtar imzalanan gövdede yoktur ama
+// (~185 bayt, GET /merkleproof; txbody.go) Merkle köküne karşı doğrulayabilir. Açık anahtar imzalanan gövdede yoktur ama
 // imzaya bağlıdır: gövdedeki Sender açık anahtardan türetilir (checkFormat) ve ML-DSA (FIPS 204)
 // imzalanan mesajla birlikte açık anahtarın özetini (tr) de imzalar.
 
