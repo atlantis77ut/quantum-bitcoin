@@ -22,6 +22,11 @@ import (
 // yalnızca kaçırmada, disk okumasından önce çağrılır, beklemez (zincir kilidi tutulurken
 // beklenirse bekleyen bir yazar bütün kuyruğu beklerdi) ve hata dönerse disk okunmaz. Kapı
 // zincire geri çağrı yapmamalıdır (bc.mu okuma kilidi altında çağrılır).
+//
+// Kilitsiz çözme (feat/decode-outside-lock): okumanın kilit altındaki yarısı yalnızca indeksi,
+// önbelleği ve kapıyı kullanır (startBlockReadLocked); kaçırmada disk okuması ve çözme zincir
+// kilidi bırakıldıktan sonra yapılır (finishBlockRead), böylece bekleyen blok kabulü bir API
+// okumasının çözmesini beklemez.
 
 const (
 	blockCacheMaxEntries = 8
@@ -84,26 +89,58 @@ func (c *blockCache) put(hash string, b *Block, size int) {
 	}
 }
 
-// ReadGate önbellek kaçırmasında disk okumasından önce çağrılır; tip, okunan blok uç ise doğrudur
-// (yeni uç önbelleğe ilk API okumasında girer; uç önbellekten düşmüş de olabilir). Hata dönerse
-// okuma o hatayla biter; dönen release okuma bitince (hata yolları dahil) çağrılır. nil kapı her
-// okumaya izin verir.
+// ReadGate önbellek kaçırmasında disk okumasından önce, bc.mu okuma kilidi altında çağrılır; tip,
+// okunan blok uç ise doğrudur (yeni uç önbelleğe ilk API okumasında girer; uç önbellekten düşmüş
+// de olabilir). Hata dönerse okuma o hatayla biter. Dönen release okuma bitince (hata yolları
+// dahil) bir kez, zincir kilidi tutulmadan çağrılır. nil kapı her okumaya izin verir.
 type ReadGate func(tip bool) (release func(), err error)
 
-// cachedBlockLocked hash'in gövdesini önbellekten ya da diskten döndürür (çağıran bc.mu'yu en
-// az okuma için tutar). Diskten okunan gövdenin özeti hash ile tutmazsa önbelleğe girmez.
-// Kaçırmada gate (nil değilse) disk okumasından önce sorulur.
-func (bc *Blockchain) cachedBlockLocked(hash string, gate ReadGate) (*Block, error) {
+// blockRead bir gövde okumasının kilit altındaki yarısının sonucudur: önbellekte bulunan blok ya
+// da kilit bırakıldıktan sonra diskten okunacak özet ve kapının release'i.
+type blockRead struct {
+	hash    string
+	block   *Block // önbellekten; nil ise finishBlockRead diskten okur
+	release func() // kaçırmada kapınınki; nil kapıda nil
+}
+
+// startBlockReadLocked hash'in gövdesini önbellekte arar (çağıran bc.mu'yu en az okuma için
+// tutar). Kaçırmada gate'i (nil değilse) sorar; disk okumasını finishBlockRead'e bırakır.
+func (bc *Blockchain) startBlockReadLocked(hash string, gate ReadGate) (blockRead, error) {
 	if b, ok := bc.blockCache.get(hash); ok {
-		return b, nil
+		return blockRead{hash: hash, block: b}, nil
 	}
+	r := blockRead{hash: hash}
 	if gate != nil {
 		release, err := gate(hash == bc.lastHash)
 		if err != nil {
-			return nil, err
+			return blockRead{}, err
 		}
-		defer release()
+		r.release = release
 	}
+	return r, nil
+}
+
+// finishBlockRead okumayı bc.mu tutulmadan bitirir: kaçırmada gövdeyi diskten okur, çözer ve
+// önbelleğe koyar; kapının release'ini (hata yolları dahil) bir kez çağırır. Diskten okunan
+// gövdenin özeti hash ile tutmazsa önbelleğe girmez.
+//
+// Kilitsiz okuma şu değişmeze dayanır: blok gövdesinin anahtarı (çıplak özet) hiç silinmez ve
+// üzerine başka içerik yazılmaz (budama yok, saklanmayan yan bloklar hiç yazılmaz; durum
+// anahtarları önekli). Kilit altında ana zincirde görülen blok kilitten sonra reorg'la ana
+// zincirden düşse de gövdesi aynıdır; yanıt kilidin bırakıldığı anın durumudur. Budama ya da yan
+// blok temizliği eklenirse bu okuma yeniden düşünülmelidir. bc.db Close'da yeniden atanmaz;
+// kapanırken okuma leveldb.ErrClosed ile biter.
+func (bc *Blockchain) finishBlockRead(r blockRead) (*Block, error) {
+	if r.block != nil {
+		return r.block, nil
+	}
+	if r.release != nil {
+		defer r.release()
+	}
+	if bc.beforeBlockLoad != nil {
+		bc.beforeBlockLoad()
+	}
+	hash := r.hash
 	data, err := bc.db.Get([]byte(hash), nil)
 	if err != nil {
 		return nil, fmt.Errorf("blok okunamadı (%s): %w", hash, err)

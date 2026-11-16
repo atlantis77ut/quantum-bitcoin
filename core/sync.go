@@ -226,44 +226,69 @@ func (bc *Blockchain) Reads(gate ReadGate) BlockReads {
 
 // LatestBlock GetLatestBlock gibidir.
 func (r BlockReads) LatestBlock() (*Block, error) {
-	r.bc.mu.RLock()
-	defer r.bc.mu.RUnlock()
-	return r.bc.cachedBlockLocked(r.bc.lastHash, r.gate)
+	bc := r.bc
+	br, err := func() (blockRead, error) {
+		bc.mu.RLock()
+		defer bc.mu.RUnlock()
+		return bc.startBlockReadLocked(bc.lastHash, r.gate)
+	}()
+	if err != nil {
+		return nil, err
+	}
+	return bc.finishBlockRead(br)
 }
 
 // MainBlockByHash Blockchain.MainBlockByHash gibidir.
 func (r BlockReads) MainBlockByHash(hash string) (*Block, int64, error) {
 	bc := r.bc
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
-	e, ok := bc.index[hash]
-	if !ok || !bc.isMain(e) {
-		return nil, 0, ErrUnknownBlock
-	}
-	return bc.mainBlockLocked(e, r.gate)
+	return r.mainBlock(func() (*indexEntry, error) {
+		e, ok := bc.index[hash]
+		if !ok || !bc.isMain(e) {
+			return nil, ErrUnknownBlock
+		}
+		return e, nil
+	})
 }
 
 // MainBlockByHeight Blockchain.MainBlockByHeight gibidir.
 func (r BlockReads) MainBlockByHeight(height int64) (*Block, int64, error) {
 	bc := r.bc
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
-	if height < 0 || height > bc.tip.Height {
-		return nil, 0, ErrUnknownBlock
-	}
-	e, ok := bc.index[bc.main[height]]
-	if !ok {
-		return nil, 0, ErrUnknownBlock
-	}
-	return bc.mainBlockLocked(e, r.gate)
+	return r.mainBlock(func() (*indexEntry, error) {
+		if height < 0 || height > bc.tip.Height {
+			return nil, ErrUnknownBlock
+		}
+		e, ok := bc.index[bc.main[height]]
+		if !ok {
+			return nil, ErrUnknownBlock
+		}
+		return e, nil
+	})
 }
 
-func (bc *Blockchain) mainBlockLocked(e *indexEntry, gate ReadGate) (*Block, int64, error) {
-	b, err := bc.cachedBlockLocked(e.Hash, gate) // gövde önbellekten olabilir; salt okunur
+// mainBlock locate'in bc.mu okuma kilidi altında bulduğu ana zincir bloğunu ve onay sayısını
+// (uç = 1) döndürür. Bulma, onay, önbellek araması ve kapı kilit altında; kaçırmada disk okuması
+// ve çözme kilit bırakıldıktan sonra yapılır (finishBlockRead). Ana zincirde olma ve onay kilidin
+// bırakıldığı anın durumudur; gövde özetiyle değişmez olduğundan bu ikiliyle tutarlıdır.
+func (r BlockReads) mainBlock(locate func() (*indexEntry, error)) (*Block, int64, error) {
+	bc := r.bc
+	br, conf, err := func() (blockRead, int64, error) {
+		bc.mu.RLock()
+		defer bc.mu.RUnlock()
+		e, err := locate()
+		if err != nil {
+			return blockRead{}, 0, err
+		}
+		br, err := bc.startBlockReadLocked(e.Hash, r.gate)
+		return br, bc.tip.Height - e.Height + 1, err
+	}()
 	if err != nil {
 		return nil, 0, err
 	}
-	return b, bc.tip.Height - e.Height + 1, nil
+	b, err := bc.finishBlockRead(br) // gövde önbellekten olabilir; salt okunur
+	if err != nil {
+		return nil, 0, err
+	}
+	return b, conf, nil
 }
 
 // Confirmations ana zincirdeki bir bloğun onay sayısını (uç = 1) döndürür; blok ana zincirde
