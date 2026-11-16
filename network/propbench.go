@@ -343,11 +343,17 @@ func (l *linkLimiter) reserve(n int, now time.Time) time.Time {
 	return l.next
 }
 
-// Proxy parçası ve kuyruk derinliği: hattaki bayt, hız·gecikme ile bu tamponun toplamıdır
-// (pipeDepth). Kuyruk dolunca okuma durur ve gönderen TCP geri basıncı görür.
+// Proxy parçası, kuyruk derinliği ve gelen soketin alma tamponu: hattaki bayt, hız·gecikme ile
+// bu tamponların toplamıdır (pipeDepth). Kuyruk dolunca okuma durur ve gönderen TCP geri basıncı
+// görür. Alma tamponu sabitlenir: döngü arayüzünde çekirdek onu megabaytlara büyütür, gönderenin
+// yazması blok hatta gitmeden biter ve itme yuvası (push.go) erken boşalırdı; 8 yapraklı yıldızda
+// bütün kopyalar aynı anda gider, iki yuva sınırı ölçülmezdi (ilk matris, 2026-11-16). Kalan
+// tampon (kuyruk 64 KiB + alma ~64 KiB + gönderenin gönderme tamponu) gerçek bir darboğaz
+// kuyruğundan büyük değildir.
 const (
-	proxyChunk = 16 << 10
-	proxyQueue = 16
+	proxyChunk   = 16 << 10
+	proxyQueue   = 4
+	proxyRecvBuf = 32 << 10 // çekirdek iki katını ayırır
 )
 
 // Benzetim sınırları: hız·gecikme kadar bayt proxy kuyruğunda bellekte durur (en çok
@@ -443,6 +449,9 @@ func (p *throttleProxy) accept() {
 
 func (p *throttleProxy) serve(src net.Conn) {
 	defer p.wg.Done()
+	if tc, ok := src.(*net.TCPConn); ok {
+		tc.SetReadBuffer(proxyRecvBuf) // geri basınç (yukarıya bakın); hata ölçümü bozmaz
+	}
 	// TCP el sıkışması (SYN, SYN-ACK) bir gidiş-dönüştür: istemci veriyi ancak 2·latency sonra
 	// gönderebilir. İtme her blokta yeni bağlantı açar (peersend.go sendTo), bu yüzden her atlamada
 	// ödenir. Bu arada istemcinin yazdıkları çekirdek tamponunda bekler.

@@ -7,7 +7,8 @@
 #   QBTC_BIN       derlenmiş düğüm (varsayılan ./qbtc)
 #   QBTC_OUT       rapor dizini (varsayılan ./yayilim)
 #   QBTC_RUNS      hücre başına ölçüm (varsayılan 5)
-#   QBTC_PROFILE   full (önerilen matris) ya da quick (yalnızca 20 Mbit/sn, 50 ms; denemelik)
+#   QBTC_PROFILE   full (önerilen matris), quick (yalnızca 20 Mbit/sn, 50 ms; denemelik) ya da
+#                  hub (yalnızca star-hub 8 yaprak, 2 ve 10 Mbit/sn, 50 ms; itme yuvası denetimi)
 # Çıkış: bütün hücreler 0 döndüyse 0, yoksa 1 (ulaşılmayan ölçüm hata değildir, özette görünür).
 set -u
 
@@ -31,10 +32,22 @@ run() {
 	echo "   çıkış $rc, $((SECONDS - start)) sn"
 }
 
-# Kalibrasyon: 0,8 Mbit/sn'de dolu blok asgari hızın altında kalır (ulaşmamalı), 2 Mbit/sn'de
-# ~30 sn'de ulaşmalı. Tek ölçüm yeter.
-run kalibrasyon-0.8mbit -bench-runs 1 -bench-prop-hops 1 -bench-prop-mbit 0.8 -bench-prop-latency 25ms
+# Kalibrasyon: 0,3 Mbit/sn'de dolu blok (~1,8 MB) alıcının asgari hızının (128 KiB/sn) çok
+# altında kalır, ~14 sn'de kesilir (ulaşmamalı); 2 Mbit/sn'de ~7,3 sn'de ulaşmalı (8·S/R + 3·L).
+# Tek ölçüm yeter.
+run kalibrasyon-0.3mbit -bench-runs 1 -bench-prop-hops 1 -bench-prop-mbit 0.3 -bench-prop-latency 25ms
 run kalibrasyon-2mbit -bench-runs 1 -bench-prop-hops 1 -bench-prop-mbit 2 -bench-prop-latency 25ms
+
+if [ "$PROFILE" = hub ]; then
+	for m in 2 10; do
+		run "hub8-${m}mbit-50ms" -bench-runs "$RUNS" -bench-prop-topology star-hub -bench-prop-hops 8 \
+			-bench-prop-mbit "$m" -bench-prop-latency 50ms
+	done
+	if awk -F'\t' '$2 != 0 { bad = 1 } END { exit !bad }' "$STATUS"; then
+		exit 1
+	fi
+	exit 0
+fi
 
 if [ "$PROFILE" = quick ]; then
 	mbits="20"
