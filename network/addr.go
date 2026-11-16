@@ -494,10 +494,13 @@ func (b *AddrBook) snapshot() map[string]addrEntry {
 	return out
 }
 
-// reachedPeer bir yapılandırılmış eşe son başarılı isteğin anı ve ulaşılan adresidir.
+// reachedPeer bir yapılandırılmış eşe son başarılı isteğin anı ve ulaşılan adresidir; version ve
+// services o yanıtın bildirdiği protokol sürümü ve yetenek bitleridir (peerversion.go).
 type reachedPeer struct {
-	addr string
-	at   time.Time
+	addr     string
+	at       time.Time
+	version  uint32
+	services uint64
 }
 
 // EnableDiscovery adres öğrenmeyi açar: düğüm yapılandırılmış eşlerini ve seeds'i `getaddr`
@@ -508,11 +511,12 @@ func (ps *P2PServer) EnableDiscovery(book *AddrBook, seeds []string) {
 	ps.seeds = append([]string(nil), seeds...)
 }
 
-// noteReached eşe başarılı bir istek yapıldığını ve ulaşılan adresi kaydeder (request).
-func (ps *P2PServer) noteReached(peer string, remote net.Addr, now time.Time) {
+// noteReached eşe başarılı bir istek yapıldığını, ulaşılan adresi ve yanıtın bildirdiği sürümü
+// kaydeder (request). Son yanıt geçerlidir: eski sürüme dönen eşin kaydı da iner.
+func (ps *P2PServer) noteReached(peer string, remote net.Addr, resp *message, now time.Time) {
 	ps.reachedMu.Lock()
 	defer ps.reachedMu.Unlock()
-	ps.reached[peer] = reachedPeer{addr: remote.String(), at: now}
+	ps.reached[peer] = reachedPeer{addr: remote.String(), at: now, version: resp.Version, services: resp.Services}
 }
 
 // noteNetwork kaynağın `getaddr` yanıtındaki ağ kimliğinin sonucunu kaydeder: başka ağdaki

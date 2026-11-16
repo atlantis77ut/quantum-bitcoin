@@ -203,7 +203,7 @@ func TestWrongNetworkPeerNotShared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.ps.noteReached(other.addr, ra, time.Now())
+	b.ps.noteReached(other.addr, ra, &message{}, time.Now())
 	if got := b.ps.reachedAddrs(time.Now()); len(got) != 0 {
 		t.Fatalf("başka ağdaki eş verildi: %v", got)
 	}
