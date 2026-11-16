@@ -60,8 +60,8 @@ func TestEscalator(t *testing.T) {
 	}
 }
 
-// İşlem cezası iç anahtarındır: komşu etkilenmez, grup kovasını paylaşır; üç farklı iç anahtar
-// cezalanınca bütün grup cezalanır.
+// İşlem cezası iç anahtarındır: komşu etkilenmez; üç farklı iç anahtar cezalanınca bütün grup
+// cezalanır.
 func TestTxGateInnerKey(t *testing.T) {
 	g := newTxGate()
 	now := time.Unix(1_900_000_000, 0)
@@ -72,8 +72,8 @@ func TestTxGateInnerKey(t *testing.T) {
 	if g.allow(a, 1) || !g.allow(n, 1) {
 		t.Fatal("ceza iç anahtarla sınırlı değil")
 	}
-	if !g.allow(b, txRateBurst-1) || g.allow(n, 1) {
-		t.Fatal("grup kovası paylaşılmıyor")
+	if !g.allow(b, txRateBurst) || !g.allow(n, 1) {
+		t.Fatal("komşunun kovası tüketilince dürüst eş reddedildi")
 	}
 	now = now.Add(time.Second)
 	g.penalize(b)

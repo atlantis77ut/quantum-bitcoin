@@ -23,7 +23,7 @@
 | `connQuota` (quota.go:18) | Grup başına 4 açık gelen bağlantı. | Grubun bağlantılarını doldurup dürüst komşunun bağlanmasını engeller. |
 | `decodeQuota` (quota.go:19) | Grup başına 1 eşzamanlı çözümleme (2 sn bekleme). | Yavaş gönderimle yuvayı tutar; komşunun duyurusu bekler ya da düşer. |
 | `serveQuota` (quota.go:20) | Grup başına 1 eşzamanlı sunum. | Komşunun isteklerini geciktirir. |
-| `txGate` (quota.go) | 64 işlem/sn, 256 ani (grup); geçersiz işlem 10 dk ceza (iç anahtar, 3 iç anahtarda grup). | Kovayı tüketip komşunun işlemlerini cezasız düşürür; 3 adresle bütün grubu 10 dk keser. Tek geçersiz işlemle komşuyu kesemez (Yol A adım 3). |
+| `txGate` (quota.go) | 64 işlem/sn, 256 ani (iç anahtar; grup tavanı 4 katı, feat/tx-rate-inner-key); geçersiz işlem 10 dk ceza (iç anahtar, 3 iç anahtarda grup). | Tek adresle komşunun işlemlerini düşüremez; 4 adresle grup tavanını doldurup düşürür; 3 adresle bütün grubu 10 dk keser. Tek geçersiz işlemle komşuyu kesemez (Yol A adım 3). |
 | `prot.discourage` (peers.go) | Geçersiz blok ya da bozuk JSON → iç anahtar 1 sa; `ErrBadDifficulty` kademeli; 3 iç anahtarda grup 1 sa. | 3 adresle bütün grubu 1 sa dışarıda bırakır. Tek bozuk mesajla komşuyu ya da sürüm farkıyla dürüst eşi hemen düşüremez (Yol A adım 3). |
 | `protection.recent` (peers.go) | Yeni uç bloğunu ilk getiren son 8 eş korunur; grup başına bir yer. | Korumayı bloğu getiren iç anahtar kazanır, komşu yararlanmaz (Yol A adım 3). |
 | Ayrılmış yuvalar (peers.go:40-42) | Çözümleme 3/8, sunum 6/16, bağlantı 16/64. | Korunan grubun payını komşu da kullanır. |
@@ -76,9 +76,9 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
    - Yavaş ya da ulaşılamayan eş için devre kesici eklenir. Kara delik maliyeti diğer eşlere yansımaz.
 3. **İç anahtar** (kapandı: feat/inner-key, kademeli `ErrBadDifficulty` ile birlikte; ayrıntı `network/innerkey.go` ve `network/peers.go` belgelerinde).
    - `txGate` cezası, `discourage` ve blokla kazanılan koruma, /24 (/48) dış sınırının altında /32 (/64) iç anahtara bağlanır.
-   - Yeni iç anahtar grup bütçesini paylaşır; yalnızca ceza ve koruma daralır.
+   - Yeni iç anahtar grup bütçesini paylaşır; yalnızca ceza ve koruma daralır. (İşlem hızı sonradan iç anahtara bölündü, grup tavanı 4 katı: feat/tx-rate-inner-key, kullanıcı kararı 2026-11-16; yeni iç anahtar tavana kadar kendi kovasını alır, grup başına işlem hızı 4 kat arttı.)
    - Bir pencerede *k* farklı iç anahtar cezalanırsa bütün grup cezalanır.
-   - Bir /48 sahibi bedavaya ~65.000 /64 alır. Bunu *k* yükseltmesi ve dış sınırlar bağlar; durum bugünden kötü değildir.
+   - Bir /48 sahibi bedavaya ~65.000 /64 alır. Bunu *k* yükseltmesi ve dış sınırlar bağlar; durum bugünden kötü değildir (işlem hızında grup tavanı bağlar).
    - `ErrBadDifficulty` 1 sa geri çevirme yerine kademeli cezalandırılır (sürüm farkıyla dürüst eş düşmesin).
 4. **Gelen ve NAT arkasındaki eşe ulaşma** (kapandı: feat/tip-longpoll, uzun yoklama seçildi; ayrıntı `network/tippoll.go` belgesinde). İki seçenek vardı:
    - Yalnızca yapılandırılmış eşlere giden kalıcı bağlantı (seçilmedi).
