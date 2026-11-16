@@ -59,6 +59,11 @@ func (ps *P2PServer) maybePullMempool(peer string, syncErr error, stop <-chan st
 		// İlerleme var: kalan eksikler 10 dk değil, sonraki senkronizasyon turunda istenir.
 		delete(ps.lastMempoolSync, peer)
 	}
+	if errors.Is(err, errWrongNetwork) {
+		// Operatör uyarısı request'te seyrekleştirilir (netid.go).
+		ps.log.Debug("eşten havuz eşitlemesi başarısız", "peer", peer, "err", err)
+		return
+	}
 	if err != nil {
 		ps.log.Warn("eşten havuz eşitlemesi başarısız", "peer", peer, "eklenen", n, "err", err)
 		return

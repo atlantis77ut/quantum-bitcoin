@@ -818,7 +818,11 @@ func (ps *P2PServer) syncLoop(stop <-chan struct{}) {
 		ps.pruneSyncState(peers, time.Now())
 		for _, peer := range peers {
 			err := ps.syncFrom(peer, stop)
-			if err != nil {
+			switch {
+			case errors.Is(err, errWrongNetwork):
+				// Operatör uyarısı request'te seyrekleştirilir (netid.go); her turda yinelenmesin.
+				ps.log.Debug("eşle senkronizasyon başarısız", "peer", peer, "err", err)
+			case err != nil:
 				ps.log.Warn("eşle senkronizasyon başarısız", "peer", peer, "err", err)
 			}
 			ps.maybePullMempool(peer, err, stop)
