@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb"
 )
@@ -63,12 +64,45 @@ func putBlockTxs(batch *leveldb.Batch, b *Block) error {
 	return nil
 }
 
-// deleteBlockTxs b'nin işlemlerini işlem indeksinden ve adres geçmişinden siler.
-func deleteBlockTxs(batch *leveldb.Batch, b *Block) {
-	for i := range b.Transactions {
-		batch.Delete(txKey(b.Transactions[i].ID()))
+// İndeks geri alma kaydı (şema 13, budama hazırlığı): iundo_<özet> → bloğun bağlanırken yazdığı
+// işlem indeksi ve adres geçmişi anahtarları (JSON dizi). Durum undo kaydıyla (undo_) aynı batch'te
+// yazılır ve silinir; geri sarmada anahtarlar gövde okunmadan bu kayıttan silinir, böylece gövdesi
+// budanmış blok da geri sarılabilir. Yalnızca yazılan anahtarlar kaydedilir (sıfır değerli
+// coinbase'in hiç yazılmayan adres anahtarı yoktur; o yalnızca hiç geri sarılmayan genesis'tedir,
+// writeGenesis kayıt yazmaz). Dolu blokta (250 işlem: bir tx_ ve iki atx_ anahtarı) ~56 KB,
+// gövdenin (~1,8 MB) ~%3'üdür ve budamadan sonra da diskte kalır.
+const prefixIndexUndo = "iundo_"
+
+// indexUndoData bağlanan bloğun indeks anahtarlarının kaydıdır.
+func indexUndoData(puts []txIndexPut) ([]byte, error) {
+	keys := make([]string, len(puts))
+	for i, p := range puts {
+		keys[i] = string(p.key)
 	}
-	deleteBlockAddrs(batch, b)
+	return json.Marshal(keys)
+}
+
+// loadIndexUndo bloğun indeks geri alma kaydını okur. Kayıt yoksa eksik veri hatasıdır
+// (dataalarm.go); işlem indeksi ya da adres geçmişi dışında bir anahtar içeren kayıt bozuktur
+// (bakiye gibi uzlaşma durumunu silemez).
+func (bc *Blockchain) loadIndexUndo(hash string) ([]string, error) {
+	data, err := bc.db.Get([]byte(prefixIndexUndo+hash), nil)
+	if errors.Is(err, leveldb.ErrNotFound) {
+		return nil, &missingDataError{hash: hash, kind: dataIndexUndo, cause: ErrCorruptState}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("indeks geri alma kaydı okunamadı (%s): %w", hash, err)
+	}
+	var keys []string
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return nil, fmt.Errorf("%w: indeks geri alma kaydı (%s): %v", ErrCorruptState, hash, err)
+	}
+	for _, k := range keys {
+		if !strings.HasPrefix(k, prefixTx) && !strings.HasPrefix(k, prefixAddrTx) {
+			return nil, fmt.Errorf("%w: indeks geri alma kaydında yabancı anahtar (%s)", ErrCorruptState, hash)
+		}
+	}
+	return keys, nil
 }
 
 // TxByID ana zincirdeki işlemi bloğuyla, blok içi sırasıyla ve aynı anlık görüntüdeki onay

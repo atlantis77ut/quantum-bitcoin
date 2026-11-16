@@ -16,8 +16,8 @@ import (
 // atx_<adres>_<16 hex yükseklik>_<8 hex blok içi sıra> → işlemin özeti. Her transfer iki kayıt
 // üretir (gönderende "out", alıcıda "in"; kendine transfer uzlaşma gereği yoktur), coinbase
 // yalnızca alıcıda "in" üretir; sıfır değerli coinbase (yalnızca genesis, premine yok) indekslenmez.
-// Kayıtlar işlem indeksiyle aynı yerde ve aynı batch'te yazılır/silinir (blockTxPuts,
-// deleteBlockTxs). Adresler uzlaşma gereği sabit uzunluklu küçük harf hex olduğundan bir adresin
+// Kayıtlar işlem indeksiyle aynı yerde ve aynı batch'te yazılır/silinir (blockTxPuts; geri
+// sarmada indeks geri alma kaydından, txindex.go). Adresler uzlaşma gereği sabit uzunluklu küçük harf hex olduğundan bir adresin
 // aralığı başka bir adresinkiyle çakışmaz; "atx_" hex olmayan 't' ve '_' içerdiğinden blok gövdesi
 // anahtarlarıyla (çıplak 64 karakter hex özet) da çakışmaz.
 
@@ -141,17 +141,6 @@ func blockAddrPuts(b *Block) ([]txIndexPut, error) {
 		}
 	}
 	return out, nil
-}
-
-// deleteBlockAddrs b'nin adres geçmişi kayıtlarını siler (olmayan anahtarı silmek zararsızdır).
-func deleteBlockAddrs(batch interface{ Delete([]byte) }, b *Block) {
-	for i := range b.Transactions {
-		tx := &b.Transactions[i]
-		if !tx.IsCoinbase {
-			batch.Delete(addrTxKey(tx.Sender, b.Index, i))
-		}
-		batch.Delete(addrTxKey(tx.Receiver, b.Index, i))
-	}
 }
 
 // AddressHistory address'in ana zincirdeki işlemlerini yeniden eskiye, en çok limit kayıt

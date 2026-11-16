@@ -248,8 +248,9 @@ func (bc *Blockchain) Confirmations(hash string) (int64, bool) {
 }
 
 // mtpLocked ebeveyni parentHash olan bloğun medyan zaman sınırını hesaplar; atalar önce
-// lookup'ta (henüz indekste olmayan başlıklar), sonra indekste aranır. medianTimePast ile
-// aynı pencereyi kullanır (genesis dahil, en fazla MedianTimeSpan blok).
+// lookup'ta (henüz indekste olmayan başlıklar), sonra indekste aranır. Pencere ebeveyn dahil son
+// MedianTimeSpan bloktur (genesis dahil); başlık, ön denetim ve durum doğrulaması (checkStateful)
+// aynı hesabı kullanır, hiçbiri gövde okumaz.
 func (bc *Blockchain) mtpLocked(parentHash string, lookup lookupFn) (int64, error) {
 	a, ok := bc.ancestorLocked(parentHash, lookup)
 	if !ok {

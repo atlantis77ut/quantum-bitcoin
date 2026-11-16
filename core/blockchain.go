@@ -39,7 +39,9 @@ const (
 	//     daha çok işlemli eski bloklar içeren dizin sessizce eski dalda kalırdı.
 	// 12: işlem kimliği v3 (gövde ve tanık ayrı özetlenir), imza alanı v5, coinbase taahhüt
 	//     yuvası, yeniden kazılmış regtest/testnet genesis'i.
-	schemaVersion = "12"
+	// 13: blok başına indeks geri alma kaydı (iundo_<özet>; txindex.go): eski dizinlerin ana
+	//     zincir bloklarında kayıt olmadığından geri sarılamazlardı.
+	schemaVersion = "13"
 )
 
 var (
@@ -512,14 +514,15 @@ func coinbaseValue(subsidy int64, txs []Transaction) (int64, error) {
 
 // checkStateful bloğu zincir ucuna göre kontrol eder ve işlemleri view üzerinde uygular
 // (diske yazmadan). checkStateless'tan geçmiş bloklar için çağrılmalıdır.
-func (bc *Blockchain) checkStateful(b *Block, prev *Block, view *stateView) error {
-	if b.Index != prev.Index+1 {
+// Ebeveyn ve medyan zaman indeksten gelir: atanın gövdesi okunmaz (budama hazırlığı).
+func (bc *Blockchain) checkStateful(b *Block, prev *indexEntry, view *stateView) error {
+	if b.Index != prev.Height+1 {
 		return ErrBadIndex
 	}
 	if b.PrevHash != prev.Hash {
 		return ErrBadPrevHash
 	}
-	mtp, err := bc.medianTimePast(prev)
+	mtp, err := bc.mtpLocked(prev.Hash, nil)
 	if err != nil {
 		return err
 	}
@@ -622,22 +625,6 @@ func (bc *Blockchain) writeGenesis(g *Block) error {
 	bc.tip = e
 	bc.lastHash = g.Hash
 	return nil
-}
-
-// medianTimePast prev dahil son MedianTimeSpan bloğun zaman damgalarının medyanıdır.
-func (bc *Blockchain) medianTimePast(prev *Block) (int64, error) {
-	times := []int64{prev.Timestamp}
-	cur := prev
-	for len(times) < MedianTimeSpan && cur.Index > 0 {
-		p, err := bc.getBlock(cur.PrevHash)
-		if err != nil {
-			return 0, err
-		}
-		times = append(times, p.Timestamp)
-		cur = p
-	}
-	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
-	return times[len(times)/2], nil
 }
 
 func (bc *Blockchain) getBlock(hash string) (*Block, error) {

@@ -325,9 +325,11 @@ func (bc *Blockchain) markInvalidLocked(batch *leveldb.Batch, e *indexEntry) err
 // bağlar ve bütün durum değişikliğini (bakiyeler, nonce'lar, undo kayıtları, yükseklik
 // tablosu, uç) tek bir atomik batch ile yazar. Yeni daldaki bir blok durum kuralını ihlal
 // ederse o blok ve torunları geçersiz işaretlenir; geçerli önek uçtan fazla iş taşıyorsa
-// zincir öneke geçer, taşımıyorsa uç değişmez. Bir bloğun gövdesi ya da undo kaydı diskte
-// yoksa hata eskisi gibi döner (geçiş yok, geçersiz işaret yok) ve kalıcı eksik veri alarmı
-// verilir (dataalarm.go).
+// zincir öneke geçer, taşımıyorsa uç değişmez. Yalnızca bağlanacak blokların gövdesi okunur
+// (ebeveyn ve medyan zaman indeksten, geri sarılan blokların indeks anahtarları indeks geri alma
+// kaydından gelir). Bağlanacak bir bloğun gövdesi ya da geri sarılacak bir bloğun undo veya
+// indeks geri alma kaydı diskte yoksa hata eskisi gibi döner (geçiş yok, geçersiz işaret yok) ve
+// kalıcı eksik veri alarmı verilir (dataalarm.go).
 func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	defer func() {
 		var md *missingDataError
@@ -371,9 +373,9 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 		if err != nil {
 			return err
 		}
-		prev, err := bc.getBlock(e.Prev)
-		if err != nil {
-			return err
+		prev, ok := bc.index[e.Prev] // ebeveyn indeksten: gövdesi okunmaz (budama hazırlığı)
+		if !ok {
+			return fmt.Errorf("%w: ebeveyn indekste yok (%s)", ErrCorruptState, e.Prev)
 		}
 		v := &stateView{bc: bc, base: ov, balances: map[string]int64{}, nonces: map[string]uint64{}}
 		if err := bc.checkStateful(b, prev, v); err != nil {
@@ -399,6 +401,11 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 		if err != nil {
 			return err
 		}
+		iundo, err := indexUndoData(puts)
+		if err != nil {
+			return err
+		}
+		batch.Put([]byte(prefixIndexUndo+e.Hash), iundo)
 		txPuts = append(txPuts, puts...)
 		connected = append(connected, e)
 		newTip = e
@@ -416,18 +423,23 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	ov.writeTo(batch)
 	for _, e := range disconnected {
 		batch.Delete([]byte(prefixUndo + e.Hash))
+		batch.Delete([]byte(prefixIndexUndo + e.Hash))
 	}
 	for h := newTip.Height + 1; h <= bc.tip.Height; h++ {
 		batch.Delete([]byte(heightKey(h)))
 	}
 	// İşlem indeksi: önce geri sarılanlar silinir, sonra bağlananlar yazılır (iki dalda da
-	// bulunan işlemde yeni dal kazanır; txindex.go).
+	// bulunan işlemde yeni dal kazanır; txindex.go). Geri sarılan blokların anahtarları gövde
+	// okunmadan indeks geri alma kayıtlarından gelir; kayıtlar birer birer okunur (derin reorg'da
+	// bellek büyümesin).
 	for _, e := range disconnected {
-		b, err := bc.getBlock(e.Hash)
+		keys, err := bc.loadIndexUndo(e.Hash)
 		if err != nil {
 			return err
 		}
-		deleteBlockTxs(batch, b)
+		for _, k := range keys {
+			batch.Delete([]byte(k))
+		}
 	}
 	for _, p := range txPuts {
 		batch.Put(p.key, p.value)
