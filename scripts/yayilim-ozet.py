@@ -58,12 +58,13 @@ def main():
     out.append("")
 
     out.append("## Kalibrasyon\n")
-    for name, want in (("kalibrasyon-0.8mbit", "ulaşmamalı"), ("kalibrasyon-2mbit", "~30 sn'de ulaşmalı")):
+    for name, want in (("kalibrasyon-0.3mbit", "ulaşmamalı"), ("kalibrasyon-2mbit", "~7,3 sn'de ulaşmalı")):
         out.append(f"- {name}: {cell(load(d, name))} (beklenen: {want})")
     out.append("")
 
-    mbits = sorted({float(n.split("-")[1][:-4]) for n, _, _, _ in status if n.startswith("line3-") and n.count("-") == 2})
-    lats = sorted({int(n.split("-")[2][:-2]) for n, _, _, _ in status if n.startswith("line3-") and n.count("-") == 2})
+    grid = [n for n, _, _, _ in status if n.startswith(("line3-", "hub8-")) and n.count("-") == 2]
+    mbits = sorted({float(n.split("-")[1][:-4]) for n in grid})
+    lats = sorted({int(n.split("-")[2][:-2]) for n in grid})
     for topo, title in (("line3", "line, 3 atlama"), ("hub8", "star-hub, 8 yaprak")):
         out.append(f"## {title}\n")
         out.append("| Mbit/sn \\ tek yön | " + " | ".join(f"{l} ms" for l in lats) + " |")
@@ -71,6 +72,19 @@ def main():
         for m in mbits:
             ms = f"{m:g}"
             out.append(f"| {ms} | " + " | ".join(cell(load(d, f"{topo}-{ms}mbit-{l}ms")) for l in lats) + " |")
+        out.append("")
+
+    hub = load(d, "hub8-10mbit-50ms")
+    if hub:
+        out.append("## Yaprak varışları (star-hub, 10 Mbit/sn, 50 ms, ilk ölçüm, sn)\n")
+        out.append("İki itme yuvası ölçülebilseydi yapraklar ikişer ikişer gelirdi (~2,9 / 5,8 / 8,7 / 11,6 sn); "
+                   "döngü arayüzünde toplu gelmeleri beklenir (docs/YAYILIM-OLCUM.md, \"Kalanlar ve sınırlar\").\n")
+        arr = hub["simulation"]["runs_ms"][0]
+        got = sorted(x for x in arr if x >= 0)
+        line = ", ".join(f"{x / 1000:.2f}" for x in got) or "hiçbiri"
+        if len(got) < len(arr):
+            line += f" (ulaşmayan {len(arr) - len(got)} yaprak)"
+        out.append("- " + line)
         out.append("")
 
     out.append("## Ek ölçümler\n")
