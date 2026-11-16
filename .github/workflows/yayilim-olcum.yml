@@ -1,0 +1,96 @@
+name: Yayılım ölçümü
+
+# Elle tetiklenir (docs/YAYILIM-OLCUM.md): blok yayılım benzetim matrisini GitHub'ın Linux
+# makinesinde çalıştırır, JSON raporları ve Markdown özeti artifact olarak yükler. Ağ değerleri
+# benzetimdir; doğrulama süreleri bu makinenin CPU'suyla ölçülür. Karar özette verilmez.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Hücre başına ölçüm sayısı (1..20; full 5'te ~30-45 dk)"
+        default: "5"
+        required: true
+      profile:
+        description: "full (önerilen matris) ya da quick (20 Mbit/sn, 50 ms; denemelik)"
+        default: full
+        required: true
+        type: choice
+        options: [full, quick]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yayilim-olcum
+  cancel-in-progress: false
+
+env:
+  LIBOQS_VERSION: "0.15.0"
+  LIBOQS_COMMIT: "97f6b86b1b6d109cfd43cf276ae39c2e776aed80" # 0.15.0 etiketinin commit'i (ci.yml ile aynı)
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: liboqs önbelleği
+        id: oqs-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/liboqs-install
+          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}
+
+      - name: liboqs derle
+        if: steps.oqs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+          git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs /tmp/liboqs
+          test "$(git -C /tmp/liboqs rev-parse HEAD)" = "$LIBOQS_COMMIT"
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build -GNinja \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install
+          ninja -C /tmp/liboqs/build install
+
+      - name: liboqs kur
+        run: |
+          sudo cp -r /tmp/liboqs-install/. /usr/local/
+          sudo ldconfig
+
+      - name: Derleme
+        run: |
+          export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
+          go build -o qbtc .
+
+      - name: Ölçüm matrisi
+        timeout-minutes: 270 # iş sınırından önce: özet ve yükleme için süre kalır
+        env:
+          QBTC_RUNS: ${{ inputs.runs }}
+          QBTC_PROFILE: ${{ inputs.profile }}
+          QBTC_OUT: yayilim
+        run: |
+          if ! [[ "$QBTC_RUNS" =~ ^[1-9][0-9]?$ ]] || [ "$QBTC_RUNS" -gt 20 ]; then
+            echo "runs 1 ile 20 arasında, baştaki sıfırsız bir sayı olmalı: $QBTC_RUNS"; exit 2
+          fi
+          nproc
+          bash scripts/yayilim-matris.sh
+
+      - name: Özet
+        if: always()
+        run: |
+          mkdir -p yayilim
+          python3 -I scripts/yayilim-ozet.py yayilim > yayilim/OZET.md
+          cat yayilim/OZET.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Raporları yükle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: yayilim-olcum
+          path: yayilim/
+          retention-days: 90

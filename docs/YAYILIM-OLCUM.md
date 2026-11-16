@@ -46,6 +46,16 @@ Varsayılanların gerekçesi: 20 Mbit/sn tipik ev yükleme hızı ve ucuz VPS'in
 
 Rapor makine adı, kullanıcı adı, yol ya da adres içermez; `reproduce` alanı aynı ölçümün komutudur. Her düğüm için ortanca (`median_ms`), en kötü (`max_ms`) ve kaç ölçümde ulaşıldığı (`reached`) yazılır. Ulaşılmayan ölçüm -1'dir ve uyarı loglanır.
 
+### GitHub Actions'ta
+
+Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris ya da `quick` yalnızca 20 Mbit/sn ve 50 ms). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
+
+```bash
+gh workflow run yayilim-olcum.yml -f runs=5 -f profile=full
+```
+
+Doğrulama süreleri (`accept_ms`) GitHub'ın paylaşımlı makinesinin CPU'suyla ölçülür (çekirdek sayısı raporun `cpus` alanında). Gerçek düğüm donanımından yavaş olabilir. Ağ değerleri her yerde olduğu gibi benzetimdir.
+
 ## Topolojiler
 
 - **`line`:** 0 → 1 → … → h. Depola-ilet gecikmesinin atlama başına birikimini gösterir.
