@@ -22,18 +22,18 @@ var genesisVectors = []struct {
 	{
 		p:        RegtestParams,
 		receiver: "QBTC4e6964f9e432957c47b419629131c28aea8f3e6e",
-		txid:     "682fafb80b27cd1a85943b5696646041a8a2755eafa8a11cadce9b88bf143ec8",
-		merkle:   "d00f872bbd9209465309226f74f0dcabd89b55f9a0ab8684457e16e108d219e4",
-		nonce:    10,
-		hash:     "0c361f2df64b66a48865cda689233554a7faa517a584dd034ce882a987d20eef",
+		txid:     "63a8d5fbe5f111b7aca94c3cac5210d99d4765b98924229404a3f9a57ddb554b",
+		merkle:   "82ab1a2dd38881206fbdbf76cc3c03a76694e3994d6a4c2241d3d3068f4d5d72",
+		nonce:    2,
+		hash:     "0c9f0d89a173a869e2293a062ddbf9c2a1c3c71c8dc4f7a0d2d8828ebcf6e79d",
 	},
 	{
 		p:        TestnetParams,
 		receiver: "QBTCd3a378937e0e43e9baf18c21b24dd539e398f1bf",
-		txid:     "ee2a1aeeebaa6321ca9da0a84065e0e1445301b400855bebc6ec896e9d6bb478",
-		merkle:   "564a54cc73968328cd201c00030c47e68aac18f42c81f8de96b8a87929e09c70",
-		nonce:    19141,
-		hash:     "0000f47b1643fb44236004eadf3a39b5e1999ccfa4f6cb941f14975ee07b1be0",
+		txid:     "239630bf032f8b41f44ee5bac43d6b4026bf4acd9995fe6d9f13e5001c7789ed",
+		merkle:   "9329198a9da4c1a5ca1e84fd22da73c0d1ae5ad091cc8ea6ebf8f00996a2db45",
+		nonce:    168553,
+		hash:     "00009ece2400256262b63f068e80aea26f7f6a5682a6688428783a01ace7b34c",
 	},
 }
 
@@ -125,12 +125,12 @@ func katTx() Transaction {
 
 func TestTransactionKAT(t *testing.T) {
 	tx := katTx()
-	if id := tx.ID(); id != "6e2d6d43c9f199651188a98063ca1730567b503a67c273691c6adbfc68129445" {
+	if id := tx.ID(); id != "f9ac5dab63d144232a87371c58c0795d67bfd7ba5ec573c2dcb0c708bb07765f" {
 		t.Fatalf("işlem kimliği %s", id)
 	}
 	want := map[*Params]string{
-		RegtestParams: "ccbc6fbacceccc15bd08cdf514aa55fbf75d5ec1db8389e3ffd80eb1fe17855a",
-		TestnetParams: "60a95f866d91661e7d8c7fcba7ede1275e62a71de4836ca47424b532bf2fa1f7",
+		RegtestParams: "be7b15ee7a9a1ddec37440b73248dae72b36f7537fd6827c2ab534af2d153449",
+		TestnetParams: "cbba7779b2f52f5f37173baccc5cfe7af8b35c0f9804dd7166bbc2a521a3cca3",
 	}
 	for p, w := range want {
 		d, err := p.SigDomain()
@@ -166,7 +166,8 @@ func TestSignatureBoundToNetwork(t *testing.T) {
 	}
 
 	dt3 := "QBTC-SIG-v3|testnet|" + TestnetParams.GenesisHash // v3 gövdesiyle bayt düzeyinde çakışabilirdi
-	for _, old := range []string{"QBTC-TX-v1|qbtc-mainnet", "QBTC-TX-v2|qbtc-mainnet", dt3} {
+	dt4 := "QBTC-SIG-v4|testnet|" + TestnetParams.GenesisHash // v4 gövdesi açık anahtarı içeriyordu
+	for _, old := range []string{"QBTC-TX-v1|qbtc-mainnet", "QBTC-TX-v2|qbtc-mainnet", dt3, dt4} {
 		legacy := tx
 		sig, err := crypto.Sign(alice.SecretKey, legacy.SigningBytes(old))
 		if err != nil {

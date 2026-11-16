@@ -97,7 +97,7 @@ func TestCoinbaseExpiryMustBeZero(t *testing.T) {
 	parent := tipBlock(t, bc)
 	h := parent.Index + 1
 	cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, Amount: BlockSubsidy(h, bc.params),
-		ExpiryHeight: h, IsCoinbase: true}
+		ExpiryHeight: h, IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)}
 	b := &Block{Index: h, Timestamp: bc.now(), Transactions: []Transaction{cb}, PrevHash: parent.Hash}
 	mineAt(t, bc, b)
 	if err := bc.AcceptBlock(b); !errors.Is(err, ErrBadCoinbase) {

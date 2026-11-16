@@ -182,7 +182,7 @@ func TestASERTOnChain(t *testing.T) {
 	}
 
 	// Ucun beklenenden kolay hedefiyle kazılmış blok: ucuz ret, önbellek ve gövde kontrolü yok.
-	cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, Amount: BlockSubsidy(tip.Index+1, p), IsCoinbase: true}
+	cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, Amount: BlockSubsidy(tip.Index+1, p), IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize)}
 	easy := &Block{Index: tip.Index + 1, Timestamp: a.now(), Transactions: []Transaction{cb}, PrevHash: tip.Hash}
 	easy.Transactions[0].Nonce = uint64(easy.Index)
 	if err := easy.MineBlock(p.Bits); err != nil {
@@ -361,7 +361,7 @@ func TestASERTDifficultyGates(t *testing.T) {
 	}
 
 	orphan := func(bits uint32) *Block {
-		cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, Amount: 1, IsCoinbase: true, Nonce: uint64(tip.Index + 5)}
+		cb := Transaction{Sender: CoinbaseSender, Receiver: newKey(t).Address, Amount: 1, IsCoinbase: true, Commitment: make([]byte, CoinbaseCommitmentSize), Nonce: uint64(tip.Index + 5)}
 		b := &Block{Index: tip.Index + 5, Timestamp: a.now(), Transactions: []Transaction{cb},
 			PrevHash: strings.Repeat("ab", 32)}
 		if err := b.MineBlock(bits); err != nil {

@@ -167,8 +167,9 @@ func (p *Params) powLimitTarget() *big.Int {
 // ASERT kırpılınca açığı silmez, biriktirir.
 const mainnetMaxPowLimitBits = 0x1d00ffff
 
-// sigTag imza alanının sürüm etiketidir.
-const sigTag = "QBTC-SIG-v4"
+// sigTag imza alanının sürüm etiketidir. v5'te açık anahtar imzalanan gövdeden çıktı ve gövdeye
+// taahhüt yuvası eklendi (transaction.go).
+const sigTag = "QBTC-SIG-v5"
 
 var (
 	// MainnetParams: genesis kasıtlı olarak tanımsızdır. Genesis bugünden sabitlenirse onu bilen
@@ -187,8 +188,8 @@ var (
 		PowLimitBits:     0x2000ffff,
 		GenesisTimestamp: 1794096000, // 2026-11-08T00:00:00Z
 		GenesisMessage:   "Q-BTC testnet genesis 2026-11-08",
-		GenesisNonce:     19141,
-		GenesisHash:      "0000f47b1643fb44236004eadf3a39b5e1999ccfa4f6cb941f14975ee07b1be0",
+		GenesisNonce:     168553,
+		GenesisHash:      "00009ece2400256262b63f068e80aea26f7f6a5682a6688428783a01ace7b34c",
 		TargetSpacing:    60,
 	})
 
@@ -204,8 +205,8 @@ var (
 		PowLimitBits:     0x200fffff,
 		GenesisTimestamp: 1794096000,
 		GenesisMessage:   "Q-BTC regtest genesis",
-		GenesisNonce:     10,
-		GenesisHash:      "0c361f2df64b66a48865cda689233554a7faa517a584dd034ce882a987d20eef",
+		GenesisNonce:     2,
+		GenesisHash:      "0c9f0d89a173a869e2293a062ddbf9c2a1c3c71c8dc4f7a0d2d8828ebcf6e79d",
 		TargetSpacing:    60,
 	}))
 )

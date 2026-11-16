@@ -140,7 +140,7 @@ func TestP2PRejectsForgedCoinbase(t *testing.T) {
 		PrevHash:  prev.Hash,
 		Transactions: []core.Transaction{{
 			Sender: core.CoinbaseSender, Receiver: mallory.Address, Nonce: uint64(prev.Index + 1),
-			Amount: 21_000_000 * core.Coin, IsCoinbase: true,
+			Amount: 21_000_000 * core.Coin, IsCoinbase: true, Commitment: make([]byte, core.CoinbaseCommitmentSize),
 		}},
 	}
 	if err := forged.MineBlock(bc.Bits()); err != nil {
@@ -193,7 +193,7 @@ func TestP2PAcceptsValidBlock(t *testing.T) {
 	b := &core.Block{
 		Index: prev.Index + 1, Timestamp: prev.Timestamp + 1, PrevHash: prev.Hash,
 		Transactions: []core.Transaction{{Sender: core.CoinbaseSender, Receiver: miner.Address, Amount: core.RegtestParams.InitialSubsidy,
-			Nonce: uint64(prev.Index + 1), IsCoinbase: true}},
+			Nonce: uint64(prev.Index + 1), IsCoinbase: true, Commitment: make([]byte, core.CoinbaseCommitmentSize)}},
 	}
 	if err := b.MineBlock(dst.Bits()); err != nil {
 		t.Fatal(err)
