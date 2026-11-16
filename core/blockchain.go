@@ -87,6 +87,9 @@ type Blockchain struct {
 	inflight inflightSet // tam doğrulaması süren bloklar (inflight.go); kendi kilidi vardır
 	// blockCache yalnızca API'nin gövde okumaları içindir (bkz. blockcache.go); kendi kilidi vardır.
 	blockCache *blockCache
+	// beforeBlockLoad (yalnızca testler) önbellek kaçırmasında kilitsiz disk okumasından önce
+	// çağrılır; zincir oluşturulurken atanır, sonra değişmez.
+	beforeBlockLoad func()
 
 	// Blok indeksi (bkz. chain.go). Hepsi mu ile korunur.
 	index     map[string]*indexEntry // özet → indeks kaydı (ana ve yan bloklar)

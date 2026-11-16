@@ -19,7 +19,8 @@ import (
 //     ortak kovası). Yetmezse hiç harcamadan 429 döner; aynı istemcinin önbellekten gelen
 //     okumaları sürer. Varsayılanlarla istemci başına saniyede en çok ~2 kaçırma.
 //   - Genel sınır: aynı anda en çok blockMissSlots eski blok kaçırması diskten okunur; dolunca
-//     beklemeden 503 döner (zincir kilidi tutulurken beklenmez).
+//     beklemeden 503 döner (kapı zincir kilidi altında sorulur, beklemez; yuva disk okuması ve
+//     çözme bitene kadar, kilit dışında tutulur).
 //   - Uç yuvası: uç kaçırmaları genel sınırı değil kendi tek yuvalarını kullanır (tipMissSlots).
 //     Yeni uç önbelleğe ilk API okumasında girer; eski blok yağmuru genel yuvaları doldursa da
 //     uç okunabilsin. Ayrı yuva, ucu önbellekten düşürüp (8 kayıt) çok IP'den aynı anda ucu

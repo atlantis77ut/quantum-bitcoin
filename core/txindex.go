@@ -119,29 +119,30 @@ func (r BlockReads) TxByID(id string) (*Block, int, int64, error) {
 	if !IsHashHex(id) {
 		return nil, 0, 0, fmt.Errorf("%w: geçersiz kimlik", ErrUnknownTx)
 	}
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
-	data, err := bc.db.Get(txKey(id), nil)
-	if errors.Is(err, leveldb.ErrNotFound) {
-		return nil, 0, 0, ErrUnknownTx
-	}
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("işlem indeksi okunamadı: %w", err)
-	}
 	var loc txLoc
-	if err := json.Unmarshal(data, &loc); err != nil || !IsHashHex(loc.Block) || loc.Pos < 0 {
-		return nil, 0, 0, fmt.Errorf("%w: işlem indeksi kaydı %s", ErrCorruptState, id)
-	}
-	e, ok := bc.index[loc.Block]
-	if !ok || !bc.isMain(e) {
-		return nil, 0, 0, fmt.Errorf("%w: işlem %s ana zincirde olmayan %s bloğunu gösteriyor", ErrCorruptState, id, loc.Block)
-	}
-	b, err := bc.cachedBlockLocked(e.Hash, r.gate)
+	b, conf, err := r.mainBlock(func() (*indexEntry, error) {
+		data, err := bc.db.Get(txKey(id), nil)
+		if errors.Is(err, leveldb.ErrNotFound) {
+			return nil, ErrUnknownTx
+		}
+		if err != nil {
+			return nil, fmt.Errorf("işlem indeksi okunamadı: %w", err)
+		}
+		if err := json.Unmarshal(data, &loc); err != nil || !IsHashHex(loc.Block) || loc.Pos < 0 {
+			return nil, fmt.Errorf("%w: işlem indeksi kaydı %s", ErrCorruptState, id)
+		}
+		e, ok := bc.index[loc.Block]
+		if !ok || !bc.isMain(e) {
+			return nil, fmt.Errorf("%w: işlem %s ana zincirde olmayan %s bloğunu gösteriyor", ErrCorruptState, id, loc.Block)
+		}
+		return e, nil
+	})
 	if err != nil {
 		return nil, 0, 0, err
 	}
+	// Konum denetimi kilit dışındadır: loc kilit altındaki anlık görüntüden, gövde değişmez.
 	if loc.Pos >= len(b.Transactions) || b.Transactions[loc.Pos].ID() != id {
 		return nil, 0, 0, fmt.Errorf("%w: işlem %s, %s bloğunun %d. sırasında değil", ErrCorruptState, id, loc.Block, loc.Pos)
 	}
-	return b, loc.Pos, bc.tip.Height - e.Height + 1, nil
+	return b, loc.Pos, conf, nil
 }
