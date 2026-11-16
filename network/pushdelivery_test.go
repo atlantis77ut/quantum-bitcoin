@@ -109,7 +109,15 @@ func TestPushSlotHeldUntilDelivery(t *testing.T) {
 	first := make(chan error, 1)
 	start := time.Now()
 	go func() { first <- ps.pushOnce(addr, []byte(`{"type":"block"}`+"\n"), pushID{}, true) }()
-	time.Sleep(50 * time.Millisecond)
+	for held := false; !held; { // ilk itme yuvayı alana kadar bekle (yük altında sıra kaymasın)
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("ilk itme yuvayı almadı")
+		}
+		ps.pushSlots.mu.Lock()
+		_, held = ps.pushSlots.holders[addr]
+		ps.pushSlots.mu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
 	ps.pushSlots.acquire("ikinci", &ps.pushLim)
 	got := time.Since(start)
 	ps.pushSlots.release("ikinci")

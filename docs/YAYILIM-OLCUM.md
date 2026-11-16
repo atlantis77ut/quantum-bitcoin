@@ -59,7 +59,7 @@ Doğrulama süreleri (`accept_ms`) GitHub'ın paylaşımlı makinesinin CPU'suyl
 ## Topolojiler
 
 - **`line`:** 0 → 1 → … → h. Depola-ilet gecikmesinin atlama başına birikimini gösterir.
-- **`star-hub`:** merkez kazar, h yaprağa iter. Paylaşılan hattı gösterir; 2 kopya sınırını döngü arayüzünde gösteremez (aşağıda "Kalanlar ve sınırlar").
+- **`star-hub`:** merkez kazar, h yaprağa iter. Paylaşılan hattı ve iki itme yuvasını gösterir (yuva teslime kadar tutulduğundan, "İtme yuvası teslim ölçümü"); ilk ölçüm bu değişiklikten önce yapıldı.
 - **`star-leaf`:** bir yaprak kazar, merkeze iter, merkez diğer yapraklara iter (merkez kazıcıyı eş olarak almaz; yoksa ucunu yoklayıp bloğu ondan çekerdi). Gömülü liste işletmecilerinin yarış avantajını (γ) gösterir: merkez bloğu herkesten önce alır ([ES-KESFI.md](ES-KESFI.md) §6). `nodes` alanında ilk düğüm merkezdir.
 
 ## Önerilen matris
@@ -118,7 +118,7 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 | 50 | 1,17 | 1,40 | 1,62 |
 | 100 | 0,74 | 0,97 | 1,19 |
 
-**star-hub, 8 yaprak** (merkezin yukarı hattı 8 kopyayı taşır; 2 Mbit/sn hücresi ölçüm yapıntısıdır, "Kalanlar ve sınırlar"):
+**star-hub, 8 yaprak** (merkezin yukarı hattı 8 kopyayı taşır; itme yuvası teslim değişikliğinden önce, 2 Mbit/sn hücresi o zamanki ölçüm yapıntısıdır, "İtme yuvası teslim ölçümü"):
 
 | Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
 |---|---|---|---|
@@ -170,10 +170,11 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 
 ## Kalanlar ve sınırlar
 
-- **Star-hub hücreleri iki itme yuvasını ölçmez.** Döngü arayüzünde MSS ~32–64 KB olduğundan Linux gönderen soketin tamponunu ~2,6 MB'a büyütür ve ~1,8 MB'lık bloğun tamamı çekirdek tamponuna sığar. Düğümün yazması blok kısıtlı hattan geçmeden biter, itme yuvası erken boşalır ve 8 kopya birlikte gider. Kanıt: 10 Mbit/sn'de 8 yaprak ikişer ikişer (~2,9 / 5,8 / 8,7 / 11,6 sn) değil, hepsi ~11,6 sn'de geldi. 2 Mbit/sn'de her kopya 0,25 Mbit/sn'ye düşer, alıcının asgari hızının altında kalır ve hiçbir yaprağa ulaşmaz; bu hücre ölçüm yapıntısıdır, düğüm hatası değildir.
+- **İtme yuvası teslim ölçümü (feat/push-slot-delivery, Actions 43893936454, `profile: hub`, 5 ölçüm, 50 ms).** Yuva artık alıcı bloğu işleyip kapatınca boşalır ([MAINNET-ONCESI.md](MAINNET-ONCESI.md), blok süresi maddesi). 10 Mbit/sn'de yapraklar ikişer gelir: 3,10 / 3,10 / 6,23 / 6,25 / 9,28 / 9,32 / 12,41 / 12,42 sn; en geç yaprağın ortancası 12,37 sn (önceki 11,66 sn; fark kopyalar arası bekleme ve kapatma turudur). 2 Mbit/sn'de yapraklar ikişer ~14,6 / 29 / 44 / 58 sn'de gelir; 40 varıştan 39'u gerçekleşti (bir ölçümde 7. yaprak 120 sn içinde almadı), en geç yaprağın ortancası 45,9 sn. Bu hücre kopya başına ~1 Mbit/sn ile alıcının asgari hızının (≈1,05 Mbit/sn) sınırındadır.
+- **Önceki ölçümde star-hub iki itme yuvasını ölçmüyordu (giderildi).** Döngü arayüzünde MSS ~32–64 KB olduğundan Linux gönderen soketin tamponunu ~2,6 MB'a büyütür ve ~1,8 MB'lık bloğun tamamı çekirdek tamponuna sığar. Düğümün yazması blok kısıtlı hattan geçmeden biter, itme yuvası erken boşalır ve 8 kopya birlikte gider. Kanıt: 10 Mbit/sn'de 8 yaprak ikişer ikişer (~2,9 / 5,8 / 8,7 / 11,6 sn) değil, hepsi ~11,6 sn'de geldi. 2 Mbit/sn'de her kopya 0,25 Mbit/sn'ye düşer, alıcının asgari hızının altında kalır ve hiçbir yaprağa ulaşmaz; bu hücre ölçüm yapıntısıdır, düğüm hatası değildir.
   - Proxy tarafında çözüm yok. WSL'de 4 MB'ı 2 MB/sn okuyan bir alıcıya yazma denemesinde çekirdeğin emdiği miktar: varsayılan ~2,26 MB; dinleyicide 32 KiB alma tamponu ~2,42 MB; dinleyicide MSS 1460 ~1,22 MB; ikisi birden ~0,58 MB. Yalnızca gönderenin (düğümün) tamponunu 64 KiB'a sabitlemek ~0,19 MB'a indirir; bu düğüm kodu değişikliğidir.
   - Hub hücrelerinde en yavaş düğüm süresi her iki durumda da ≈ 8·S/U olduğundan (yuvalar sırayla gönderse de hepsi birlikte gönderse de uplink aynı baytı taşır) ≥10 Mbit/sn sonuçları en yavaş yaprak için geçerlidir; ilk yaprakların erken varışı ve 2 Mbit/sn hücresi geçerli değildir.
-  - Gerçek ağda da benzer bir risk olabilir: MSS 1460'ta başlangıç tamponu küçüktür, ama otomatik ayar ve tamponu şişkin bir uplink yuvanın erken boşalmasına ve yavaş bir kazıcının ikiden çok kopyayı asgari hızın altında göndermesine yol açabilir. Gönderen tamponunu sınırlamak (yüksek gecikmeli hatlarda verimi tampon / RTT ile sınırlar) ya da teslim edilen baytı saymak bir düğüm politikası kararıdır; bu belgede açık bırakılmıştır.
+  - Gerçek ağda da benzer bir risk olabilir: MSS 1460'ta başlangıç tamponu küçüktür, ama otomatik ayar ve tamponu şişkin bir uplink yuvanın erken boşalmasına ve yavaş bir kazıcının ikiden çok kopyayı asgari hızın altında göndermesine yol açabilir. Gönderen tamponunu sınırlamak (yüksek gecikmeli hatlarda verimi tampon / RTT ile sınırlar) ya da teslim edilen baytı saymak bir düğüm politikası kararıydı; kullanıcı yuvayı teslime kadar tutmayı seçti (2026-11-16, yukarıdaki madde).
 
 - **Gerçek çok makineli ölçüm yapılmadı.** Benzetim kayıp, TCP yavaş başlangıcı ve gerçek RTT'deki pencere büyümesi içermez (TCP döngü arayüzündedir, gecikmeyi proxy ekler); gerçek yayılımı iyimser gösterebilir. Karar öncesi en az bir kıtalar arası 3 makineli ölçüm önerilir.
 - **Bütün düğümler 127.0.0.1'dedir:** her alıcı gelen bütün bağlantıları tek adres grubundan görür (grup başına 4 bağlantı, 1 çözümleme yuvası). Bu topolojilerde her alıcının tek kaynağı olduğu için sonuç değişmez; çok kaynaklı gerçek ağdaki grup davranışı benzetilmez.
