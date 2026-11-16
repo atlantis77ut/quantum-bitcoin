@@ -11,11 +11,11 @@ on:
         default: "5"
         required: true
       profile:
-        description: "full (önerilen matris), quick (20 Mbit/sn, 50 ms) ya da hub (star-hub 2 ve 10 Mbit/sn)"
+        description: "full (önerilen matris), quick (20 Mbit/sn, 50 ms), hub (star-hub 2 ve 10 Mbit/sn) ya da doluluk (line, 250 ve 125 işlem)"
         default: full
         required: true
         type: choice
-        options: [full, quick, hub]
+        options: [full, quick, hub, doluluk]
 
 permissions:
   contents: read

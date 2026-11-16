@@ -48,7 +48,7 @@ Rapor makine adı, kullanıcı adı, yol ya da adres içermez; `reproduce` alan�
 
 ### GitHub Actions'ta
 
-Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris, `quick` yalnızca 20 Mbit/sn ve 50 ms ya da `hub` yalnızca 8 yapraklı star-hub, 2 ve 10 Mbit/sn, 50 ms). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
+Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris, `quick` yalnızca 20 Mbit/sn ve 50 ms ya da `hub` yalnızca 8 yapraklı star-hub, 2 ve 10 Mbit/sn, 50 ms ya da `doluluk` yalnızca 3 atlamalı hat, 10 ve 20 Mbit/sn, 50 ms, 250 ve 125 işlemlik blok). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
 
 ```bash
 gh workflow run yayilim-olcum.yml -f runs=5 -f profile=full

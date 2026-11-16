@@ -8,7 +8,9 @@
 #   QBTC_OUT       rapor dizini (varsayılan ./yayilim)
 #   QBTC_RUNS      hücre başına ölçüm (varsayılan 5)
 #   QBTC_PROFILE   full (önerilen matris), quick (yalnızca 20 Mbit/sn, 50 ms; denemelik) ya da
-#                  hub (yalnızca star-hub 8 yaprak, 2 ve 10 Mbit/sn, 50 ms; itme yuvası denetimi)
+#                  hub (yalnızca star-hub 8 yaprak, 2 ve 10 Mbit/sn, 50 ms; itme yuvası denetimi) ya
+#                  da doluluk (line 3 atlama, 10 ve 20 Mbit/sn, 50 ms, 250 ve 125 işlemlik blok;
+#                  eşit hacimde 30 sn sorusu)
 # Çıkış: bütün hücreler 0 döndüyse 0, yoksa 1 (ulaşılmayan ölçüm hata değildir, özette görünür).
 set -u
 
@@ -17,9 +19,9 @@ OUT=${QBTC_OUT:-./yayilim}
 RUNS=${QBTC_RUNS:-5}
 PROFILE=${QBTC_PROFILE:-full}
 case "$PROFILE" in
-full | quick | hub) ;;
+full | quick | hub | doluluk) ;;
 *)
-	echo "bilinmeyen QBTC_PROFILE: $PROFILE (full, quick ya da hub)" >&2
+	echo "bilinmeyen QBTC_PROFILE: $PROFILE (full, quick, hub ya da doluluk)" >&2
 	exit 2
 	;;
 esac
@@ -49,6 +51,21 @@ if [ "$PROFILE" = hub ]; then
 	for m in 2 10; do
 		run "hub8-${m}mbit-50ms" -bench-runs "$RUNS" -bench-prop-topology star-hub -bench-prop-hops 8 \
 			-bench-prop-mbit "$m" -bench-prop-latency 50ms
+	done
+	if awk -F'\t' '$2 != 0 { bad = 1 } END { exit !bad }' "$STATUS"; then
+		exit 1
+	fi
+	exit 0
+fi
+
+# Eşit hacimde 30 sn: 250 işlemlik 60 sn bloğuyla aynı işlem hızı 30 sn'de ~125 işlemlik bloktur.
+# Aynı çalıştırmada 250 işlem de ölçülür ki karşılaştırma aynı makinede olsun.
+if [ "$PROFILE" = doluluk ]; then
+	for m in 10 20; do
+		for txs in 250 125; do
+			run "line3-${m}mbit-50ms-${txs}tx" -bench-runs "$RUNS" -bench-prop-topology line -bench-prop-hops 3 \
+				-bench-prop-mbit "$m" -bench-prop-latency 50ms -bench-prop-txs "$txs"
+		done
 	done
 	if awk -F'\t' '$2 != 0 { bad = 1 } END { exit !bad }' "$STATUS"; then
 		exit 1
