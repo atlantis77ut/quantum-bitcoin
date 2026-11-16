@@ -188,4 +188,3 @@ func TestTxGateGroupCap(t *testing.T) {
 		t.Fatal("reddedilen istek iç anahtar kovasından harcadı")
 	}
 }
-}
