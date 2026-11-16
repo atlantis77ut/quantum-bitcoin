@@ -128,22 +128,31 @@ func (w *deadlineWriter) Write(p []byte) (int, error) {
 // bu yüzden işlem sayısı ayrıca zamana bağlı sınırlanır. Dürüst eş yalnızca kendi kabul ettiği
 // işlemleri yayar: geçersiz biçimli ya da imzalı işlem gönderen eşin (iç anahtarın) işlemleri
 // bir süre bırakılır (imzayı değiştirerek her mesajda yeni kimlikli bir işlem üretmek ret
-// önbelleğini aşardı). Hız kovası dış grubundur. Tor/ters vekil arkasındaki eşler tek adres
-// sayılır, kovayı ve cezayı paylaşır.
+// önbelleğini aşardı). Tor/ters vekil arkasındaki eşler tek adres sayılır, kovayı ve cezayı
+// paylaşır.
+//
+// Hız kovası iç anahtarındır, dış grubun kovası txGroupFactor katı bir tavandır (kullanıcı
+// kararı 2026-11-16, m = 4): aynı /24'teki komşu kendi kovasını tüketip dürüst eşin işlem
+// yayınını kesemez; grubun toplamı tavanla sınırlıdır, yeni iç anahtar bedava yeni bütçe getirmez
+// (tavanın ötesinde). Tavanı doldurmak gruptan txGroupFactor adres ister; o zaman dürüst komşu
+// yine yavaşlar. İşlem başına kova reddi cezasızdır: grup bırakılır, havuz eşitlemesine kalır.
+// Gönderen tarafı (relaybudget.go) iç anahtarın hızının altında (7/8) gönderir.
 const (
 	txRatePerSec  = 64 // dürüst ağ en çok ~4 işlem/sn onaylar (250 işlem / 60 sn)
 	txRateBurst   = 256
+	txGroupFactor = 4 // dış grup tavanı: txGroupFactor × iç anahtar hızı ve ani payı
 	badTxPenalty  = 10 * time.Minute
 	maxTxGateKeys = 10_000
 )
 
-// txGate dış grup başına işlem belirteç kovası ve iç anahtar başına ceza süresidir; grupta
-// pencere içinde innerEscalateK farklı iç anahtar cezalanırsa ceza bütün gruba yükselir
-// (innerkey.go).
+// txGate iç anahtar başına işlem belirteç kovası, dış grup başına tavan kovası ve iç anahtar
+// başına ceza süresidir; grupta pencere içinde innerEscalateK farklı iç anahtar cezalanırsa ceza
+// bütün gruba yükselir (innerkey.go).
 type txGate struct {
 	mu      sync.Mutex
 	now     func() time.Time
-	buckets map[string]*txBucket // dış grup → kova
+	buckets map[string]*txBucket // dış grup → tavan kovası
+	inner   map[string]*txBucket // iç anahtar → kova
 	bans    map[string]time.Time // iç anahtar ya da yükseltilmiş grup → ceza sonu
 	esc     *escalator
 }
@@ -154,12 +163,12 @@ type txBucket struct {
 }
 
 func newTxGate() *txGate {
-	return &txGate{now: time.Now, buckets: map[string]*txBucket{}, bans: map[string]time.Time{},
-		esc: newEscalator()}
+	return &txGate{now: time.Now, buckets: map[string]*txBucket{}, inner: map[string]*txBucket{},
+		bans: map[string]time.Time{}, esc: newEscalator()}
 }
 
 // allow eşin n işlemini kabul etmeye izin verir; iç anahtarı ya da grubu ceza süresindeyse ya
-// da grubun kovası yetmiyorsa reddedilir.
+// da iç anahtarın ya da grubun kovası yetmiyorsa reddedilir (ikisinden de harcanmaz).
 func (g *txGate) allow(id peerID, n int) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -167,14 +176,22 @@ func (g *txGate) allow(id peerID, n int) bool {
 	if g.bannedLocked(id.inner, now) || g.bannedLocked(id.group, now) {
 		return false
 	}
-	b := g.entryLocked(id.group, now)
-	b.tokens = min(txRateBurst, b.tokens+now.Sub(b.last).Seconds()*txRatePerSec)
-	b.last = now
-	if b.tokens < float64(n) {
+	const groupRate, groupBurst = txGroupFactor * txRatePerSec, txGroupFactor * txRateBurst
+	gb := entryLocked(g.buckets, id.group, now, groupRate, groupBurst)
+	ib := entryLocked(g.inner, id.inner, now, txRatePerSec, txRateBurst)
+	gb.refill(now, groupRate, groupBurst)
+	ib.refill(now, txRatePerSec, txRateBurst)
+	if gb.tokens < float64(n) || ib.tokens < float64(n) {
 		return false
 	}
-	b.tokens -= float64(n)
+	gb.tokens -= float64(n)
+	ib.tokens -= float64(n)
 	return true
+}
+
+func (b *txBucket) refill(now time.Time, rate, burst float64) {
+	b.tokens = min(burst, b.tokens+now.Sub(b.last).Seconds()*rate)
+	b.last = now
 }
 
 func (g *txGate) bannedLocked(key string, now time.Time) bool {
@@ -233,30 +250,28 @@ func (g *txGate) banLocked(key string, now time.Time) {
 	g.bans[key] = until
 }
 
-// entryLocked grubun kovasını döndürür, yoksa açar. Tablo doluysa önce dolu kovalar, yine
-// doluysa rastgele bir kayıt silinir; tablo maxTxGateKeys'i aşmaz.
-func (g *txGate) entryLocked(group string, now time.Time) *txBucket {
-	if b, ok := g.buckets[group]; ok {
+// entryLocked tablodaki kovayı döndürür, yoksa dolu açar. Tablo doluysa önce dolu kovalar, yine
+// doluysa rastgele bir kayıt silinir; tablo maxTxGateKeys'i aşmaz. Silinen kova dolu yeniden
+// açılır: iç anahtar tablosunu (ör. bir /48'in /64'leriyle) dolduran saldırgan kovaları
+// sıfırlayabilir, ama grubun tavan kovası (ayrı tablo, grup başına bir kayıt) onu sınırlar.
+func entryLocked(m map[string]*txBucket, key string, now time.Time, rate, burst float64) *txBucket {
+	if b, ok := m[key]; ok {
 		return b
 	}
-	if len(g.buckets) >= maxTxGateKeys {
-		g.pruneLocked(now)
-		for k := range g.buckets {
-			if len(g.buckets) < maxTxGateKeys {
+	if len(m) >= maxTxGateKeys {
+		for k, b := range m {
+			if b.tokens+now.Sub(b.last).Seconds()*rate >= burst {
+				delete(m, k)
+			}
+		}
+		for k := range m {
+			if len(m) < maxTxGateKeys {
 				break
 			}
-			delete(g.buckets, k)
+			delete(m, k)
 		}
 	}
-	b := &txBucket{tokens: txRateBurst, last: now}
-	g.buckets[group] = b
+	b := &txBucket{tokens: burst, last: now}
+	m[key] = b
 	return b
-}
-
-func (g *txGate) pruneLocked(now time.Time) {
-	for k, b := range g.buckets {
-		if b.tokens+now.Sub(b.last).Seconds()*txRatePerSec >= txRateBurst {
-			delete(g.buckets, k)
-		}
-	}
 }

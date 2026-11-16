@@ -143,13 +143,49 @@ func TestTxGateFullTable(t *testing.T) {
 		g.penalize(pid(fmt.Sprint("kötü", i)))
 		g.allow(pid(fmt.Sprint("yoğun", i)), 1)
 	}
-	if len(g.bans) > maxTxGateKeys || len(g.buckets) > maxTxGateKeys {
-		t.Fatalf("tablo %d/%d kayda büyüdü", len(g.bans), len(g.buckets))
+	if len(g.bans) > maxTxGateKeys || len(g.buckets) > maxTxGateKeys || len(g.inner) > maxTxGateKeys {
+		t.Fatalf("tablo %d/%d/%d kayda büyüdü", len(g.bans), len(g.buckets), len(g.inner))
 	}
 	if !g.allow(pid("dürüst"), 1) {
 		t.Fatal("dolu tabloda yeni grup reddedildi")
 	}
-	if len(g.bans) > maxTxGateKeys || len(g.buckets) > maxTxGateKeys {
-		t.Fatalf("tablo %d/%d kayda büyüdü", len(g.bans), len(g.buckets))
+	if len(g.bans) > maxTxGateKeys || len(g.buckets) > maxTxGateKeys || len(g.inner) > maxTxGateKeys {
+		t.Fatalf("tablo %d/%d/%d kayda büyüdü", len(g.bans), len(g.buckets), len(g.inner))
 	}
+}
+
+// İşlem kovası iç anahtarındır: aynı /24'teki komşu kendi kovasını tüketse de dürüst eş geçer;
+// grubun toplamı txGroupFactor katı tavanla sınırlıdır ve tavan da zamanla dolar. Reddedilen
+// istek hiçbir kovadan harcamaz.
+func TestTxGateGroupCap(t *testing.T) {
+	g := newTxGate()
+	now := time.Unix(1_900_000_000, 0)
+	g.now = func() time.Time { return now }
+	honest := peerIDFor("203.0.113.200")
+	for i := 1; i <= txGroupFactor; i++ {
+		id := peerIDFor(fmt.Sprintf("203.0.113.%d", i))
+		if !g.allow(id, txRateBurst) {
+			t.Fatalf("%d. iç anahtar kendi kovasını alamadı", i)
+		}
+		if g.allow(id, 1) {
+			t.Fatalf("%d. iç anahtar kovasını aştı", i)
+		}
+	}
+	if g.allow(honest, 1) {
+		t.Fatal("grup tavanı dolduğu halde kabul edildi")
+	}
+	if !g.allow(peerIDFor("203.0.114.1"), txRateBurst) {
+		t.Fatal("başka grup etkilendi")
+	}
+	now = now.Add(time.Second) // grup tavanı txGroupFactor × txRatePerSec, iç anahtar txRatePerSec dolar
+	if !g.allow(honest, txRatePerSec) {
+		t.Fatal("tavan dolunca dürüst eş geçmedi")
+	}
+	if g.allow(peerIDFor("203.0.113.1"), txRatePerSec+1) {
+		t.Fatal("iç anahtar saniyede txRatePerSec'ten fazla doldu")
+	}
+	if !g.allow(peerIDFor("203.0.113.1"), txRatePerSec) {
+		t.Fatal("reddedilen istek iç anahtar kovasından harcadı")
+	}
+}
 }

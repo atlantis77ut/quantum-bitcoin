@@ -6,15 +6,17 @@ import (
 )
 
 // İç anahtar (docs/ES-KIMLIGI.md §4 adım 3; kullanıcı kararı 2026-11-13). Gelen eş iki anahtarla
-// tanınır: dış grup (IPv4 /24, IPv6 /48) kotaların ve ortak bütçelerin (bağlantı, çözümleme,
-// sunum yuvaları, işlem hız kovası) sınırıdır; iç anahtar (IPv4 /32, IPv6 /64) ceza, geri
-// çevirme ve blokla kazanılan korumanın anahtarıdır. Böylece aynı /24'teki bir kiracı komşusunu
-// tek bir geçersiz mesajla cezalandıramaz; yeni bir iç anahtar da grubun bütçesini paylaşır,
-// bedava yeni bütçe getirmez. Bir grupta innerEscalateWindow içinde innerEscalateK farklı iç
-// anahtar cezalanırsa ceza bütün gruba yükselir: /24 içinde adres değiştiren (ya da bir /48
-// içinde ~65.000 /64 alan) saldırgan bir pencerede en çok innerEscalateK-1 ceza alabilir.
-// Pencere ceza süresinden kısa olduğundan sürekli hız pencere başına bu kadardır (geri
-// çevirmede grup başına saatte ~12, eskiden 1); bu, pencere kararının bilinen bedelidir.
+// tanınır: dış grup (IPv4 /24, IPv6 /48) kotaların ve ortak bütçelerin (bağlantı, çözümleme, sunum
+// yuvaları, işlem hızının grup tavanı) sınırıdır; iç anahtar (IPv4 /32, IPv6 /64) ceza, geri
+// çevirme, blokla kazanılan koruma ve işlem hız kovasının anahtarıdır (quota.go). Böylece aynı
+// /24'teki bir kiracı komşusunu tek bir geçersiz mesajla cezalandıramaz; yeni bir iç anahtar da
+// grubun kotalarını paylaşır; işlem hızında kendi kovasını alır ama grubun toplamı tavanla
+// sınırlıdır (quota.go), tavanın ötesinde bedava yeni bütçe getirmez. Bir grupta
+// innerEscalateWindow içinde innerEscalateK farklı iç anahtar cezalanırsa ceza bütün gruba
+// yükselir: /24 içinde adres değiştiren (ya da bir /48 içinde ~65.000 /64 alan) saldırgan bir
+// pencerede en çok innerEscalateK-1 ceza alabilir. Pencere ceza süresinden kısa olduğundan sürekli
+// hız pencere başına bu kadardır (geri çevirmede grup başına saatte ~12, eskiden 1); bu, pencere
+// kararının bilinen bedelidir.
 
 const (
 	innerEscalateK      = 3
