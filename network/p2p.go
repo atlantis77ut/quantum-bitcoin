@@ -75,7 +75,8 @@ type message struct {
 	Version  uint32 `json:"version,omitempty"`
 	Services uint64 `json:"services,omitempty"`
 
-	// Adres öğrenme (addr.go): Network gönderenin genesis özeti, Addrs "ip:port" listesidir.
+	// Network gönderenin genesis özetidir; sürüm 4'ten beri stamp her mesaja yazar (netid.go;
+	// önce yalnızca adres öğrenmede vardı). Addrs "ip:port" listesidir (addr.go).
 	Network string   `json:"network,omitempty"`
 	Addrs   []string `json:"addrs,omitempty"`
 	// Probe yedek adayı sınamasının belirtecidir (backup.go): kendi sunucumuz görürse aday
@@ -110,9 +111,10 @@ type message struct {
 // Sürüm 2 uç beklemesini (msgWaitTip/msgTip, tippoll.go), sürüm 3 adres öğrenmeyi
 // (msgGetAddr/msgAddr, addr.go) ekledi; ikisi de yeni istek türleri olduğundan eski eşlerle
 // uyumludur. Port alanı (yankı) isteğe bağlı bir alandır, eski düğümler yok sayar; sürüm
-// değişmedi.
+// değişmedi. Sürüm 4 ağ kimliğini (Network, genesis özeti) her mesaja yazar (netid.go); alanı
+// boş gelen mesaj kabul edilir, bu yüzden eski eşlerle uyumludur.
 const (
-	protocolVersion uint32 = 3
+	protocolVersion uint32 = 4
 	minPeerVersion  uint32 = 0
 	servicePruned   uint64 = 1 << 0 // eski blok gövdelerini sunmayabilir (henüz konmaz ve okunmaz)
 	localServices   uint64 = 0      // tam geçmişli düğüm: hiçbir bit konmaz
@@ -132,9 +134,11 @@ func stamped(m message) message {
 	return m
 }
 
-// stamp stamped gibidir; dinliyorsak dinleme portumuzu da yazar (Port).
+// stamp stamped gibidir; ağ kimliğimizi (Network) ve dinliyorsak dinleme portumuzu (Port) da
+// yazar.
 func (ps *P2PServer) stamp(m message) message {
 	m = stamped(m)
+	m.Network = ps.genesis
 	m.Port = uint16(ps.listenPort.Load())
 	return m
 }
@@ -184,6 +188,11 @@ type P2PServer struct {
 
 	// listenPort Serve'ün dinleyicisinin portudur (0: dinlemiyor); stamp her mesaja yazar.
 	listenPort atomic.Uint32
+	// genesis zincirin genesis özetidir (ağ kimliği); stamp her mesaja yazar (netid.go).
+	genesis string
+	// netWarn yapılandırılmış eşler için "başka ağda" uyarısının son zamanlarıdır (netid.go).
+	netWarnMu sync.Mutex
+	netWarn   map[string]time.Time
 
 	// Ortak yuva havuzları; her birinin bir payı korunan gruplara ayrılmıştır (peers.go).
 	conns   *slotPool
@@ -345,7 +354,9 @@ func NewP2PServer(listenAddr string, bc *core.Blockchain) *P2PServer {
 		tipCh:     make(chan struct{}),
 	}
 	ps.send = ps.sendTo
-	name, _ := bc.Network()
+	name, genesis := bc.Network()
+	ps.genesis = genesis
+	ps.netWarn = map[string]time.Time{}
 	ps.localAddrs = name == core.RegtestParams.Name
 	return ps
 }
@@ -477,6 +488,9 @@ func (ps *P2PServer) handleConnection(conn net.Conn, id peerID) {
 	}
 	if !ps.versionOK(msg.Version) {
 		ps.log.Debug("eş sürümü desteklenmiyor; mesaj bırakıldı", "remote", remote, "version", msg.Version)
+		return
+	}
+	if ps.dropOtherNetwork(msg, remote) {
 		return
 	}
 
@@ -771,6 +785,11 @@ func (ps *P2PServer) request(peer string, req message, limit int64) (*message, e
 	}
 	if !ps.versionOK(resp.Version) {
 		return nil, fmt.Errorf("%w: %d", errPeerVersion, resp.Version)
+	}
+	// Başka ağdaki eş ulaşılmış sayılmaz (adres yanıtlarımıza girmez); yanıtı kullanılmaz.
+	if ps.otherNetwork(resp.Network) {
+		ps.warnOtherNetwork(peer, resp.Network, time.Now())
+		return nil, fmt.Errorf("%w: %s", errWrongNetwork, resp.Network)
 	}
 	ps.noteReached(peer, conn.RemoteAddr(), time.Now())
 	return &resp, nil
