@@ -446,7 +446,9 @@ func (api *APIServer) handleTransaction(w http.ResponseWriter, r *http.Request) 
 // handleMerkleProof ana zincirdeki bir işlemin Merkle kanıtını işlem indeksinden döndürür. Kanıt
 // dahil olmayı kanıtlar; index ve tx_count başlıkla bağlanmaz. merkle_root, block_hash, height ve
 // confirmations da bu düğümün iddiasıdır: istemci kökü ve derinliği kendi doğruladığı başlık
-// zincirinden almalıdır.
+// zincirinden almalıdır. body (kanonik gövde, hex) ve witness_hash hafif istemci içindir: istemci
+// kimliği bunlardan kendisi hesaplar (core.TxIDFromParts), kanıtı o kimlikle doğrular ve içeriği
+// gövdeden okur (core.DecodeTxBody); yanıttaki txid'ye güvenmez.
 func (api *APIServer) handleMerkleProof(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if !core.IsHashHex(id) {
@@ -473,6 +475,8 @@ func (api *APIServer) handleMerkleProof(w http.ResponseWriter, r *http.Request) 
 	for i := range proof {
 		hexProof[i] = hex.EncodeToString(proof[i][:])
 	}
+	tx := &b.Transactions[pos]
+	wit := tx.WitnessHash()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"txid":          id,
 		"block_hash":    b.Hash,
@@ -482,6 +486,8 @@ func (api *APIServer) handleMerkleProof(w http.ResponseWriter, r *http.Request) 
 		"merkle_root":   b.MerkleRoot,
 		"proof":         hexProof,
 		"confirmations": confirmations,
+		"body":          hex.EncodeToString(tx.BodyBytes()),
+		"witness_hash":  hex.EncodeToString(wit[:]),
 	})
 }
 

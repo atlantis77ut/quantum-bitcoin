@@ -79,6 +79,8 @@ func TestMerkleProofEndpoint(t *testing.T) {
 			MerkleRoot    string   `json:"merkle_root"`
 			Proof         []string `json:"proof"`
 			Confirmations int64    `json:"confirmations"`
+			Body          string   `json:"body"`
+			WitnessHash   string   `json:"witness_hash"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("sıra %d: %d, %v", i, rec.Code, err)
@@ -93,6 +95,28 @@ func TestMerkleProofEndpoint(t *testing.T) {
 		}
 		if !core.VerifyMerkleProof(decodeHash32(t, body.TxID), body.Index, body.TxCount, proof, root) {
 			t.Fatalf("sıra %d: kanıt başlığın köküne çıkmadı", i)
+		}
+
+		// Hafif istemci: kimliği yanıttaki txid'den değil gövde ve tanık özetinden hesaplar,
+		// kanıtı başlığın köküne karşı doğrular, içeriği gövdeden okur.
+		raw, err := hex.DecodeString(body.Body)
+		if err != nil {
+			t.Fatalf("sıra %d: gövde hex %v", i, err)
+		}
+		id := core.TxIDFromParts(raw, decodeHash32(t, body.WitnessHash))
+		if hex.EncodeToString(id[:]) != tx.ID() {
+			t.Fatalf("sıra %d: gövde ve tanık özetinden kimlik farklı", i)
+		}
+		if !core.VerifyMerkleProof(id, body.Index, body.TxCount, proof, root) {
+			t.Fatalf("sıra %d: hesaplanan kimlikle kanıt köke çıkmadı", i)
+		}
+		dec, err := core.DecodeTxBody(raw)
+		if err != nil {
+			t.Fatalf("sıra %d: gövde çözülemedi: %v", i, err)
+		}
+		if dec.Receiver != tx.Receiver || dec.Amount != tx.Amount || dec.Sender != tx.Sender ||
+			dec.IsCoinbase != (i == 0) || dec.Nonce != tx.Nonce {
+			t.Fatalf("sıra %d: çözülen gövde %+v, beklenen %+v", i, dec, tx)
 		}
 	}
 
