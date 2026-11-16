@@ -50,6 +50,7 @@ type MiningInfo struct {
 
 	TargetSpacing int64
 	DeepReorg     bool
+	MissingData   bool
 	BelowMinWork  bool
 }
 
@@ -69,6 +70,7 @@ func (bc *Blockchain) MiningInfo(blocks int64) (MiningInfo, error) {
 		Work:          new(big.Int),
 		TargetSpacing: bc.params.TargetSpacing,
 		DeepReorg:     bc.deepReorg != nil,
+		MissingData:   bc.dataAlarm != nil,
 		BelowMinWork:  tip.work.Cmp(bc.params.minChainWork()) < 0,
 	}
 	next, err := bc.expectedBitsLocked(tip.Hash, nil)

@@ -325,8 +325,16 @@ func (bc *Blockchain) markInvalidLocked(batch *leveldb.Batch, e *indexEntry) err
 // bağlar ve bütün durum değişikliğini (bakiyeler, nonce'lar, undo kayıtları, yükseklik
 // tablosu, uç) tek bir atomik batch ile yazar. Yeni daldaki bir blok durum kuralını ihlal
 // ederse o blok ve torunları geçersiz işaretlenir; geçerli önek uçtan fazla iş taşıyorsa
-// zincir öneke geçer, taşımıyorsa uç değişmez.
-func (bc *Blockchain) activateLocked(target *indexEntry) error {
+// zincir öneke geçer, taşımıyorsa uç değişmez. Bir bloğun gövdesi ya da undo kaydı diskte
+// yoksa hata eskisi gibi döner (geçiş yok, geçersiz işaret yok) ve kalıcı eksik veri alarmı
+// verilir (dataalarm.go).
+func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
+	defer func() {
+		var md *missingDataError
+		if errors.As(err, &md) {
+			bc.dataAlarmLocked(md, target)
+		}
+	}()
 	fork, err := bc.forkPoint(target)
 	if err != nil {
 		return err
@@ -515,6 +523,9 @@ type undoItem struct {
 
 func (bc *Blockchain) loadUndo(hash string) ([]undoItem, error) {
 	data, err := bc.db.Get([]byte(prefixUndo+hash), nil)
+	if errors.Is(err, leveldb.ErrNotFound) {
+		return nil, &missingDataError{hash: hash, kind: dataUndo, cause: ErrCorruptState}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: undo kaydı yok (%s): %v", ErrCorruptState, hash, err)
 	}

@@ -106,13 +106,14 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 - **Model iyimserdir:** sabit hashrate payı ve Poisson blok zamanları varsayar; selfish mining yoktur. Yetim bloklar dürüst hashrate'in bir kısmını boşa harcatır ve saldırganın payını fiilen büyütür (60 sn'de Bitcoin'den daha çok): yan blok oranı s ise saldırganın fiilî payı yaklaşık q / (q + p·(1 − s))'dir. q de bilinmez: tablodaki satırlar varsayımdır, ölçüm değildir.
 - Olasılık kârlılık hesabının yerine geçmez; q ≥ 0,5'te 1'dir ve hiçbir derinlik yetmez.
 
-**Alarmları doğru okuyun.** `deep_reorg_alarm` ya da `below_min_chain_work` true ise hiçbir onaya güvenmeyin. Ama **alarmın false olması güvenli olduğunuz anlamına gelmez**:
+**Alarmları doğru okuyun.** `deep_reorg_alarm`, `missing_data_alarm` ya da `below_min_chain_work` true ise hiçbir onaya güvenmeyin. Ama **alarmın false olması güvenli olduğunuz anlamına gelmez**:
 - Derin reorg alarmı ~2 saatlik blok sayısından (`TargetSpacing`'den: 60 sn'de 120, 30 sn'de 240 blok) derin reorg'da kalıcı olarak açılır. Eşik süreye değil blok sayısına bağlıdır: hashrate çökerse bu kadar blok çok daha uzun sürer, taban zorluğunda bir blok selinde dakikalar içinde dolar.
 - Tipik bir çift harcama yalnızca borsanın onay derinliğini geri sarar, bu yüzden alarmı hiç tetiklemez.
 - Eşiğin altındaki art arda reorg'lar sayılmaz.
 - Alarm saldırıdan sonra çalar, saldırıyı önlemez.
 - Alarm tek düğümün gözlemidir; reorg sırasında kapalı olan düğüm onu görmez.
 - Alarmı yalnızca operatör, olayı inceledikten sonra kapatabilir (`-clear-reorg-alarm`).
+- Eksik veri alarmı (`missing_data_alarm`), düğüm indeksindeki bir bloğun gövdesini ya da undo kaydını diskte bulamadığı için daha çok işli zincire geçemediğinde kalıcı olarak açılır: düğüm hafif zincirde kalmış olabilir. Bugün bu yalnızca disk arızası ya da elle silinmiş veri demektir. Diski ve yedeği inceleyin; alarmı yalnızca operatör kapatabilir (`-clear-data-alarm`).
 
 **Ağı dışarıdan izleyin.** Düğümün `/mininginfo` ucu tek düğümün gözlediği hashrate tahminini ve yan blok oranını (`stale_rate`) verir; ama bu bir düğümün görüşüdür, izleme birden çok bağımsız düğüm ve dış araçlarla yapılmalıdır. Şunlar çekimleri durdurma sinyalidir:
 - blok aralığının ya da zorluğun ani değişmesi,

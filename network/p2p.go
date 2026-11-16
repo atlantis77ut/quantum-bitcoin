@@ -54,7 +54,7 @@ const (
 
 // Mesaj türleri. Her bağlantıda tek bir mesaj (ve istekse tek bir yanıt) taşınır.
 const (
-	msgBlock      = "block"      // blok duyurusu ya da getblock yanıtı
+	msgBlock      = "block"      // blok duyurusu ya da getblock yanıtı (Block boşsa "bende yok")
 	msgGetHeaders = "getheaders" // Locator → headers
 	msgHeaders    = "headers"
 	msgGetBlock   = "getblock" // Hash → block
@@ -98,6 +98,14 @@ type message struct {
 // minPeerVersion yükseltilir; altındaki mesajlar ve yanıtlar cezasız bırakılır (sürüm farkı
 // dürüst eşte de olur).
 //
+// Yetenek bitleri yalnızca ipucudur (doğrulanmaz). servicePruned olumsuz bir bittir: ileride
+// budanmış düğüm eski gövdeleri sunmadığını onunla bildirir. Olumlu bir "tam geçmiş" biti
+// seçilmedi: bit alanından önceki ve bugünkü bütün düğümler (Services 0) tam geçmişlidir, olumlu
+// bit onları budanmışlardan ayırmak için protokol sürümünü artırmayı gerektirirdi. Bugün hiçbir
+// düğüm biti koymaz ve kod biti okumaz (budama lansmandan sonra). Sunulamayan blok (bilinmeyen,
+// geçersiz ya da gövdesi diskte olmayan) eskisi gibi boş msgBlock'la yanıtlanır: "bende yok";
+// istemciler (senkronizasyon, uç beklemesi, PeerHasBlock) bunu ceza vermeden başarısız istek sayar.
+//
 // minPeerVersion 0'dır: sürüm alanından önceki (alanı göndermeyen) düğümler de kabul edilir.
 // Sürüm 2 uç beklemesini (msgWaitTip/msgTip, tippoll.go), sürüm 3 adres öğrenmeyi
 // (msgGetAddr/msgAddr, addr.go) ekledi; ikisi de yeni istek türleri olduğundan eski eşlerle
@@ -106,7 +114,8 @@ type message struct {
 const (
 	protocolVersion uint32 = 3
 	minPeerVersion  uint32 = 0
-	localServices   uint64 = 0 // henüz tanımlı yetenek biti yok
+	servicePruned   uint64 = 1 << 0 // eski blok gövdelerini sunmayabilir (henüz konmaz ve okunmaz)
+	localServices   uint64 = 0      // tam geçmişli düğüm: hiçbir bit konmaz
 )
 
 var (

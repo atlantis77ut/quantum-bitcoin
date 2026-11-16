@@ -93,6 +93,7 @@ type Blockchain struct {
 	main      map[int64]string       // ana zincir: yükseklik → özet
 	tip       *indexEntry
 	deepReorg *DeepReorgRecord    // nil değilse kalıcı derin reorg alarmı (bkz. reorgalarm.go)
+	dataAlarm *MissingDataRecord  // nil değilse kalıcı eksik veri alarmı (bkz. dataalarm.go)
 	syncAllow map[string]struct{} // yan zincir sınırı uygulanmayacak bloklar (bkz. sync.go)
 
 	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
@@ -195,6 +196,10 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 		bc.tip = tip
 		bc.lastHash = tip.Hash
 		if err := bc.loadReorgAlarm(); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if err := bc.loadDataAlarm(); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -637,6 +642,9 @@ func (bc *Blockchain) medianTimePast(prev *Block) (int64, error) {
 
 func (bc *Blockchain) getBlock(hash string) (*Block, error) {
 	data, err := bc.db.Get([]byte(hash), nil)
+	if errors.Is(err, leveldb.ErrNotFound) {
+		return nil, &missingDataError{hash: hash, kind: dataBody, cause: err}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("blok okunamadı (%s): %w", hash, err)
 	}
