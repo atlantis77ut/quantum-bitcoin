@@ -3,6 +3,7 @@ package network
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -264,7 +265,7 @@ func (ps *P2PServer) sendLoop(peer string, s *peerSender) {
 // verilir, toplam en çok dialTimeout + sendMax sürer; yazılan her parça blok itme yuvasının
 // ilerlemesine işlenir. Bağlantı kurulamaz ya da en çok earlyBytes yazılmışken koparsa hata
 // errPushEarly'yi sarar.
-func (ps *P2PServer) sendTo(peer string, data []byte) error {
+func (ps *P2PServer) sendTo(peer string, data []byte, block bool) error {
 	conn, err := net.DialTimeout("tcp", peer, dialTimeout)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errPushEarly, err)
@@ -281,5 +282,37 @@ func (ps *P2PServer) sendTo(peer string, data []byte) error {
 	if err != nil && n <= ps.pushLim.earlyBytes {
 		return fmt.Errorf("%w: %w", errPushEarly, err)
 	}
-	return err
+	if err != nil || !block {
+		return err
+	}
+	return ps.awaitDelivery(peer, conn, w.end)
+}
+
+// errNotDelivered tam yazılan blok itmesinin alıcı kapatmadan süresinin dolduğunu söyler; erken
+// sayılmaz (yeniden denenmez): alıcı bağlantıyı tutuyor ama okumuyor.
+var errNotDelivered = errors.New("itilen blok teslim edilmedi (alıcı süre içinde kapatmadı)")
+
+// awaitDelivery blok itmesinin yazması bittikten sonra yuvayı teslime kadar tutar (push.go
+// "Teslim"): yazma yönü kapatılır, alıcının kapatması end'e kadar beklenir. Alıcı itmeye yanıt
+// yazmaz; gelen her şey atılır (en çok 4 KiB, sonrası beklenmeyen veri sayılıp bırakılır).
+func (ps *P2PServer) awaitDelivery(peer string, conn net.Conn, end time.Time) error {
+	ps.pushSlots.drain(peer)
+	if tc, ok := conn.(*net.TCPConn); ok {
+		if err := tc.CloseWrite(); err != nil {
+			return nil // yazılan gitti; kapatılamayan yön teslimi bekletmeye değmez
+		}
+	}
+	if err := conn.SetReadDeadline(end); err != nil {
+		return nil
+	}
+	_, err := io.Copy(io.Discard, io.LimitReader(conn, 4<<10))
+	var ne net.Error
+	switch {
+	case err == nil: // EOF: alıcı kapattı
+		return nil
+	case errors.As(err, &ne) && ne.Timeout():
+		return errNotDelivered
+	default:
+		return nil // sıfırlama: alıcı tam yazmadan sonra kapattı (okunmamış son bayt olabilir)
+	}
 }

@@ -75,7 +75,7 @@ func echoRun(t *testing.T, port uint16) map[string]bool {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
 	ps.syncEvery = time.Hour
 	got := make(chan string, 4)
-	ps.send = func(peer string, _ []byte) error { got <- peer; return nil }
+	ps.send = func(peer string, _ []byte, _ bool) error { got <- peer; return nil }
 	source := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port)))
 	if port == 0 {
 		source = "127.0.0.1:1"

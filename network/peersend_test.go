@@ -147,7 +147,7 @@ func TestPeerSendIsolation(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	got := make(chan string, 4)
-	ps.send = func(peer string, data []byte) error {
+	ps.send = func(peer string, data []byte, _ bool) error {
 		if peer == slow {
 			<-release
 			return nil
@@ -186,7 +186,7 @@ func TestPeerSendOneInFlightBlocksFirst(t *testing.T) {
 	entered := make(chan struct{})
 	gate := make(chan struct{})
 	var once sync.Once
-	ps.send = func(_ string, data []byte) error {
+	ps.send = func(_ string, data []byte, _ bool) error {
 		n := inflight.Add(1)
 		for {
 			m := maxInflight.Load()
@@ -258,7 +258,7 @@ func TestPeerSendBreakerProbe(t *testing.T) {
 	var failing atomic.Bool
 	failing.Store(true)
 	var calls atomic.Int32
-	ps.send = func(string, []byte) error {
+	ps.send = func(string, []byte, bool) error {
 		calls.Add(1)
 		if failing.Load() {
 			return errors.New("ulaşılamadı")

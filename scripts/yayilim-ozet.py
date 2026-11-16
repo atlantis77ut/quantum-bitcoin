@@ -79,8 +79,8 @@ def main():
     hub = load(d, "hub8-10mbit-50ms")
     if hub:
         out.append("## Yaprak varışları (star-hub, 10 Mbit/sn, 50 ms, ilk ölçüm, sn)\n")
-        out.append("İki itme yuvası ölçülebilseydi yapraklar ikişer ikişer gelirdi (~2,9 / 5,8 / 8,7 / 11,6 sn); "
-                   "döngü arayüzünde toplu gelmeleri beklenir (docs/YAYILIM-OLCUM.md, \"Kalanlar ve sınırlar\").\n")
+        out.append("İtme yuvası teslime kadar tutulduğundan yapraklar ikişer ikişer gelmelidir (~2,9 / 5,8 / 8,7 / 11,6 sn "
+                   "ve yuva bekleme payı; docs/YAYILIM-OLCUM.md, \"İtme yuvası teslim ölçümü\").\n")
         arr = hub["simulation"]["runs_ms"][0]
         got = sorted(x for x in arr if x >= 0)
         line = ", ".join(f"{x / 1000:.2f}" for x in got) or "hiçbiri"
