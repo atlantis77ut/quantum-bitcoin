@@ -4,26 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
-// Zincire geçerken indeksteki bir bloğun gövdesi ya da undo kaydı diskte yoksa geçiş eskisi gibi
-// olmaz (uç değişmez, hiçbir blok geçersiz işaretlenmez, ret önbelleğine girmez) ve kalıcı eksik
-// veri alarmı verilir. Aynı olay yeniden yazılmaz; veri geri gelince geçiş olur, alarm kalır,
-// yeniden açılışta sürer ve yalnızca ClearMissingDataAlarm ile temizlenir.
+// Zincire geçerken bağlanacak bir bloğun gövdesi ya da geri sarılacak bir bloğun undo veya indeks
+// geri alma kaydı diskte yoksa geçiş eskisi gibi olmaz (uç değişmez, hiçbir blok geçersiz
+// işaretlenmez, ret önbelleğine girmez) ve kalıcı eksik veri alarmı verilir. Aynı olay yeniden
+// yazılmaz; veri geri gelince geçiş olur, alarm kalır, yeniden açılışta sürer ve yalnızca
+// ClearMissingDataAlarm ile temizlenir. Atanın ve geri sarılan bloğun gövdesi okunmaz
+// (TestReorgWithoutOldBodies).
 func TestMissingDataAlarm(t *testing.T) {
-	// Ana zincir g-m1-m2, daha çok işli dal fork-s1-s2-s3. Eksik anahtar her okuma yolunu ayrı
-	// sınar: dal gövdesi, çatal ebeveyni, medyan zamanın derin atası, geri sarılan bloğun
-	// gövdesi (işlem indeksi silinirken) ve undo kaydı.
+	// Ana zincir g-m1-m2, daha çok işli dal g-s1-s2-s3.
 	for _, c := range []struct {
-		name   string
-		forkM1 bool // dal m1'den ayrılır (yoksa genesis'ten)
-		key    func(g, m1, m2, s1 *Block) (hash, kind string)
+		name string
+		key  func(g, m1, m2, s1 *Block) (hash, kind string)
 	}{
-		{"dal gövdesi", false, func(g, m1, m2, s1 *Block) (string, string) { return s1.Hash, dataBody }},
-		{"çatal ebeveyni", false, func(g, m1, m2, s1 *Block) (string, string) { return g.Hash, dataBody }},
-		{"medyan zaman atası", true, func(g, m1, m2, s1 *Block) (string, string) { return g.Hash, dataBody }},
-		{"geri sarılan gövde", false, func(g, m1, m2, s1 *Block) (string, string) { return m1.Hash, dataBody }},
-		{"geri sarılan undo", false, func(g, m1, m2, s1 *Block) (string, string) { return m2.Hash, dataUndo }},
+		{"dal gövdesi", func(g, m1, m2, s1 *Block) (string, string) { return s1.Hash, dataBody }},
+		{"geri sarılan undo", func(g, m1, m2, s1 *Block) (string, string) { return m2.Hash, dataUndo }},
+		{"geri sarılan indeks kaydı", func(g, m1, m2, s1 *Block) (string, string) { return m1.Hash, dataIndexUndo }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -31,11 +30,7 @@ func TestMissingDataAlarm(t *testing.T) {
 			g := genesisOf(t, bc)
 			main := extend(t, bc, g, 2, newKey(t).Address)
 			mustAccept(t, bc, main...)
-			fork, n := g, 3
-			if c.forkM1 {
-				fork, n = main[0], 2
-			}
-			side := extend(t, bc, fork, n, newKey(t).Address)
+			side := extend(t, bc, g, 3, newKey(t).Address)
 			last := side[len(side)-1]
 			mustAccept(t, bc, side[:len(side)-1]...) // eşit iş: uç değişmez
 			if tipHash(t, bc) != main[1].Hash {
@@ -43,10 +38,7 @@ func TestMissingDataAlarm(t *testing.T) {
 			}
 
 			hash, kind := c.key(g, main[0], main[1], side[0])
-			key := hash
-			if kind == dataUndo {
-				key = prefixUndo + hash
-			}
+			key := map[string]string{dataBody: "", dataUndo: prefixUndo, dataIndexUndo: prefixIndexUndo}[kind] + hash
 			saved, err := bc.db.Get([]byte(key), nil)
 			if err != nil {
 				t.Fatal(err)
@@ -200,6 +192,78 @@ func TestCorruptBodyNoDataAlarm(t *testing.T) {
 	}
 }
 
+// Ebeveyn, medyan zaman ataları ve geri sarılan blokların gövdeleri diskte olmasa da reorg olur
+// (budama hazırlığı): durum, işlem indeksi ve adres geçmişi kazanan zincirin baştan uygulanmasıyla
+// bayt bayt aynıdır. İki dalda aynı madencinin aynı yükseklikteki coinbase'leri aynı kimliği
+// taşır; gövdesiz geri sarmada da işlem indeksi yeni dalı gösterir. Ana zincirdeki her blokta
+// (genesis hariç) indeks geri alma kaydı vardır, geri sarılanlarınki silinir.
+func TestReorgWithoutOldBodies(t *testing.T) {
+	for _, forkM1 := range []bool{false, true} {
+		bc := newTestChain(t)
+		g := genesisOf(t, bc)
+		miner := newKey(t).Address // iki dalda aynı: coinbase kimlikleri çakışır
+		main := extend(t, bc, g, 3, miner)
+		mustAccept(t, bc, main...)
+		fork, n, win := g, 4, []*Block(nil)
+		if forkM1 {
+			fork, n, win = main[0], 3, main[:1]
+		}
+		side := extend(t, bc, fork, n, miner)
+		mustAccept(t, bc, side[:len(side)-1]...)
+		if side[0].Transactions[0].ID() != main[len(win)].Transactions[0].ID() {
+			t.Fatal("aynı yükseklikteki coinbase'ler farklı kimlikli")
+		}
+		// Genesis ve eski ana zincirin bütün gövdeleri silinir (çatal ebeveyni, medyan zaman
+		// ataları ve geri sarılan bloklar).
+		for _, b := range append([]*Block{g}, main...) {
+			if err := bc.db.Delete([]byte(b.Hash), nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		last := side[len(side)-1]
+		mustAccept(t, bc, last)
+		if tipHash(t, bc) != last.Hash || bc.MissingDataAlarm() {
+			t.Fatalf("çatal m1=%v: gövdesiz reorg olmadı (alarm %v)", forkM1, bc.MissingDataAlarm())
+		}
+		for _, b := range side {
+			if blk, pos, _, err := bc.TxByID(b.Transactions[0].ID()); err != nil || blk.Hash != b.Hash || pos != 0 {
+				t.Fatalf("coinbase %d indeksi yeni dalı göstermiyor: %v", b.Index, err)
+			}
+		}
+		assertSameState(t, bc, replay(t, bc, with(win, side...)...))
+
+		it := bc.db.NewIterator(util.BytesPrefix([]byte(prefixIndexUndo)), nil)
+		count := 0
+		for it.Next() {
+			count++
+		}
+		it.Release()
+		if count != int(last.Index) {
+			t.Fatalf("indeks geri alma kaydı sayısı %d, ana zincir %d blok", count, last.Index)
+		}
+	}
+}
+
+// İndeks geri alma kaydı yalnızca işlem indeksi ve adres geçmişi anahtarlarını silebilir.
+func TestIndexUndoForeignKeyRejected(t *testing.T) {
+	bc := newTestChain(t)
+	g := genesisOf(t, bc)
+	main := extend(t, bc, g, 2, newKey(t).Address)
+	mustAccept(t, bc, main...)
+	side := extend(t, bc, g, 3, newKey(t).Address)
+	mustAccept(t, bc, side[:2]...)
+	if err := bc.db.Put([]byte(prefixIndexUndo+main[1].Hash), []byte(`["`+keyLastHash+`"]`), nil); err != nil {
+		t.Fatal(err)
+	}
+	err := bc.AcceptBlock(side[2])
+	if !errors.Is(err, ErrCorruptState) || errors.Is(err, ErrBlockDataMissing) {
+		t.Fatalf("hata %v", err)
+	}
+	if tipHash(t, bc) != main[1].Hash || bc.MissingDataAlarm() {
+		t.Fatal("yabancı anahtarlı kayıtla geçiş oldu ya da alarm verildi")
+	}
+}
+
 // Eksik veri hatası eski sınıflandırmayı da taşır: gövdede leveldb.ErrNotFound, undo'da
 // ErrCorruptState.
 func TestMissingDataErrorClassification(t *testing.T) {
@@ -209,5 +273,8 @@ func TestMissingDataErrorClassification(t *testing.T) {
 	}
 	if _, err := bc.loadUndo(hexRepeat("ab", 32)); !errors.Is(err, ErrBlockDataMissing) || !errors.Is(err, ErrCorruptState) {
 		t.Fatalf("undo: %v", err)
+	}
+	if _, err := bc.loadIndexUndo(hexRepeat("ab", 32)); !errors.Is(err, ErrBlockDataMissing) || !errors.Is(err, ErrCorruptState) {
+		t.Fatalf("indeks geri alma: %v", err)
 	}
 }

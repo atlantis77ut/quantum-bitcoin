@@ -10,10 +10,11 @@ import (
 )
 
 // Kalıcı eksik veri alarmı (budama hazırlığı, davranışı değiştirmez). Her indeks kaydı gövdesiyle
-// aynı batch'te yazılır (storeAndActivateLocked, genesis); ana zincirdeki her bloğun undo kaydı
-// zincir güncellemesiyle yazılır. Zincire geçerken (activateLocked) indeksteki bir bloğun
-// gövdesi ya da undo kaydı diskte yoksa düğüm daha çok işli dala geçemez ve hafif zincirde
-// kalır; bugün bu yalnızca disk arızası ya da elle silinmiş veridir, ileride budanmış düğümün
+// aynı batch'te yazılır (storeAndActivateLocked, genesis); ana zincirdeki her bloğun undo ve
+// indeks geri alma kaydı zincir güncellemesiyle yazılır. Zincire geçerken (activateLocked)
+// bağlanacak bir bloğun gövdesi ya da geri sarılacak bir bloğun undo veya indeks geri alma kaydı
+// diskte yoksa düğüm daha çok işli dala geçemez ve hafif zincirde kalır (ebeveyn ve medyan zaman
+// indeksten okunur, geri sarılan bloğun gövdesi okunmaz); bugün bu yalnızca disk arızası ya da elle silinmiş veridir, ileride budanmış düğümün
 // budama derinliğinden derin reorg'udur. Bu durum eskiden geçici bir hata olarak yalnızca
 // loglanırdı; şimdi derin reorg alarmı gibi diske yazılır, yeniden başlatma silmez, onaylara
 // güvenilmez ve yalnızca operatör -clear-data-alarm ile temizler.
@@ -28,8 +29,9 @@ var ErrBlockDataMissing = errors.New("blok verisi diskte yok")
 
 // Eksik verinin türü (MissingDataRecord.Kind).
 const (
-	dataBody = "body"
-	dataUndo = "undo"
+	dataBody      = "body"
+	dataUndo      = "undo"
+	dataIndexUndo = "index_undo" // indeks geri alma kaydı (txindex.go)
 )
 
 // missingDataError eksik verinin hangi bloğa ait olduğunu taşır. Eski sınıflandırma korunur:
@@ -49,7 +51,7 @@ func (e *missingDataError) Unwrap() []error { return []error{ErrBlockDataMissing
 // tutar.
 type MissingDataRecord struct {
 	Hash   string `json:"hash"`   // verisi okunamayan blok
-	Kind   string `json:"kind"`   // "body" ya da "undo"
+	Kind   string `json:"kind"`   // "body", "undo" ya da "index_undo"
 	Tip    string `json:"tip"`    // olay anındaki uç
 	Target string `json:"target"` // geçilemeyen dalın ucu
 	Time   int64  `json:"time"`   // yerel saat, Unix saniye
