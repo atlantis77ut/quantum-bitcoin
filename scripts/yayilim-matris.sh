@@ -16,6 +16,13 @@ BIN=${QBTC_BIN:-./qbtc}
 OUT=${QBTC_OUT:-./yayilim}
 RUNS=${QBTC_RUNS:-5}
 PROFILE=${QBTC_PROFILE:-full}
+case "$PROFILE" in
+full | quick | hub) ;;
+*)
+	echo "bilinmeyen QBTC_PROFILE: $PROFILE (full, quick ya da hub)" >&2
+	exit 2
+	;;
+esac
 mkdir -p "$OUT"
 STATUS="$OUT/durum.tsv"
 : >"$STATUS"

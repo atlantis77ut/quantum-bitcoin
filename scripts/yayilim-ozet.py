@@ -77,8 +77,14 @@ def main():
     hub = load(d, "hub8-10mbit-50ms")
     if hub:
         out.append("## Yaprak varışları (star-hub, 10 Mbit/sn, 50 ms, ilk ölçüm, sn)\n")
-        out.append("İki itme yuvası çalışıyorsa yapraklar ikişer ikişer gelir (~2,9 / 5,8 / 8,7 / 11,6 sn).\n")
-        out.append("- " + ", ".join(f"{x / 1000:.2f}" for x in sorted(hub["simulation"]["runs_ms"][0])))
+        out.append("İki itme yuvası ölçülebilseydi yapraklar ikişer ikişer gelirdi (~2,9 / 5,8 / 8,7 / 11,6 sn); "
+                   "döngü arayüzünde toplu gelmeleri beklenir (docs/YAYILIM-OLCUM.md, \"Kalanlar ve sınırlar\").\n")
+        arr = hub["simulation"]["runs_ms"][0]
+        got = sorted(x for x in arr if x >= 0)
+        line = ", ".join(f"{x / 1000:.2f}" for x in got) or "hiçbiri"
+        if len(got) < len(arr):
+            line += f" (ulaşmayan {len(arr) - len(got)} yaprak)"
+        out.append("- " + line)
         out.append("")
 
     out.append("## Ek ölçümler\n")
