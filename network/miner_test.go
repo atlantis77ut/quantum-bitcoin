@@ -34,16 +34,17 @@ func runMiner(t *testing.T, m *Miner) func() {
 	return halt
 }
 
-// peerHasBlockEventually PeerHasBlock'u süre dolana kadar dener ve son sonucu döner. Testteki
-// bütün düğümler 127.0.0.1'dedir, yani eş için tek adres grubudur: madencinin itme ve uç
-// sorgusu bağlantıları grup başına bağlantı kotasını (connsPerGroup) doldurduğunda eş yeni
-// bağlantıyı kabul anında kapatır ve istek EOF alır. Bu tasarım gereğidir (quota.go); tek
-// adresli test düzeneğinin yapıntısıdır.
-func peerHasBlockEventually(ps *P2PServer, peer, hash string, want bool) (bool, error) {
+// peerHasBlockEventually PeerHasBlock'u yalnızca ağ hatasında, süre dolana kadar yeniden dener;
+// eşin yanıtı (var ya da yok) ilk gelişte döner, iddialar gevşemez. Bir düğümün bir eşe açtığı
+// bütün bağlantılar (uç sorgusu, itme, senkronizasyon, bu sorgu) eş için tek adres grubudur;
+// grup başına bağlantı kotası (connsPerGroup) doluysa eş yeni bağlantıyı kabul anında kapatır
+// ve istek EOF alır (quota.go). Bu üretimde de geçerlidir; teste özgü olan regtest
+// madencisinin milisaniyede bir blok itmesidir.
+func peerHasBlockEventually(ps *P2PServer, peer, hash string) (bool, error) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ok, err := ps.PeerHasBlock(peer, hash)
-		if (err == nil && ok == want) || time.Now().After(deadline) {
+		if err == nil || time.Now().After(deadline) {
 			return ok, err
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -87,10 +88,10 @@ func TestMinerMinesAndPeerAccepts(t *testing.T) {
 	}
 	// Sorgulardan önce madenci durur; süren itmeler bitince grubun bağlantı kotası boşalır.
 	stopMiner()
-	if ok, err := peerHasBlockEventually(miner.ps, peer.addr, got, true); err != nil || !ok {
+	if ok, err := peerHasBlockEventually(miner.ps, peer.addr, got); err != nil || !ok {
 		t.Fatalf("PeerHasBlock eşteki bloğu bulamadı: %v %v (%s)", ok, err, quotaState(peer.ps))
 	}
-	if ok, err := peerHasBlockEventually(miner.ps, peer.addr, strings.Repeat("0", 64), false); err != nil || ok {
+	if ok, err := peerHasBlockEventually(miner.ps, peer.addr, strings.Repeat("0", 64)); err != nil || ok {
 		t.Fatalf("olmayan blok bulundu: %v %v (%s)", ok, err, quotaState(peer.ps))
 	}
 }
