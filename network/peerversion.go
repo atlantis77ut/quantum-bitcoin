@@ -2,7 +2,8 @@ package network
 
 import "time"
 
-// Eş başına sürüm kaydı (kullanıcı kararı 2026-11-16; docs/MAINNET-ONCESI.md). Tek yönlü yayınlar
+// Eş başına sürüm kaydı (düğüm politikası; docs/MAINNET-ONCESI.md). TTL ve "son yanıt geçerli"
+// kuralı uzlaşma dışı varsayılanlardır, ilk okuyan yayınla birlikte yeniden değerlendirilir. Tek yönlü yayınlar
 // (blok, işlem grubu) pazarlık yapamaz; ileride yeni bir biçim yalnızca onu desteklediğini
 // bildiren eşe gönderilebilsin diye eşin son bildirdiği protokol sürümü ve yetenek bitleri tutulur.
 //
