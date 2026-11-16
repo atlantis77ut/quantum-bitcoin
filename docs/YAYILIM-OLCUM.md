@@ -1,6 +1,6 @@
 # Blok yayılım ölçümü (60/30 sn blok süresi kararı için)
 
-Blok süresi 60 sn olarak donduruldu. Yayılım ve doğrulama ≤1–2 sn ölçülürse lansmandan önce 30 sn'ye inebilir ([MAINNET-ONCESI.md](MAINNET-ONCESI.md)). Bu araç o ölçümün girdilerini üretir. **Karar bu belgede verilmez:** hangi bağlantı profilinin belirleyici olduğunu kullanıcı seçer, 60/30 kararı da uygulanmadan önce `devils-advocate` ile sınanır.
+Blok süresi 60 sn olarak donduruldu. Yayılım ve doğrulama ≤1–2 sn ölçülürse lansmandan önce 30 sn'ye inebilirdi. **Ölçümden sonra karar kesinleşti (kullanıcı, 2026-11-16): 60 sn ve 250 işlem kalır** (aşağıda "Eşit hacim ölçümü"; [MAINNET-ONCESI.md](MAINNET-ONCESI.md)). Bu araç o ölçümün girdilerini üretir. Araç kararı kendisi vermez; belirleyici profili ve kararı kullanıcı verir.
 
 ## Ne ölçülür, ne benzetilir
 
@@ -166,7 +166,7 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 - Doğrulama bu çalıştırmada ilkinden yavaş çıktı (aynı makine sınıfı, 22 → 38 ms); yayılımın yanında yine küçüktür.
 - Seçilen profilde 125 işlemlik blok 1,61 sn ile ≤2 sn eşiğinin içindedir. (a) koşulu sağlandı: soru "30 sn + 125 işlem" olarak yeniden açılır.
 - Kaba bayat tahmini: 30 sn + 125 işlem %5,2; 60 sn + 250 işlem %4,5 (10 Mbit/sn'de %8,6 ve %7,9). Aynı işlem hacminde iki seçenek benzer bayat oranı, 30 sn yarı ilk onay süresi verir.
-- Karar verilmez: 30 sn'ye inmek blok süresi kararının yanında `MaxTxPerBlock`'u (250, dondurulmuş) 125'e indirmeyi ya da `TargetSpacing`'den türetmeyi de ister; ikisi de kullanıcı kararıdır ve uygulanmadan önce `devils-advocate` ile sınanır. (b) gerçek çok makineli ölçüm ve (c) taşıma iyileştirmeleri açıktır.
+- Kullanıcı kararı (2026-11-16): 60 sn ve 250 işlem kalır. 30 sn'ye inmek ayrıca blok süresi kararının yanında `MaxTxPerBlock`'u (250, dondurulmuş) 125'e indirmeyi ya da `TargetSpacing`'den türetmeyi isterdi. (b) gerçek çok makineli ölçüm ve (c) taşıma iyileştirmeleri açıktır.
 
 ## Kalanlar ve sınırlar
 
