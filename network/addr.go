@@ -613,6 +613,9 @@ func (ps *P2PServer) askAddrs(src string, now time.Time) (int, error) {
 	_, genesis := ps.Blockchain.Network()
 	resp, err := ps.request(src, message{Type: msgGetAddr, Network: genesis}, maxAddrMessageBytes)
 	if err != nil {
+		if errors.Is(err, errWrongNetwork) { // request yanıttaki ağ kimliğini denetler (netid.go)
+			ps.noteNetwork(src, true, now)
+		}
 		return 0, err
 	}
 	switch {

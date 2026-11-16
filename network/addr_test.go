@@ -180,18 +180,30 @@ func newTestnetChain(t *testing.T) *core.Blockchain {
 	return bc
 }
 
-// Başka ağdaki yapılandırılmış eş, isteklerine yanıt verdiği için ulaşılmış görünse de adres
-// yanıtında verilmez.
+// Başka ağdaki yapılandırılmış eş işaretlenir ve adres yanıtında verilmez. Yanıtları ağ kimliği
+// taşıdığından (netid.go) hiç ulaşılmış sayılmaz; eski düğüm gibi kimliksiz yanıt verip
+// ulaşılmış görünse de işaret onu dışarıda tutar.
 func TestWrongNetworkPeerNotShared(t *testing.T) {
 	other := startAddrNode(t, newTestnetChain(t), false, nil)
 	b := startAddrNode(t, newChain(t), true, nil, other.addr)
 	waitFor(t, "başka ağdaki eş işaretlenmedi", func() bool {
 		b.ps.reachedMu.Lock()
 		defer b.ps.reachedMu.Unlock()
-		_, reached := b.ps.reached[other.addr]
 		_, wrong := b.ps.wrongNet[other.addr]
-		return reached && wrong
+		return wrong
 	})
+	b.ps.reachedMu.Lock()
+	_, reached := b.ps.reached[other.addr]
+	b.ps.reachedMu.Unlock()
+	if reached {
+		t.Fatal("başka ağdaki eş ulaşılmış sayıldı")
+	}
+	// Kimliksiz yanıt veren eski düğümün durumu: ulaşılmış görünür, işaret yine dışarıda tutar.
+	ra, err := net.ResolveTCPAddr("tcp", other.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.ps.noteReached(other.addr, ra, time.Now())
 	if got := b.ps.reachedAddrs(time.Now()); len(got) != 0 {
 		t.Fatalf("başka ağdaki eş verildi: %v", got)
 	}

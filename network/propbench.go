@@ -145,7 +145,8 @@ func NewPropFixture(dir string, txs int) (*PropFixture, error) {
 	if got := len(b.Transactions) - 1; got != txs {
 		return nil, fmt.Errorf("blok %d işlem aldı, beklenen %d", got, txs)
 	}
-	wire, err := json.Marshal(stamped(message{Type: msgBlock, Block: b}))
+	_, genesis := bc.Network()
+	wire, err := json.Marshal(stamped(message{Type: msgBlock, Block: b, Network: genesis}))
 	if err != nil {
 		return nil, err
 	}

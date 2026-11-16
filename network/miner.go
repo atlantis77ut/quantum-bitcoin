@@ -140,7 +140,7 @@ func (m *Miner) checkAccepted(b *core.Block, stop <-chan struct{}) {
 		return
 	}
 	pending := peers
-	answered := 0
+	answered, otherNet := 0, 0
 	var lastErr error
 	for attempt := 0; attempt < max(m.checkAttempts, 1) && len(pending) > 0; attempt++ {
 		if attempt > 0 && !sleep(stop, m.retryDelay) {
@@ -154,6 +154,12 @@ func (m *Miner) checkAccepted(b *core.Block, stop <-chan struct{}) {
 			default:
 			}
 			ok, err := m.ps.PeerHasBlock(peer, b.Hash)
+			if errors.Is(err, errWrongNetwork) {
+				// Kesin yanıt: başka ağdaki eş bloğu tutamaz, yeniden sorulmaz (netid.go).
+				answered++
+				otherNet++
+				continue
+			}
 			if err != nil {
 				failed = append(failed, peer)
 				lastErr = err
@@ -174,7 +180,8 @@ func (m *Miner) checkAccepted(b *core.Block, stop <-chan struct{}) {
 	}
 	m.unaccepted.Add(1)
 	m.log.Warn("kazılan blok yanıt veren hiçbir eşte yok: eşler reddetmiş olabilir; saatinizi (NTP), ağ/genesis ayarını ve bağlantıyı denetleyin",
-		"index", b.Index, "hash", b.Hash, "es_sayisi", len(peers), "yanit_veren", answered, "ulasilamayan", len(pending))
+		"index", b.Index, "hash", b.Hash, "es_sayisi", len(peers), "yanit_veren", answered, "ulasilamayan", len(pending),
+		"baska_agda", otherNet)
 }
 
 // PeerHasBlock eşin bloğu doğrulayıp sakladığını (ana ya da yan zincirde) sorar.
