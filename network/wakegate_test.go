@@ -242,7 +242,7 @@ func gateServer(t *testing.T, peers ...string) (*P2PServer, *core.Blockchain, ch
 		ps.AddPeer(p)
 	}
 	sends := make(chan gateSend, 16)
-	ps.send = func(peer string, _ []byte) error {
+	ps.send = func(peer string, _ []byte, _ bool) error {
 		s := gateSend{peer: peer, done: make(chan error, 1)}
 		sends <- s
 		return <-s.done

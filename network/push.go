@@ -47,6 +47,20 @@ import (
 // çok bir artırır. Varsayılanlarla iki kopya ~2 Mbit/sn yukarı bantla alıcıların asgari hızını
 // karşılar.
 //
+// Teslim (kullanıcı kararı 2026-11-16): yuva yazma bitince değil, alıcı bloğu okuyup işleyip
+// bağlantıyı kapatınca boşalır. Yazma yalnızca çekirdeğin gönderme tamponuna kopyalamaktır;
+// tampon büyükse (döngü arayüzünde ~2,6 MB, şişkin yukarı hat) blok hattan geçmeden yazma biter
+// ve bütün kopyalar birlikte gider. Gönderen yazdıktan sonra yazma yönünü kapatır (CloseWrite)
+// ve alıcının kapatmasını sendMax içinde bekler; alıcı (handleConnection) mesajı çözüp işledikten
+// sonra kapatır. Protokol değişmez, eski düğümlerde de çalışır. Bekleme sırasında parça
+// ilerlemesi olmadığından tutan "teslim bekliyor" işaretlenir: stall kuralı uygulanmaz, yalnızca
+// hız sınırı (sendChunk + yazılan / recvMinRate) kalır. Bedeli: hiç okumayan eş yuvayı stall
+// (2 sn) yerine bu sınıra kadar (dolu blokta ~28 sn) tutabilir; her takılan eş eşzamanlılığı
+// yine en çok bir artırır. Tam yazmadan sonra alıcının kapatması sıfırlama (RST) olarak da
+// gelebilir (okunmamış son bayt); bu teslim sayılır. Aynı RST, okumadan kapatan alıcıdan
+// (ör. kotası dolu) da gelebilir; ikisi ayırt edilemez, yuva o durumda erken boşalır (eski
+// davranış). İşlem grubu itmeleri teslim beklemez.
+//
 // Kaynak: senkronizasyonla ya da uç beklemesiyle bir eşten indirilen blok o eşe geri itilmez.
 // Gelen bağlantıyla itilen blok kaynağına geri itilebilir (yankı): gelen bağlantının kaynak
 // portu geçicidir ve aynı IP'de birden çok düğüm (aynı makine, NAT) olabilir; IP ile eşleştirmek
@@ -124,9 +138,10 @@ type pushSlots struct {
 }
 
 type pushHolder struct {
-	start time.Time
-	last  time.Time // son yazılan parça
-	n     int64     // yazılan bayt
+	start    time.Time
+	last     time.Time // son yazılan parça
+	n        int64     // yazılan bayt
+	draining bool      // yazma bitti, alıcının kapatması bekleniyor (stall uygulanmaz)
 }
 
 func newPushSlots(limit int) *pushSlots {
@@ -137,7 +152,7 @@ func newPushSlots(limit int) *pushSlots {
 func (s *pushSlots) stuckLocked(now time.Time, l *pushLimits) string {
 	for peer, h := range s.holders {
 		pace := h.start.Add(l.sendChunk + time.Duration(h.n*int64(time.Second)/l.recvMinRate))
-		if now.Sub(h.last) >= l.stall || now.After(pace) {
+		if (!h.draining && now.Sub(h.last) >= l.stall) || now.After(pace) {
 			return peer
 		}
 	}
@@ -176,6 +191,16 @@ func (s *pushSlots) progress(peer string, n int) {
 	}
 }
 
+// drain eşin yazmasının bittiğini, teslimin beklendiğini işler; eş yuva tutmuyorsa bir şey
+// yapmaz.
+func (s *pushSlots) drain(peer string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h, ok := s.holders[peer]; ok {
+		h.draining = true
+	}
+}
+
 func (s *pushSlots) release(peer string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -202,7 +227,7 @@ func (ps *P2PServer) pushOnce(peer string, data []byte, id pushID, block bool) e
 			return errPushCancelled
 		}
 	}
-	return ps.send(peer, data)
+	return ps.send(peer, data, block)
 }
 
 // retryWorth erken başarısız blok itmesinin yeniden denenip denenmeyeceğine karar verir;

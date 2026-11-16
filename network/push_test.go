@@ -266,7 +266,7 @@ func TestPushSlotsPace(t *testing.T) {
 func TestBlockPushSlotsLimitConcurrency(t *testing.T) {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
 	var inflight, maxInflight, calls atomic.Int32
-	ps.send = func(peer string, data []byte) error {
+	ps.send = func(peer string, data []byte, _ bool) error {
 		calls.Add(1)
 		n := inflight.Add(1)
 		for {
@@ -296,7 +296,7 @@ func TestBlockPushSlotsLimitConcurrency(t *testing.T) {
 
 	ps2 := NewP2PServer("127.0.0.1:0", newChain(t))
 	sent := make(chan struct{}, 1)
-	ps2.send = func(string, []byte) error { sent <- struct{}{}; return nil }
+	ps2.send = func(string, []byte, bool) error { sent <- struct{}{}; return nil }
 	ps2.pushSlots.acquire("x", &ps2.pushLim)
 	ps2.pushSlots.acquire("y", &ps2.pushLim)
 	ps2.AddPeer("127.0.0.5:1")
@@ -326,7 +326,7 @@ func freeAddr(t *testing.T) string {
 func TestSendToEarlyAndLate(t *testing.T) {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
 	ps.pushLim.earlyBytes = 6 << 20
-	if err := ps.sendTo(freeAddr(t), []byte("x")); !errors.Is(err, errPushEarly) {
+	if err := ps.sendTo(freeAddr(t), []byte("x"), true); !errors.Is(err, errPushEarly) {
 		t.Fatalf("bağlantı hatası erken sayılmadı: %v", err)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -352,15 +352,15 @@ func TestSendToEarlyAndLate(t *testing.T) {
 	}
 
 	serve(0) // yuvası dolu alıcı: okumadan kapatır
-	if err := ps.sendTo(addr, big); !errors.Is(err, errPushEarly) {
+	if err := ps.sendTo(addr, big, true); !errors.Is(err, errPushEarly) {
 		t.Fatalf("okunmadan kapanan bağlantı erken sayılmadı: %v", err)
 	}
 	serve(8 << 20)
-	if err := ps.sendTo(addr, big); err == nil || errors.Is(err, errPushEarly) {
+	if err := ps.sendTo(addr, big, true); err == nil || errors.Is(err, errPushEarly) {
 		t.Fatalf("kısmen okunan bağlantı geç sayılmadı: %v", err)
 	}
 	serve(-1)
-	if err := ps.sendTo(addr, big); err != nil {
+	if err := ps.sendTo(addr, big, true); err != nil {
 		t.Fatalf("tam okunan gönderim: %v", err)
 	}
 }
@@ -420,7 +420,7 @@ func TestBlockPushRetryRules(t *testing.T) {
 		var mu sync.Mutex
 		var calls []string
 		firstCall := make(chan struct{})
-		ps.send = func(_ string, data []byte) error {
+		ps.send = func(_ string, data []byte, _ bool) error {
 			var m message
 			json.Unmarshal(data, &m)
 			mu.Lock()
@@ -474,7 +474,7 @@ func TestBlockPushRetryRules(t *testing.T) {
 func TestRelaySkipsSource(t *testing.T) {
 	ps := NewP2PServer("127.0.0.1:0", newChain(t))
 	got := make(chan string, 4)
-	ps.send = func(peer string, _ []byte) error { got <- peer; return nil }
+	ps.send = func(peer string, _ []byte, _ bool) error { got <- peer; return nil }
 	a, b := "127.0.0.2:1", "127.0.0.3:1"
 	ps.AddPeer(a)
 	ps.AddPeer(b)

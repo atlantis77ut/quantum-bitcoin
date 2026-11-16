@@ -237,7 +237,7 @@ type P2PServer struct {
 	// okunur.
 	sendersMu sync.Mutex
 	senders   map[string]*peerSender
-	send      func(peer string, data []byte) error
+	send      func(peer string, data []byte, block bool) error // block: teslim beklenir (push.go)
 
 	// wake blok başına yayın ve eş başına itme durumudur (wakegate.go): bloğu itmeyle alacak
 	// eşin uç beklemesi o blok için hemen uyandırılmaz. Kendi kilidi vardır.
