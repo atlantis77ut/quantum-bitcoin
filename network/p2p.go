@@ -113,6 +113,11 @@ type message struct {
 // uyumludur. Port alanı (yankı) isteğe bağlı bir alandır, eski düğümler yok sayar; sürüm
 // değişmedi. Sürüm 4 ağ kimliğini (Network, genesis özeti) her mesaja yazar (netid.go); alanı
 // boş gelen mesaj kabul edilir, bu yüzden eski eşlerle uyumludur.
+//
+// Eş başına sürüm kaydı (peerversion.go): kendi isteklerimizin yanıtlarından eşin son bildirdiği
+// sürüm tutulur; tek yönlü bir yayın yeni biçimi yalnızca peerSupports'u karşılayan eşe
+// gönderebilir. Kayıt yalnızca ipucudur (doğrulanmaz, bayatlayabilir): yeni biçim yine eski
+// düğümlerin cezasız yok sayabileceği biçimde olmalıdır.
 const (
 	protocolVersion uint32 = 4
 	minPeerVersion  uint32 = 0
@@ -791,7 +796,7 @@ func (ps *P2PServer) request(peer string, req message, limit int64) (*message, e
 		ps.warnOtherNetwork(peer, resp.Network, time.Now())
 		return nil, fmt.Errorf("%w: %s", errWrongNetwork, resp.Network)
 	}
-	ps.noteReached(peer, conn.RemoteAddr(), time.Now())
+	ps.noteReached(peer, conn.RemoteAddr(), &resp, time.Now())
 	return &resp, nil
 }
 
