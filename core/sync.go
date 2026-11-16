@@ -203,18 +203,49 @@ func (bc *Blockchain) BlockByHash(hash string) (*Block, error) {
 // sayısıyla (uç = 1) döndürür. Blok ana zincirde değilse (bilinmeyen, yan dal, geçersiz)
 // ErrUnknownBlock döner ve veritabanı okunmaz.
 func (bc *Blockchain) MainBlockByHash(hash string) (*Block, int64, error) {
+	return bc.Reads(nil).MainBlockByHash(hash)
+}
+
+// MainBlockByHeight ana zincirde height yüksekliğindeki bloğu MainBlockByHash gibi döndürür;
+// yükseklik [0, uç] dışındaysa ErrUnknownBlock.
+func (bc *Blockchain) MainBlockByHeight(height int64) (*Block, int64, error) {
+	return bc.Reads(nil).MainBlockByHeight(height)
+}
+
+// BlockReads API'nin gövde okumalarını bir önbellek kaçırma kapısıyla (ReadGate, blockcache.go)
+// yapar; yöntemler Blockchain'deki adaşlarıyla aynıdır.
+type BlockReads struct {
+	bc   *Blockchain
+	gate ReadGate
+}
+
+// Reads gate'li gövde okumalarını döndürür; nil kapı kapısız okumadır.
+func (bc *Blockchain) Reads(gate ReadGate) BlockReads {
+	return BlockReads{bc: bc, gate: gate}
+}
+
+// LatestBlock GetLatestBlock gibidir.
+func (r BlockReads) LatestBlock() (*Block, error) {
+	r.bc.mu.RLock()
+	defer r.bc.mu.RUnlock()
+	return r.bc.cachedBlockLocked(r.bc.lastHash, r.gate)
+}
+
+// MainBlockByHash Blockchain.MainBlockByHash gibidir.
+func (r BlockReads) MainBlockByHash(hash string) (*Block, int64, error) {
+	bc := r.bc
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	e, ok := bc.index[hash]
 	if !ok || !bc.isMain(e) {
 		return nil, 0, ErrUnknownBlock
 	}
-	return bc.mainBlockLocked(e)
+	return bc.mainBlockLocked(e, r.gate)
 }
 
-// MainBlockByHeight ana zincirde height yüksekliğindeki bloğu MainBlockByHash gibi döndürür;
-// yükseklik [0, uç] dışındaysa ErrUnknownBlock.
-func (bc *Blockchain) MainBlockByHeight(height int64) (*Block, int64, error) {
+// MainBlockByHeight Blockchain.MainBlockByHeight gibidir.
+func (r BlockReads) MainBlockByHeight(height int64) (*Block, int64, error) {
+	bc := r.bc
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	if height < 0 || height > bc.tip.Height {
@@ -224,11 +255,11 @@ func (bc *Blockchain) MainBlockByHeight(height int64) (*Block, int64, error) {
 	if !ok {
 		return nil, 0, ErrUnknownBlock
 	}
-	return bc.mainBlockLocked(e)
+	return bc.mainBlockLocked(e, r.gate)
 }
 
-func (bc *Blockchain) mainBlockLocked(e *indexEntry) (*Block, int64, error) {
-	b, err := bc.cachedBlockLocked(e.Hash) // gövde önbellekten olabilir; salt okunur
+func (bc *Blockchain) mainBlockLocked(e *indexEntry, gate ReadGate) (*Block, int64, error) {
+	b, err := bc.cachedBlockLocked(e.Hash, gate) // gövde önbellekten olabilir; salt okunur
 	if err != nil {
 		return nil, 0, err
 	}

@@ -8,13 +8,20 @@ import (
 )
 
 // Blok gövdesi önbelleği (yalnızca API okumaları: MainBlockByHash, MainBlockByHeight,
-// GetLatestBlock). Blok, özetiyle içerik adreslidir: özet başlığı, başlık da Merkle kökü
-// üzerinden işlemleri bağlar; bu yüzden bir özetin gövdesi hiç değişmez ve reorg'da ya da
-// blok eklenince önbellek geçersiz kılınmaz. Ana zincirde olup olmama ve onay sayısı her
-// istekte indeksten hesaplanır, önbellekten gelmez. Uzlaşma yolu (bağlama, reorg, geri alma)
-// önbelleği kullanmaz ve her zaman diskten okur.
+// GetLatestBlock, TxByID ve kapılı adaşları, BlockReads). Blok, özetiyle içerik adreslidir: özet
+// başlığı, başlık da Merkle kökü üzerinden işlemleri bağlar; bu yüzden bir özetin gövdesi hiç
+// değişmez ve reorg'da ya da blok eklenince önbellek geçersiz kılınmaz. Ana zincirde olup olmama ve
+// onay sayısı her istekte indeksten hesaplanır, önbellekten gelmez. Uzlaşma yolu (bağlama, reorg,
+// geri alma) önbelleği kullanmaz ve her zaman diskten okur.
 //
 // Döndürülen *Block paylaşılır ve salt okunurdur: çağıran onu ya da dilimlerini değiştirmemelidir.
+//
+// Önbellek kaçırma kapısı (ReadGate, feat/old-block-reads): önbellekte olmayan bir gövde diskten
+// okunup çözülür (dolu blokta ~2 MB JSON, ~13 ms). Farklı eski bloklarla dolaşan istemci önbelleği
+// atlatır; istek sayan oran sınırı bu maliyeti görmez. API okumaları (Reads) bir kapı alır: kapı
+// yalnızca kaçırmada, disk okumasından önce çağrılır, beklemez (zincir kilidi tutulurken
+// beklenirse bekleyen bir yazar bütün kuyruğu beklerdi) ve hata dönerse disk okunmaz. Kapı
+// zincire geri çağrı yapmamalıdır (bc.mu okuma kilidi altında çağrılır).
 
 const (
 	blockCacheMaxEntries = 8
@@ -77,11 +84,25 @@ func (c *blockCache) put(hash string, b *Block, size int) {
 	}
 }
 
+// ReadGate önbellek kaçırmasında disk okumasından önce çağrılır; tip, okunan blok uç ise doğrudur
+// (yeni uç önbelleğe ilk API okumasında girer; uç önbellekten düşmüş de olabilir). Hata dönerse
+// okuma o hatayla biter; dönen release okuma bitince (hata yolları dahil) çağrılır. nil kapı her
+// okumaya izin verir.
+type ReadGate func(tip bool) (release func(), err error)
+
 // cachedBlockLocked hash'in gövdesini önbellekten ya da diskten döndürür (çağıran bc.mu'yu en
 // az okuma için tutar). Diskten okunan gövdenin özeti hash ile tutmazsa önbelleğe girmez.
-func (bc *Blockchain) cachedBlockLocked(hash string) (*Block, error) {
+// Kaçırmada gate (nil değilse) disk okumasından önce sorulur.
+func (bc *Blockchain) cachedBlockLocked(hash string, gate ReadGate) (*Block, error) {
 	if b, ok := bc.blockCache.get(hash); ok {
 		return b, nil
+	}
+	if gate != nil {
+		release, err := gate(hash == bc.lastHash)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 	}
 	data, err := bc.db.Get([]byte(hash), nil)
 	if err != nil {
