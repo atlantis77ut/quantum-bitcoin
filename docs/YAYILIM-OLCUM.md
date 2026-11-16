@@ -48,7 +48,7 @@ Rapor makine adı, kullanıcı adı, yol ya da adres içermez; `reproduce` alan�
 
 ### GitHub Actions'ta
 
-Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris, `quick` yalnızca 20 Mbit/sn ve 50 ms ya da `hub` yalnızca 8 yapraklı star-hub, 2 ve 10 Mbit/sn, 50 ms). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
+Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris, `quick` yalnızca 20 Mbit/sn ve 50 ms ya da `hub` yalnızca 8 yapraklı star-hub, 2 ve 10 Mbit/sn, 50 ms ya da `doluluk` yalnızca 3 atlamalı hat, 10 ve 20 Mbit/sn, 50 ms, 250 ve 125 işlemlik blok). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
 
 ```bash
 gh workflow run yayilim-olcum.yml -f runs=5 -f profile=full
@@ -154,6 +154,19 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 - Diğer itirazlar: blok ağda JSON + base64 gider (ikili kodlama süreyi kabaca ~2,1 sn'ye indirir, tahmin); işlemler önceden yayıldığı için kompakt blok dürüst bloğu boş bloğun ~0,47 sn'sine yaklaştırabilir. Geri alınamaz uzlaşma parametresi geri alınabilir taşıma seçimlerine bağlanmış olur.
 - 60 sn lehine: benzetim iyimserdir (yeni bağlantı başına TCP yavaş başlangıcı, gerçekte muhtemelen ~4 sn); ücretsiz işlemle doldurulmuş blokta kompakt blok yardım etmez; gömülü liste işletmecisinin star-leaf avantajı (20 Mbit/sn'de 6,08 sn) 30 sn'de iki kat kötüleşir; emisyon ve iş/zamana bağlı onay güvenliği iki seçenekte de aynıdır.
 - Kararı değiştirecek ölçümler: (a) `-bench-prop-txs 125`, 20 Mbit/sn, 3 atlama, 50 ms; ≤2 sn çıkarsa soru "30 sn + 125 işlem" olarak yeniden açılır; (b) kıtalar arası 3 makineli gerçek ölçüm (>4 sn çıkarsa 60 sn kesinleşir); (c) lansmandan önce ikili kodlama ya da kompakt blok yapılacaksa ölçüm onunla yenilenir.
+
+**Eşit hacim ölçümü (2026-11-16, `profile: doluluk`, Actions çalıştırması 43872087301, 5 ölçüm, 3 atlamalı hat, 50 ms):**
+
+| Blok | Bayt | Doğrulama | 10 Mbit/sn | 20 Mbit/sn |
+|---|---|---|---|---|
+| 250 işlem (60 sn'de saniyede ~4,2 işlem) | 1.809.264 | 38,6 ms | 4,93 sn | 2,76 sn |
+| 125 işlem (30 sn'de aynı hacim) | 904.889 | 18,9 ms | 2,69 sn | 1,61 sn |
+
+- Ölçümler kararlıdır: 20 Mbit/sn'de beş ölçümün yayılımı 1 ms içinde.
+- Doğrulama bu çalıştırmada ilkinden yavaş çıktı (aynı makine sınıfı, 22 → 38 ms); yayılımın yanında yine küçüktür.
+- Seçilen profilde 125 işlemlik blok 1,61 sn ile ≤2 sn eşiğinin içindedir. (a) koşulu sağlandı: soru "30 sn + 125 işlem" olarak yeniden açılır.
+- Kaba bayat tahmini: 30 sn + 125 işlem %5,2; 60 sn + 250 işlem %4,5 (10 Mbit/sn'de %8,6 ve %7,9). Aynı işlem hacminde iki seçenek benzer bayat oranı, 30 sn yarı ilk onay süresi verir.
+- Karar verilmez: 30 sn'ye inmek blok süresi kararının yanında `MaxTxPerBlock`'u (250, dondurulmuş) 125'e indirmeyi ya da `TargetSpacing`'den türetmeyi de ister; ikisi de kullanıcı kararıdır ve uygulanmadan önce `devils-advocate` ile sınanır. (b) gerçek çok makineli ölçüm ve (c) taşıma iyileştirmeleri açıktır.
 
 ## Kalanlar ve sınırlar
 

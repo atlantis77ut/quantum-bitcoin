@@ -66,6 +66,8 @@ def main():
     mbits = sorted({float(n.split("-")[1][:-4]) for n in grid})
     lats = sorted({int(n.split("-")[2][:-2]) for n in grid})
     for topo, title in (("line3", "line, 3 atlama"), ("hub8", "star-hub, 8 yaprak")):
+        if not any(n.startswith(topo + "-") for n in grid):
+            continue  # bu profilde ızgara hücresi yok (ör. hub, doluluk)
         out.append(f"## {title}\n")
         out.append("| Mbit/sn \\ tek yön | " + " | ".join(f"{l} ms" for l in lats) + " |")
         out.append("|---" * (len(lats) + 1) + "|")
