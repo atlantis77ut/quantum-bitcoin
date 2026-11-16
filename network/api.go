@@ -57,6 +57,11 @@ type APIServer struct {
 	server  *http.Server
 	limiter *ipRateLimiter
 	log     *slog.Logger
+
+	// missSlots ve tipSlots önbellekte olmayan eski blok ve uç gövdesi okumalarının eşzamanlılık
+	// sınırlarıdır (readgate.go).
+	missSlots chan struct{}
+	tipSlots  chan struct{}
 }
 
 func NewAPIServer(listenAddr string, bc *core.Blockchain) *APIServer {
@@ -65,6 +70,8 @@ func NewAPIServer(listenAddr string, bc *core.Blockchain) *APIServer {
 		ListenAddr: listenAddr,
 		limiter:    newIPRateLimiter(rateLimitPerSec, rateLimitBurst),
 		log:        slog.Default().With("component", "api"),
+		missSlots:  make(chan struct{}, blockMissSlots),
+		tipSlots:   make(chan struct{}, tipMissSlots),
 	}
 	api.server = &http.Server{
 		Addr:              listenAddr,
@@ -360,25 +367,29 @@ func (api *APIServer) serveBlock(w http.ResponseWriter, r *http.Request, latest 
 	var b *core.Block
 	var confirmations int64
 	var err error
+	reads := api.Blockchain.Reads(api.readGate(r))
 	if latest {
-		b, err = api.Blockchain.GetLatestBlock()
+		b, err = reads.LatestBlock()
 		confirmations = 1
 	} else if hash != "" {
 		if !core.IsHashHex(hash) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz hash parametresi"})
 			return
 		}
-		b, confirmations, err = api.Blockchain.MainBlockByHash(hash)
+		b, confirmations, err = reads.MainBlockByHash(hash)
 	} else {
 		height, perr := strconv.ParseInt(heightStr, 10, 64)
 		if perr != nil || height < 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz height parametresi"})
 			return
 		}
-		b, confirmations, err = api.Blockchain.MainBlockByHeight(height)
+		b, confirmations, err = reads.MainBlockByHeight(height)
 	}
 	if errors.Is(err, core.ErrUnknownBlock) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "blok ana zincirde değil"})
+		return
+	}
+	if writeReadGateError(w, err) {
 		return
 	}
 	if err != nil {
@@ -423,9 +434,12 @@ func (api *APIServer) handleTransaction(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik id parametresi"})
 		return
 	}
-	b, pos, confirmations, err := api.Blockchain.TxByID(id)
+	b, pos, confirmations, err := api.Blockchain.Reads(api.readGate(r)).TxByID(id)
 	if errors.Is(err, core.ErrUnknownTx) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "işlem ana zincirde değil"})
+		return
+	}
+	if writeReadGateError(w, err) {
 		return
 	}
 	if err != nil {
@@ -455,9 +469,12 @@ func (api *APIServer) handleMerkleProof(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz veya eksik id parametresi"})
 		return
 	}
-	b, pos, confirmations, err := api.Blockchain.TxByID(id)
+	b, pos, confirmations, err := api.Blockchain.Reads(api.readGate(r)).TxByID(id)
 	if errors.Is(err, core.ErrUnknownTx) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "işlem ana zincirde değil"})
+		return
+	}
+	if writeReadGateError(w, err) {
 		return
 	}
 	if err != nil {
@@ -836,10 +853,16 @@ func newIPRateLimiter(perSec, burst int) *ipRateLimiter {
 
 // allowHost istemci adresine göre bir isteğe izin verir.
 func (l *ipRateLimiter) allowHost(host string) bool {
-	return l.allow(clientKey(host), prefix48(host))
+	return l.allowCost(clientKey(host), prefix48(host), 1)
 }
 
-func (l *ipRateLimiter) allow(key, prefix string) bool {
+// allowCostHost istemcinin kovasından cost jeton harcar; yetmezse hiç harcamadan reddeder
+// (ucuz istekleri sürer).
+func (l *ipRateLimiter) allowCostHost(host string, cost float64) bool {
+	return l.allowCost(clientKey(host), prefix48(host), cost)
+}
+
+func (l *ipRateLimiter) allowCost(key, prefix string, cost float64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -862,7 +885,7 @@ func (l *ipRateLimiter) allow(key, prefix string) bool {
 	}
 	if !ok {
 		if len(l.buckets) >= l.maxKeys {
-			return l.take(&l.overflow, now, overflowFactor)
+			return l.take(&l.overflow, now, overflowFactor, cost)
 		}
 		b = &bucket{tokens: l.burst, last: now, prefix: prefix}
 		l.buckets[key] = b
@@ -870,7 +893,7 @@ func (l *ipRateLimiter) allow(key, prefix string) bool {
 			l.prefixes[prefix]++
 		}
 	}
-	return l.take(b, now, 1)
+	return l.take(b, now, 1, cost)
 }
 
 func (l *ipRateLimiter) remove(key string, b *bucket) {
@@ -885,8 +908,8 @@ func (l *ipRateLimiter) remove(key string, b *bucket) {
 	}
 }
 
-// take kovayı factor katı hızla doldurup bir jeton harcar.
-func (l *ipRateLimiter) take(b *bucket, now time.Time, factor float64) bool {
+// take kovayı factor katı hızla doldurup cost jeton harcar; yetmezse harcamaz.
+func (l *ipRateLimiter) take(b *bucket, now time.Time, factor, cost float64) bool {
 	burst := l.burst * factor
 	if b.last.IsZero() {
 		b.tokens = burst
@@ -897,9 +920,9 @@ func (l *ipRateLimiter) take(b *bucket, now time.Time, factor float64) bool {
 		b.tokens = burst
 	}
 	b.last = now
-	if b.tokens < 1 {
+	if b.tokens < cost {
 		return false
 	}
-	b.tokens--
+	b.tokens -= cost
 	return true
 }

@@ -110,6 +110,12 @@ func (bc *Blockchain) loadIndexUndo(hash string) ([]string, error) {
 // ErrUnknownTx; indeks kaydı tutarsızsa ErrCorruptState döner. Blok önbellekten olabilir
 // (salt okunur).
 func (bc *Blockchain) TxByID(id string) (*Block, int, int64, error) {
+	return bc.Reads(nil).TxByID(id)
+}
+
+// TxByID Blockchain.TxByID gibidir; blok gövdesi kaçırmada kapıdan geçer.
+func (r BlockReads) TxByID(id string) (*Block, int, int64, error) {
+	bc := r.bc
 	if !IsHashHex(id) {
 		return nil, 0, 0, fmt.Errorf("%w: geçersiz kimlik", ErrUnknownTx)
 	}
@@ -130,7 +136,7 @@ func (bc *Blockchain) TxByID(id string) (*Block, int, int64, error) {
 	if !ok || !bc.isMain(e) {
 		return nil, 0, 0, fmt.Errorf("%w: işlem %s ana zincirde olmayan %s bloğunu gösteriyor", ErrCorruptState, id, loc.Block)
 	}
-	b, err := bc.cachedBlockLocked(e.Hash)
+	b, err := bc.cachedBlockLocked(e.Hash, r.gate)
 	if err != nil {
 		return nil, 0, 0, err
 	}

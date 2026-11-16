@@ -257,9 +257,7 @@ func (bc *Blockchain) GetNonce(address string) (uint64, error) {
 
 // GetLatestBlock zincirin ucundaki bloğu döndürür (önbellekten olabilir; salt okunur).
 func (bc *Blockchain) GetLatestBlock() (*Block, error) {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
-	return bc.cachedBlockLocked(bc.lastHash)
+	return bc.Reads(nil).LatestBlock()
 }
 
 // AddBlock işlemlerden bir blok şablonu kurar, onu zincir kilidi tutulmadan kazar ve
