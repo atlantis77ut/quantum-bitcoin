@@ -23,7 +23,7 @@ import (
 // değişmez. Veri geri gelirse (ör. yedekten) aynı blok yeniden gelince geçiş olur, alarm kalır.
 const keyDataAlarm = "missing_data_alarm"
 
-// ErrBlockDataMissing indeksteki bir bloğun gövdesinin ya da undo kaydının diskte olmadığını
+// ErrBlockDataMissing indeksteki bir bloğun gövdesinin, undo ya da indeks geri alma kaydının diskte olmadığını
 // söyler. Kalıcı geçersizlik değildir (blok geçersiz işaretlenmez).
 var ErrBlockDataMissing = errors.New("blok verisi diskte yok")
 

@@ -113,7 +113,7 @@ Burada γ, iki dal yarıştığında dürüst hashrate'in saldırganın dalında
 - Alarm saldırıdan sonra çalar, saldırıyı önlemez.
 - Alarm tek düğümün gözlemidir; reorg sırasında kapalı olan düğüm onu görmez.
 - Alarmı yalnızca operatör, olayı inceledikten sonra kapatabilir (`-clear-reorg-alarm`).
-- Eksik veri alarmı (`missing_data_alarm`), düğüm indeksindeki bir bloğun gövdesini ya da undo kaydını diskte bulamadığı için daha çok işli zincire geçemediğinde kalıcı olarak açılır: düğüm hafif zincirde kalmış olabilir. Bugün bu yalnızca disk arızası ya da elle silinmiş veri demektir. Diski ve yedeği inceleyin; alarmı yalnızca operatör kapatabilir (`-clear-data-alarm`).
+- Eksik veri alarmı (`missing_data_alarm`), düğüm indeksindeki bir bloğun gövdesini, undo ya da indeks geri alma kaydını diskte bulamadığı için daha çok işli zincire geçemediğinde kalıcı olarak açılır: düğüm hafif zincirde kalmış olabilir. Bugün bu yalnızca disk arızası ya da elle silinmiş veri demektir. Diski ve yedeği inceleyin; alarmı yalnızca operatör kapatabilir (`-clear-data-alarm`).
 
 **Ağı dışarıdan izleyin.** Düğümün `/mininginfo` ucu tek düğümün gözlediği hashrate tahminini ve yan blok oranını (`stale_rate`) verir; ama bu bir düğümün görüşüdür, izleme birden çok bağımsız düğüm ve dış araçlarla yapılmalıdır. Şunlar çekimleri durdurma sinyalidir:
 - blok aralığının ya da zorluğun ani değişmesi,
