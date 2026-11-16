@@ -21,6 +21,7 @@ func mustPoolBalance(t *testing.T, m *Mempool, addr string) PoolBalance {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkIncomingIndex(t, m)
 	return pb
 }
 
@@ -225,5 +226,55 @@ func TestBalanceOverflowAndCorrupt(t *testing.T) {
 	bc.mu.Unlock()
 	if info := mustBalanceInfo(t, bc, miner); info.Immature != v1+v2 {
 		t.Fatalf("geri yükleme: %+v", info)
+	}
+}
+
+// Bekleyen gelen tutar alıcı dizininden gelir: başka alıcıya yer değiştirme ve onun düşürdüğü
+// sonraki işlem dizinden çıkar, kazım dizini boşaltır, reorg geri getirir (checkIncomingIndex
+// her adımda dizini havuz zincirleriyle karşılaştırır).
+func TestPendingIncomingIndex(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob, carol, dave := newKey(t), newKey(t), newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+	fund(t, bc, bob, 1)
+	m := NewMempool(bc)
+	in := func(addr string) int64 { return mustPoolBalance(t, m, addr).PendingIncoming }
+
+	mustAdd(t, m, mpTx(t, bc, alice, carol.Address, Coin, MempoolMinFee, 1))
+	mustAdd(t, m, mpTx(t, bc, alice, carol.Address, 2*Coin, MempoolMinFee, 2))
+	mustAdd(t, m, mpTx(t, bc, bob, carol.Address, 3*Coin, MempoolMinFee, 1))
+	if got := in(carol.Address); got != 6*Coin {
+		t.Fatalf("carol bekleyen gelen %d, beklenen %d", got, 6*Coin)
+	}
+
+	// Aynı nonce dave'e: alice'in bütün bakiyesini harcar, nonce 2 artık geçmez ve düşer.
+	big := testReward - 10*MempoolMinFee
+	mustAdd(t, m, mpTx(t, bc, alice, dave.Address, big, 10*MempoolMinFee, 1))
+	if n := poolLen(t, m); n != 2 {
+		t.Fatalf("havuzda %d işlem, beklenen 2", n)
+	}
+	if got := in(carol.Address); got != 3*Coin {
+		t.Fatalf("yer değiştirmeden sonra carol %d, beklenen %d", got, 3*Coin)
+	}
+	if got := in(dave.Address); got != big {
+		t.Fatalf("dave %d, beklenen %d", got, big)
+	}
+
+	parent := tipBlock(t, bc)
+	mineFromPool(t, bc, m)
+	if n := poolLen(t, m); n != 0 || in(carol.Address) != 0 || in(dave.Address) != 0 {
+		t.Fatalf("kazımdan sonra havuzda %d işlem ya da bekleyen gelen kaldı", n)
+	}
+
+	side := extend(t, bc, parent, 2, newKey(t).Address)
+	mustAccept(t, bc, side...)
+	if bc.TipHash() != side[1].Hash {
+		t.Fatal("rakip dal benimsenmedi")
+	}
+	if got := in(carol.Address); got != 3*Coin {
+		t.Fatalf("reorg sonrası carol %d, beklenen %d", got, 3*Coin)
+	}
+	if got := in(dave.Address); got != big {
+		t.Fatalf("reorg sonrası dave %d, beklenen %d", got, big)
 	}
 }

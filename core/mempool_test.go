@@ -29,6 +29,41 @@ func mustAdd(t *testing.T, m *Mempool, tx Transaction) {
 	if _, err := m.Add(tx); err != nil {
 		t.Fatalf("%s: %v", tx.String(), err)
 	}
+	checkIncomingIndex(t, m)
+}
+
+// checkIncomingIndex havuzun alıcı dizinini gönderen zincirlerinden baştan kurulanla
+// karşılaştırır; boş iç küme ve m.ids'te olmayan kayıt da hatadır.
+func checkIncomingIndex(t *testing.T, m *Mempool) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	want := map[string]map[[32]byte]bool{}
+	for s, chain := range m.senders {
+		for _, p := range chain {
+			r := p.tx.Receiver
+			if r == s {
+				continue
+			}
+			if want[r] == nil {
+				want[r] = map[[32]byte]bool{}
+			}
+			want[r][p.id] = true
+		}
+	}
+	if len(m.incoming) != len(want) {
+		t.Fatalf("alıcı dizininde %d alıcı, zincirlerde %d", len(m.incoming), len(want))
+	}
+	for r, set := range m.incoming {
+		if len(set) == 0 || len(set) != len(want[r]) {
+			t.Fatalf("alıcı %s: dizinde %d işlem, zincirlerde %d", r, len(set), len(want[r]))
+		}
+		for id, p := range set {
+			if !want[r][id] || m.ids[id] != p {
+				t.Fatalf("alıcı %s: dizindeki %x havuz zincirlerinde yok", r, id)
+			}
+		}
+	}
 }
 
 func poolLen(t *testing.T, m *Mempool) int {
@@ -37,6 +72,7 @@ func poolLen(t *testing.T, m *Mempool) int {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkIncomingIndex(t, m)
 	return n
 }
 
