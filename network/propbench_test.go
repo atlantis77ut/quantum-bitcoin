@@ -119,42 +119,6 @@ func TestThrottleProxyHighBDP(t *testing.T) {
 	}
 }
 
-// Proxy göndereni hat hızında tutar: gönderenin yazması, veri hatta gitmeden tamponlarda
-// bitmez (geri basınç). Aksi halde itme yuvası erken boşalır ve benzetim iki yuva sınırını
-// ölçmez. 4 MB, 2 MB/sn hatta en az ~2 sn sürer; tamponlar 1 MB'tan azını emebilir.
-func TestThrottleProxyBackpressure(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer c.Close()
-		io.Copy(io.Discard, c)
-	}()
-	p, err := newThrottleProxy(ln.Addr().String(), newLinkLimiter(16), nil, 0) // 2 MB/sn
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer p.Close()
-	c, err := net.Dial("tcp", p.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	start := time.Now()
-	if _, err := c.Write(make([]byte, 4<<20)); err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d < 1500*time.Millisecond {
-		t.Fatalf("4 MB'ın yazması %v'de bitti: proxy hattan hızlı okuyor, geri basınç yok", d)
-	}
-}
-
 func TestPropConfigValidate(t *testing.T) {
 	ok := PropConfig{Txs: 10, Hops: 2, Topology: TopologyLine, Mbit: 10, Latency: time.Millisecond,
 		Timeout: time.Second, Dir: "x"}

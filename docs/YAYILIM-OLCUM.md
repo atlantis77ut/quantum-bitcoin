@@ -48,7 +48,7 @@ Rapor makine adı, kullanıcı adı, yol ya da adres içermez; `reproduce` alan�
 
 ### GitHub Actions'ta
 
-Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris ya da `quick` yalnızca 20 Mbit/sn ve 50 ms). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
+Yerelde Go ve liboqs yoksa matris "Yayılım ölçümü" iş akışıyla ([.github/workflows/yayilim-olcum.yml](../.github/workflows/yayilim-olcum.yml)) çalıştırılır. İş akışı elle tetiklenir (`runs`: hücre başına ölçüm, 1..20, varsayılan 5; `profile`: `full` önerilen matris, `quick` yalnızca 20 Mbit/sn ve 50 ms ya da `hub` yalnızca 8 yapraklı star-hub, 2 ve 10 Mbit/sn, 50 ms). Önce iki kalibrasyon ölçümünü, sonra aşağıdaki matrisi [scripts/yayilim-matris.sh](../scripts/yayilim-matris.sh) ile çalıştırır. Her hücrenin JSON raporu, logu ve [scripts/yayilim-ozet.py](../scripts/yayilim-ozet.py) ile üretilen Markdown özeti (`OZET.md`, iş akışı özetinde de görünür) `yayilim-olcum` artifact'ında 90 gün durur.
 
 ```bash
 gh workflow run yayilim-olcum.yml -f runs=5 -f profile=full
@@ -59,7 +59,7 @@ Doğrulama süreleri (`accept_ms`) GitHub'ın paylaşımlı makinesinin CPU'suyl
 ## Topolojiler
 
 - **`line`:** 0 → 1 → … → h. Depola-ilet gecikmesinin atlama başına birikimini gösterir.
-- **`star-hub`:** merkez kazar, h yaprağa iter. Paylaşılan hattı ve 2 kopya sınırını gösterir.
+- **`star-hub`:** merkez kazar, h yaprağa iter. Paylaşılan hattı gösterir; 2 kopya sınırını döngü arayüzünde gösteremez (aşağıda "Kalanlar ve sınırlar").
 - **`star-leaf`:** bir yaprak kazar, merkeze iter, merkez diğer yapraklara iter (merkez kazıcıyı eş olarak almaz; yoksa ucunu yoklayıp bloğu ondan çekerdi). Gömülü liste işletmecilerinin yarış avantajını (γ) gösterir: merkez bloğu herkesten önce alır ([ES-KESFI.md](ES-KESFI.md) §6). `nodes` alanında ilk düğüm merkezdir.
 
 ## Önerilen matris
@@ -81,18 +81,23 @@ Ek olarak `star-leaf` 8 yaprak, 20 ve 100 Mbit/sn, 50 ms. Dolu blok ile `-bench-
 Proxy'nin alıcı sınırlarını doğru uyguladığını doğrular (CI için fazla uzun):
 
 ```bash
-./qbtc -bench-propagation -bench-prop-hops 1 -bench-prop-mbit 0.8 -bench-prop-latency 25ms
+./qbtc -bench-propagation -bench-prop-hops 1 -bench-prop-mbit 0.3 -bench-prop-latency 25ms
 ```
 
-0,8 Mbit/sn'de (~100 KB/sn) dolu blok 128 KiB/sn asgari hızın altında kalır; alıcının süresi 10 sn + okunan / 128 KiB/sn olduğundan ~40 sn'de keser, `reached` 0 olur ve zaman aşımından sonra uyarı çıkar.
+0,3 Mbit/sn'de dolu blok (~1,8 MB) 128 KiB/sn asgari hızın çok altında kalır; alıcı ~14 sn'de keser, `reached` 0 olur ve zaman aşımından sonra uyarı çıkar. (Eski 0,8 Mbit/sn beklentisi 7,2 MiB'lık bloklardan kalmaydı; ~1,8 MB'lık blok 0,8 Mbit/sn'de ~18 sn'de ulaşır.)
 
 ```bash
 ./qbtc -bench-propagation -bench-prop-hops 1 -bench-prop-mbit 2 -bench-prop-latency 25ms
 ```
 
-2 Mbit/sn'de blok ~30 sn'de ulaşır. İkisinden biri beklendiği gibi değilse matris sonuçları kullanılmaz.
+2 Mbit/sn'de blok ~7,3 sn'de ulaşır (bayt / hız + gecikmeler). İkisinden biri beklendiği gibi değilse matris sonuçları kullanılmaz. İlk Actions ölçümünde 0,8 Mbit/sn 18,24 sn, 2 Mbit/sn 7,34 sn verdi; ikisi de bayt / hızla uyuşur, yani proxy hattı doğru sınırlar.
 
 ## Kalanlar ve sınırlar
+
+- **Star-hub hücreleri iki itme yuvasını ölçmez.** Döngü arayüzünde MSS ~32–64 KB olduğundan Linux gönderen soketin tamponunu ~2,6 MB'a büyütür ve ~1,8 MB'lık bloğun tamamı çekirdek tamponuna sığar. Düğümün yazması blok kısıtlı hattan geçmeden biter, itme yuvası erken boşalır ve 8 kopya birlikte gider. Kanıt: 10 Mbit/sn'de 8 yaprak ikişer ikişer (~2,9 / 5,8 / 8,7 / 11,6 sn) değil, hepsi ~11,6 sn'de geldi. 2 Mbit/sn'de her kopya 0,25 Mbit/sn'ye düşer, alıcının asgari hızının altında kalır ve hiçbir yaprağa ulaşmaz; bu hücre ölçüm yapıntısıdır, düğüm hatası değildir.
+  - Proxy tarafında çözüm yok. WSL'de 4 MB'ı 2 MB/sn okuyan bir alıcıya yazma denemesinde çekirdeğin emdiği miktar: varsayılan ~2,26 MB; dinleyicide 32 KiB alma tamponu ~2,42 MB; dinleyicide MSS 1460 ~1,22 MB; ikisi birden ~0,58 MB. Yalnızca gönderenin (düğümün) tamponunu 64 KiB'a sabitlemek ~0,19 MB'a indirir; bu düğüm kodu değişikliğidir.
+  - Hub hücrelerinde en yavaş düğüm süresi her iki durumda da ≈ 8·S/U olduğundan (yuvalar sırayla gönderse de hepsi birlikte gönderse de uplink aynı baytı taşır) ≥10 Mbit/sn sonuçları en yavaş yaprak için geçerlidir; ilk yaprakların erken varışı ve 2 Mbit/sn hücresi geçerli değildir.
+  - Gerçek ağda da benzer bir risk olabilir: MSS 1460'ta başlangıç tamponu küçüktür, ama otomatik ayar ve tamponu şişkin bir uplink yuvanın erken boşalmasına ve yavaş bir kazıcının ikiden çok kopyayı asgari hızın altında göndermesine yol açabilir. Gönderen tamponunu sınırlamak (yüksek gecikmeli hatlarda verimi tampon / RTT ile sınırlar) ya da teslim edilen baytı saymak bir düğüm politikası kararıdır; bu belgede açık bırakılmıştır.
 
 - **Gerçek çok makineli ölçüm yapılmadı.** Benzetim kayıp, TCP yavaş başlangıcı ve gerçek RTT'deki pencere büyümesi içermez (TCP döngü arayüzündedir, gecikmeyi proxy ekler); gerçek yayılımı iyimser gösterebilir. Karar öncesi en az bir kıtalar arası 3 makineli ölçüm önerilir.
 - **Bütün düğümler 127.0.0.1'dedir:** her alıcı gelen bütün bağlantıları tek adres grubundan görür (grup başına 4 bağlantı, 1 çözümleme yuvası). Bu topolojilerde her alıcının tek kaynağı olduğu için sonuç değişmez; çok kaynaklı gerçek ağdaki grup davranışı benzetilmez.
