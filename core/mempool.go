@@ -113,6 +113,11 @@ type Mempool struct {
 	count   int
 	bytes   int
 	tip     string // havuzun en son uzlaştırıldığı uç
+	// incoming alıcı → adrese gelen havuz işlemleri (kendine transfer hariç); bekleyen gelen
+	// tutar (Balance) bütün havuzu taramadan bulunur. Yalnızca truncateLocked, setChainLocked ve
+	// syncLocked'ın yeniden kurması (sıfırlama ve hatada geri dönüş) değiştirir; boş iç küme
+	// silinir.
+	incoming map[string]map[[32]byte]*poolTx
 
 	// gen her içerik değişiminde artar; savedGen son kalıcı kaydın gen'idir (mempoolstore.go).
 	gen      uint64
@@ -123,7 +128,8 @@ type Mempool struct {
 // NewMempool bc'nin ucuna göre boş bir havuz kurar.
 func NewMempool(bc *Blockchain) *Mempool {
 	return &Mempool{bc: bc, maxTxs: MempoolMaxTxs, maxBytes: MempoolMaxBytes,
-		senders: map[string][]*poolTx{}, ids: map[[32]byte]*poolTx{}}
+		senders: map[string][]*poolTx{}, ids: map[[32]byte]*poolTx{},
+		incoming: map[string]map[[32]byte]*poolTx{}}
 }
 
 // Len havuzdaki işlem sayısıdır (uç değiştiyse uzlaştırmadan sonra).
@@ -539,13 +545,14 @@ func (m *Mempool) syncLocked() error {
 		bySender[p.tx.Sender] = append(bySender[p.tx.Sender], p)
 	}
 	// Okuma hatasında havuz eski haline döner (m.tip değişmez, sonraki erişim yeniden dener).
-	oldSenders, oldIDs, oldCount, oldBytes := m.senders, m.ids, m.count, m.bytes
+	oldSenders, oldIDs, oldIncoming, oldCount, oldBytes := m.senders, m.ids, m.incoming, m.count, m.bytes
 	m.senders, m.ids, m.count, m.bytes = map[string][]*poolTx{}, map[[32]byte]*poolTx{}, 0, 0
+	m.incoming = map[string]map[[32]byte]*poolTx{}
 	for sender, list := range bySender {
 		sort.SliceStable(list, func(i, j int) bool { return list[i].tx.Nonce < list[j].tx.Nonce })
 		kept, _, err := m.validChainLocked(sender, list, matured)
 		if err != nil {
-			m.senders, m.ids, m.count, m.bytes = oldSenders, oldIDs, oldCount, oldBytes
+			m.senders, m.ids, m.incoming, m.count, m.bytes = oldSenders, oldIDs, oldIncoming, oldCount, oldBytes
 			return err
 		}
 		m.setChainLocked(sender, kept)
@@ -706,6 +713,7 @@ func (m *Mempool) truncateLocked(sender string, n int) {
 	chain := m.senders[sender]
 	for _, p := range chain[n:] {
 		delete(m.ids, p.id)
+		m.unindexIncomingLocked(p)
 		m.count--
 		m.bytes -= p.size
 	}
@@ -724,8 +732,38 @@ func (m *Mempool) setChainLocked(sender string, kept []*poolTx) {
 	}
 	for _, p := range kept {
 		m.ids[p.id] = p
+		m.indexIncomingLocked(p)
 		m.count++
 		m.bytes += p.size
 	}
 	m.senders[sender] = kept
+}
+
+// indexIncomingLocked işlemi alıcısının gelen kümesine ekler; kendine transfer (kuralla yasak)
+// sayılmaz.
+func (m *Mempool) indexIncomingLocked(p *poolTx) {
+	r := p.tx.Receiver
+	if r == p.tx.Sender {
+		return
+	}
+	set := m.incoming[r]
+	if set == nil {
+		set = map[[32]byte]*poolTx{}
+		m.incoming[r] = set
+	}
+	set[p.id] = p
+}
+
+// unindexIncomingLocked işlemi alıcısının gelen kümesinden çıkarır; küme boşalırsa silinir
+// (havuzdan geçen her alıcı kalıcı bir kayıt bırakmasın).
+func (m *Mempool) unindexIncomingLocked(p *poolTx) {
+	r := p.tx.Receiver
+	set, ok := m.incoming[r]
+	if !ok {
+		return
+	}
+	delete(set, p.id)
+	if len(set) == 0 {
+		delete(m.incoming, r)
+	}
 }

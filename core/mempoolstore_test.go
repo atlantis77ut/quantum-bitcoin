@@ -40,6 +40,7 @@ func mustLoad(t *testing.T, m *Mempool, wantRestored, wantSkipped int) {
 	if err != nil || r != wantRestored || s != wantSkipped {
 		t.Fatalf("yükleme: geri %d (beklenen %d), atlanan %d (beklenen %d), err %v", r, wantRestored, s, wantSkipped, err)
 	}
+	checkIncomingIndex(t, m)
 }
 
 func inventory(t *testing.T, m *Mempool) []string {

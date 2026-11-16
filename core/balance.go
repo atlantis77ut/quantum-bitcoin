@@ -113,19 +113,13 @@ func (m *Mempool) Balance(address string) (PoolBalance, error) {
 		return PoolBalance{}, fmt.Errorf("%w: bekleyen giden %d, kullanılabilir %d", ErrCorruptState, out.PendingOutgoing, avail)
 	}
 	out.Spendable = avail - out.PendingOutgoing
-	for sender, list := range m.senders {
-		if sender == address { // kendine transfer kuralla yasak; yine de iki yanda sayılmaz
-			continue
+	// Gelen işlemler alıcı dizininden okunur (bütün havuz taranmaz); kendine transfer kuralla
+	// yasaktır, dizine de girmez, iki yanda sayılmaz.
+	for _, p := range m.incoming[address] {
+		if p.tx.Amount < 0 || out.PendingIncoming > math.MaxInt64-p.tx.Amount {
+			return PoolBalance{}, fmt.Errorf("%w: bekleyen gelen toplam", ErrOverflow)
 		}
-		for _, p := range list {
-			if p.tx.Receiver != address {
-				continue
-			}
-			if p.tx.Amount < 0 || out.PendingIncoming > math.MaxInt64-p.tx.Amount {
-				return PoolBalance{}, fmt.Errorf("%w: bekleyen gelen toplam", ErrOverflow)
-			}
-			out.PendingIncoming += p.tx.Amount
-		}
+		out.PendingIncoming += p.tx.Amount
 	}
 	return out, nil
 }
