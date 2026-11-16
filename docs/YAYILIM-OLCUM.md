@@ -92,6 +92,63 @@ Proxy'nin alıcı sınırlarını doğru uyguladığını doğrular (CI için fa
 
 2 Mbit/sn'de blok ~7,3 sn'de ulaşır (bayt / hız + gecikmeler). İkisinden biri beklendiği gibi değilse matris sonuçları kullanılmaz. İlk Actions ölçümünde 0,8 Mbit/sn 18,24 sn, 2 Mbit/sn 7,34 sn verdi; ikisi de bayt / hızla uyuşur, yani proxy hattı doğru sınırlar.
 
+## İlk ölçüm sonuçları (2026-11-16)
+
+GitHub Actions, "Yayılım ölçümü" iş akışı, çalıştırma 43837222599, `profile: full`, hücre başına 5 ölçüm. Commit 38730f1, go1.22.3, linux/amd64, 4 CPU. Ağ değerleri benzetimdir (proxy, döngü arayüzü); gerçek ağ ölçümü değildir. Hücreler en geç düğümün ortanca süresidir (sn).
+
+**Blok (A katmanı, gerçek bileşenler):**
+
+| Blok | Bayt | Çözümleme | Doğrulama |
+|---|---|---|---|
+| Dolu (250 işlem) | 1.809.263 | 6,4 ms | 22,2 ms |
+| 100 işlem | 724.014 | 2,8 ms | 9,4 ms |
+| Boş | 622 | ~0 ms | 0,5 ms |
+
+Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi yukarı hat belirler.
+
+**Kalibrasyon:** 0,8 Mbit/sn 18,24 sn, 2 Mbit/sn 7,34 sn. İkisi de bayt / hızla uyuşur (14,47 Mbit / R). Bu çalıştırmadaki 0,8 Mbit/sn beklentisi ("ulaşmamalı") eski blok boyutundan kalmaydı; sonraki çalıştırmalar 0,3 Mbit/sn kullanır.
+
+**line, 3 atlama** (her atlama tam bloğu bir kez gönderir):
+
+| Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
+|---|---|---|---|
+| 2 | 22,01 | 22,24 | 22,46 |
+| 10 | 4,65 | 4,87 | 5,10 |
+| 20 | 2,47 | 2,70 | 2,93 |
+| 50 | 1,17 | 1,40 | 1,62 |
+| 100 | 0,74 | 0,97 | 1,19 |
+
+**star-hub, 8 yaprak** (merkezin yukarı hattı 8 kopyayı taşır; 2 Mbit/sn hücresi ölçüm yapıntısıdır, "Kalanlar ve sınırlar"):
+
+| Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
+|---|---|---|---|
+| 2 | ulaşmadı (yapıntı) | ulaşmadı (yapıntı) | ulaşmadı (yapıntı) |
+| 10 | 11,34 | 11,66 | 11,66 |
+| 20 | 5,89 | 5,96 | 6,04 |
+| 50 | 2,44 | 2,50 | 2,57 |
+| 100 | 1,26 | 1,34 | 1,41 |
+
+**Ek ölçümler (50 ms):**
+- star-leaf, 8 yaprak: 20 Mbit/sn'de 6,08 sn, 100 Mbit/sn'de 1,44 sn.
+- line 3 atlama, 20 Mbit/sn: 100 işlemlik blok 1,36 sn, boş blok 0,47 sn.
+
+**Okuma:**
+- Süre neredeyse tamamen bayt / yukarı hat: line'da ≈ 3 · S / U, star-hub'da ≈ 8 · S / U. Gecikme (25 → 75 ms) yalnızca ~0,2–0,5 sn ekler.
+- "Yayılım + doğrulama ≤ 1–2 sn" eşiğini dolu blokla yalnızca 50 Mbit/sn ve üstü line hücreleri ile 100 Mbit/sn star-hub hücreleri karşılar. 20 Mbit/sn'de 2,5–6 sn, 10 Mbit/sn'de 5–12 sn.
+- Kaba bayat blok tahmini (en geç düğüm için, p ≈ 1 − e^(−T / blok süresi); düğüm sayısı, hashrate dağılımı ve kısmi yayılım hesaba katılmaz):
+
+| T (hücre) | 60 sn | 30 sn |
+|---|---|---|
+| 0,97 sn (line, 100 Mbit/sn) | %1,6 | %3,2 |
+| 1,40 sn (line, 50 Mbit/sn) | %2,3 | %4,6 |
+| 2,70 sn (line, 20 Mbit/sn) | %4,4 | %8,6 |
+| 4,87 sn (line, 10 Mbit/sn) | %7,8 | %15,0 |
+| 5,96 sn (star-hub, 20 Mbit/sn) | %9,5 | %18,0 |
+| 11,66 sn (star-hub, 10 Mbit/sn) | %17,7 | %32,2 |
+| 22,24 sn (line, 2 Mbit/sn) | %31,0 | %52,4 |
+
+**Karar bu belgede verilmez.** Hangi hücrenin (bağlantı hızı, topoloji) belirleyici profil sayılacağını kullanıcı seçer; 60/30 kararı `devils-advocate` sonrası kullanıcınındır.
+
 ## Kalanlar ve sınırlar
 
 - **Star-hub hücreleri iki itme yuvasını ölçmez.** Döngü arayüzünde MSS ~32–64 KB olduğundan Linux gönderen soketin tamponunu ~2,6 MB'a büyütür ve ~1,8 MB'lık bloğun tamamı çekirdek tamponuna sığar. Düğümün yazması blok kısıtlı hattan geçmeden biter, itme yuvası erken boşalır ve 8 kopya birlikte gider. Kanıt: 10 Mbit/sn'de 8 yaprak ikişer ikişer (~2,9 / 5,8 / 8,7 / 11,6 sn) değil, hepsi ~11,6 sn'de geldi. 2 Mbit/sn'de her kopya 0,25 Mbit/sn'ye düşer, alıcının asgari hızının altında kalır ve hiçbir yaprağa ulaşmaz; bu hücre ölçüm yapıntısıdır, düğüm hatası değildir.
