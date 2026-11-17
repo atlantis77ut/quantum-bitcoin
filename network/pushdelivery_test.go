@@ -69,7 +69,8 @@ func TestBlockPushNotDelivered(t *testing.T) {
 	}
 }
 
-// Teslim bekleyen tutana stall kuralı uygulanmaz, hız sınırı uygulanır; yazan tutana ikisi de.
+// Kuyruğu okunamayan (probe yok) teslim bekleyen tutana stall kuralı uygulanmaz, hız sınırı
+// uygulanır; yazan tutana ikisi de.
 func TestDrainingHolderTakeover(t *testing.T) {
 	l := defaultPushLimits()
 	l.stall = 50 * time.Millisecond
@@ -77,7 +78,7 @@ func TestDrainingHolderTakeover(t *testing.T) {
 	s := newPushSlots(2)
 	s.acquire("a", &l)
 	s.acquire("b", &l)
-	s.drain("a")
+	s.drain("a", nil)
 	now := time.Now().Add(200 * time.Millisecond) // stall geçti, hız sınırı (1 sn) geçmedi
 	s.mu.Lock()
 	stuck := s.stuckLocked(now, &l)
@@ -126,5 +127,73 @@ func TestPushSlotHeldUntilDelivery(t *testing.T) {
 	}
 	if got < hold {
 		t.Fatalf("ikinci yuva %v'de alındı, ilk alıcı %v sonra kapattı", got, hold)
+	}
+}
+
+// Kuyruğu okunan teslim bekleyen tutan: kuyruk en az bir parça küçüldükçe ya da boşalınca
+// tutulur, stall boyunca böyle küçülmezse (damla damla küçülme ve sıfırda kalma dahil)
+// devralınabilir; okunamayan kuyrukta eski kural kalır.
+func TestDrainingHolderProbe(t *testing.T) {
+	l := defaultPushLimits()
+	l.stall = time.Second
+	l.sendChunk = time.Hour // hız sınırı devre dışı
+	stuckAt := func(s *pushSlots, at time.Time) string {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.stuckLocked(at, &l)
+	}
+
+	q := 4 * writeChunk
+	s := newPushSlots(1)
+	s.acquire("a", &l)
+	s.drain("a", func() (int, bool) { return q, true })
+	start := time.Now()
+	if got := stuckAt(s, start.Add(500*time.Millisecond)); got != "" {
+		t.Fatalf("stall dolmadan devralınabilir: %q", got)
+	}
+	q = 3 * writeChunk
+	if got := stuckAt(s, start.Add(900*time.Millisecond)); got != "" {
+		t.Fatalf("bir parça küçülen kuyrukta devralınabilir: %q", got)
+	}
+	q -= 1000 // damla damla okuma ilerleme sayılmaz
+	if got := stuckAt(s, start.Add(1500*time.Millisecond)); got != "" {
+		t.Fatalf("son küçülmeden stall geçmeden devralınabilir: %q", got)
+	}
+	if got := stuckAt(s, start.Add(2*time.Second)); got != "a" {
+		t.Fatalf("damla damla küçülen kuyrukta devralınabilir %q, beklenen a", got)
+	}
+
+	tail := 1000
+	drained := newPushSlots(1)
+	drained.acquire("d", &l)
+	drained.drain("d", func() (int, bool) { return tail, true })
+	start = time.Now()
+	tail = 0 // parçadan küçük kuyruk sonunun boşalması ilerlemedir
+	if got := stuckAt(drained, start.Add(900*time.Millisecond)); got != "" {
+		t.Fatalf("boşalan kuyrukta devralınabilir: %q", got)
+	}
+	if got := stuckAt(drained, start.Add(1500*time.Millisecond)); got != "" {
+		t.Fatalf("boşaldıktan sonra stall geçmeden devralınabilir: %q", got)
+	}
+	if got := stuckAt(drained, start.Add(2*time.Second)); got != "d" {
+		t.Fatalf("boşalıp kapatılmayan bağlantı: devralınabilir %q, beklenen d", got)
+	}
+
+	zero := newPushSlots(1)
+	zero.acquire("z", &l)
+	zero.drain("z", func() (int, bool) { return 0, true })
+	start = time.Now()
+	if got := stuckAt(zero, start.Add(500*time.Millisecond)); got != "" {
+		t.Fatalf("boş kuyrukta stall dolmadan devralınabilir: %q", got)
+	}
+	if got := stuckAt(zero, start.Add(1500*time.Millisecond)); got != "z" {
+		t.Fatalf("boş kuyrukta kapatmayan alıcı: devralınabilir %q, beklenen z", got)
+	}
+
+	blind := newPushSlots(1)
+	blind.acquire("b", &l)
+	blind.drain("b", func() (int, bool) { return 0, false })
+	if got := stuckAt(blind, time.Now().Add(time.Minute)); got != "" {
+		t.Fatalf("okunamayan kuyrukta stall uygulandı: %q", got)
 	}
 }

@@ -296,8 +296,13 @@ var errNotDelivered = errors.New("itilen blok teslim edilmedi (alıcı süre iç
 // "Teslim"): yazma yönü kapatılır, alıcının kapatması end'e kadar beklenir. Alıcı itmeye yanıt
 // yazmaz; gelen her şey atılır (en çok 4 KiB, sonrası beklenmeyen veri sayılıp bırakılır).
 func (ps *P2PServer) awaitDelivery(peer string, conn net.Conn, end time.Time) error {
-	ps.pushSlots.drain(peer)
-	if tc, ok := conn.(*net.TCPConn); ok {
+	tc, _ := conn.(*net.TCPConn)
+	var probe func() (int, bool)
+	if tc != nil {
+		probe = func() (int, bool) { return unackedBytes(tc) }
+	}
+	ps.pushSlots.drain(peer, probe)
+	if tc != nil {
 		if err := tc.CloseWrite(); err != nil {
 			return nil // yazılan gitti; kapatılamayan yön teslimi bekletmeye değmez
 		}
