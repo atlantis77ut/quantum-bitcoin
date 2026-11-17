@@ -31,6 +31,7 @@ func newTestChain(t *testing.T) *Blockchain {
 	}
 	clock := int64(1_900_000_000)
 	bc.now = func() int64 { clock++; return clock }
+	bc.retryDefer = 0 // yeniden gönderim seyreltmesi yalnızca kendi testinde (retry_test.go)
 	t.Cleanup(func() { bc.Close() })
 	return bc
 }

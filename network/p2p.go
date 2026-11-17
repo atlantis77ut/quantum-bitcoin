@@ -569,7 +569,7 @@ func (ps *P2PServer) handleBlockFrom(remote string, id peerID, b *core.Block, so
 	case errors.Is(err, core.ErrKnownBlock):
 	case errors.Is(err, core.ErrTimestampFuture), errors.Is(err, core.ErrSideChainLimit),
 		errors.Is(err, core.ErrKnownInvalid), errors.Is(err, core.ErrBadDifficulty),
-		errors.Is(err, core.ErrOrphanTooEasy):
+		errors.Is(err, core.ErrOrphanTooEasy), errors.Is(err, core.ErrRetryDeferred):
 		// Önbelleğe alınmayan ya da ucuz ret yolları: aynı blokla tekrar tekrar tetiklenebilir,
 		// log taşkını olmasın diye Debug.
 		ps.log.Debug("eşten gelen blok reddedildi", "remote", remote, "index", b.Index, "err", err)

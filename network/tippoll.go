@@ -321,8 +321,8 @@ func (ps *P2PServer) adoptTip(peer string, h core.BlockHeader) tipOutcome {
 			ps.relayFrom(resp.Block, peer) // eş bloğu zaten biliyor
 		}
 		return tipProgress
-	case errors.Is(err, core.ErrKnownBlock):
-		return tipNeutral
+	case errors.Is(err, core.ErrKnownBlock), errors.Is(err, core.ErrRetryDeferred):
+		return tipNeutral // ertelenen yeniden deneme yerel durumdur, eşin hatası değil
 	case bc.TipHash() != h.PrevHash:
 		// Uç bu arada (senkronizasyonla) ilerledi, blok yan dala düştü: eşin hatası değil.
 		ps.log.Debug("uç beklemesiyle alınan blok uca eklenemedi", "peer", peer, "err", err)

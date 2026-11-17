@@ -310,13 +310,28 @@ func (bc *Blockchain) storeAndActivateLocked(b *Block) error {
 	return bc.activateLocked(e)
 }
 
+// ErrRetryDeferred düğüm bildiği daha çok işli zincire geçemezken (behind.go) bilinen bir bloğun
+// yeniden gönderiminin geçişi yeniden denemediğini söyler: son başarısız denemeden bu yana
+// retryDefer (TargetSpacing) geçmedi. Yerel durumdur, eşin kusuru değildir (IsLocalDataErr).
+var ErrRetryDeferred = errors.New("düğüm geride: bilinen bloğun geçiş denemesi ertelendi")
+
 // retryKnownLocked, indekste saklı ve uçtan fazla iş taşıyan bir blok (ör. geçiş geçici bir
 // hatayla — disk, saat geri gitmesi — yarım kaldıysa) yeniden gönderildiğinde zincire geçişi
 // yeniden dener. Gövde saklanmadan önce doğrulandığından imza doğrulaması yapılmaz.
+//
+// Düğüm gerideyken her deneme geçilemeyen dalın gövdelerini yazma kilidi altında yeniden okuyup
+// özetler; yeniden gönderim bedavadır. Bu yüzden son başarısız denemeden sonra retryDefer
+// saniye içinde gelen yeniden gönderim denemez (ErrRetryDeferred). Saat geri gittiyse
+// (geçen süre negatif) ertelenmez. Yeni blok saklanınca geçiş her zaman denenir (yeni iş ister).
 func (bc *Blockchain) retryKnownLocked(hash string) error {
 	e, ok := bc.index[hash]
 	if !ok || e.Status == statusInvalid || e.work.Cmp(bc.tip.work) <= 0 {
 		return ErrKnownBlock
+	}
+	if bc.behind != "" && bc.retryDefer > 0 {
+		if d := bc.now() - bc.behindTriedAt; d >= 0 && d < bc.retryDefer {
+			return ErrRetryDeferred
+		}
 	}
 	return bc.activateLocked(e)
 }
@@ -364,6 +379,9 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 			bc.dataAlarmLocked(md, target)
 		}
 		bc.noteBehindLocked(target, err)
+		if err != nil && bc.behind != "" {
+			bc.behindTriedAt = bc.now() // yeniden gönderimin seyreltilmesi (retryKnownLocked)
+		}
 	}()
 	fork, err := bc.forkPoint(target)
 	if err != nil {
