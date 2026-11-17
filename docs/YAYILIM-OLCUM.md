@@ -170,35 +170,35 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 
 ## Sadık vekille tam matris (2026-11-17)
 
-GitHub Actions, "Yayılım ölçümü", çalıştırma 44065774611, `profile: full`, hücre başına 5 ölçüm, commit 77a2335 (feat/faithful-proxy: vekil hat hızında okur; #86 Linux teslim ilerlemesi ve 2026-11-16 teslim kuralı açık). Bütün hücrelerde itme yuvası devralması sıfır (stall, teslim, hız). Kalibrasyon 2 Mbit/sn 7,36 sn, 0,3 Mbit/sn ulaşmadı (beklenen). Yukarıdaki 2026-11-16 tabloları eski vekille alındı.
+GitHub Actions, "Yayılım ölçümü", çalıştırma 44072246045, `profile: full`, hücre başına 5 ölçüm, commit 1acc8bd (feat/proxy-readahead: vekil hat hızında okur, okuma payı en az 20 ms; #86 Linux teslim ilerlemesi ve 2026-11-16 teslim kuralı açık). Bütün hücrelerde itme yuvası devralması sıfır (stall, teslim, hız), 0,3 Mbit/sn kalibrasyonu dışında bütün ölçümler ulaştı. Kalibrasyon 2 Mbit/sn 7,34 sn, 0,3 Mbit/sn ulaşmadı (beklenen). Yukarıdaki 2026-11-16 tabloları eski vekille alındı.
 
 **line, 3 atlama** (en geç düğümün ortancası, sn; parantezde 2026-11-16):
 
 | Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
 |---|---|---|---|
-| 2 | 22,18 (22,01) | 22,29 (22,24) | 22,51 (22,46) |
-| 10 | 4,69 (4,65) | 4,92 (4,87) | 5,14 (5,10) |
-| 20 | 2,53 (2,47) | 2,75 (2,70) | 2,97 (2,93) |
-| 50 | 1,26 (1,17) | 1,62 (1,40) | 1,72 (1,62) |
-| 100 | 0,78 (0,74) | 1,00 (0,97) | 1,22 (1,19) |
+| 2 | 22,02 (22,01) | 22,24 (22,24) | 22,47 (22,46) |
+| 10 | 4,65 (4,65) | 4,87 (4,87) | 5,10 (5,10) |
+| 20 | 2,48 (2,47) | 2,70 (2,70) | 2,93 (2,93) |
+| 50 | 1,18 (1,17) | 1,40 (1,40) | 1,63 (1,62) |
+| 100 | 0,74 (0,74) | 0,96 (0,97) | 1,19 (1,19) |
 
 **star-hub, 8 yaprak** (ölçüm başına son yaprağın ortancası, sn; 2026-11-16 hub tablosu teslim kuralından önceydi, karşılaştırılamaz):
 
 | Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
 |---|---|---|---|
-| 2 | 58,07 | 58,24 | 58,34 |
-| 10 | 12,07 | 12,36 | 12,53 |
-| 20 | 6,26 | 6,63 | 6,79 |
-| 50 | 2,87 | 3,24 | 3,48 |
-| 100 | 1,77 | 2,00 | 2,28 |
+| 2 | 58,06 | 58,18 | 58,31 |
+| 10 | 11,81 | 12,26 | 12,63 |
+| 20 | 6,21 | 6,34 | 6,86 |
+| 50 | 2,75 | 2,93 | 3,41 |
+| 100 | 1,61 | 1,98 | 2,21 |
 
-Ek: star-leaf 20 Mbit/sn 6,36 sn, 100 Mbit/sn 1,83 sn; line 20 Mbit/sn 100 işlem 1,37 sn, boş blok 0,47 sn.
+Ek: star-leaf 20 Mbit/sn 5,71 sn, 100 Mbit/sn 1,79 sn; line 20 Mbit/sn 100 işlem 1,36 sn, boş blok 0,49 sn.
 
-**Okuma:** 2–20 Mbit/sn ve 100 Mbit/sn `line` hücreleri eskisinin %0–5 içindedir. 50 Mbit/sn hücreleri %6–16 yavaştır ve ölçümler arası yayılım büyüktür (50 ms'de son düğüm 1,49–1,86 sn, eskisi 1,40): vekilin okuma payı (en az 5 ms) 50 Mbit/sn'de bir parçanın hat süresinin (~2,6 ms) yalnızca ~2 katıdır, zamanlama gecikmesi hattı kısa süre boşta bırakabilir (100 Mbit/sn'de ~4 parça, etki küçük). Bu, ölçüm aracının bulgusudur, düğüm davranışı değildir; blok süresi kararının eşiği (≤ 1–2 sn) 100 Mbit/sn `line` hücrelerinde değişmedi (0,78–1,22 sn).
+**Okuma:** `line` hücreleri 2026-11-16 değerlerinin ±%1 içindedir; vekilin sadık hâle gelmesi blok süresi kararının dayandığı tabloyu değiştirmedi (100 Mbit/sn 0,74–1,19 sn). Okuma payı 5 ms iken (feat/faithful-proxy, çalıştırma 44065774611) 50 Mbit/sn hücreleri %6–16 yavaş ve dağınıktı (50 ms'de 1,62 sn, son düğüm 1,49–1,86 sn): pay bir parçanın hat süresinin (~2,6 ms) yalnızca ~2 katıydı, zamanlama gecikmesi hattı boşta bırakıyordu; 20 ms'lik pay (50 Mbit/sn'de ~7,6 parça) bunu giderdi. Göndericide erken onaylanan pay zaman cinsinden 20 ms'dir, teslim ilerlemesinin stall'ının (2 sn) çok altındadır.
 
 ## Kalanlar ve sınırlar
 
-- **feat/push-stall-slot'tan sonra benzetim sapması:** hız sınırlayan vekil (`throttleProxy`) göndericiden okuyup kendi kuyruğunda tuttuğundan baytlar hattan geçmeden onaylanır; Linux'ta teslim bekleyen itmenin kuyruğu erken boşalır ve düşük hızda (ör. 2 Mbit/sn hub) yuva teslimden önce devralınabilir. feat/push-stall-slot ile feat/faithful-proxy arasındaki Linux ölçümleri düşük hızlarda 2026-11-16 ölçümüyle karşılaştırılamaz ([MAINNET-ONCESI.md](MAINNET-ONCESI.md), teslim ilerlemesi). **Vekil düzeltildi (feat/faithful-proxy):** vekil göndericiden yalnızca hat boşalmak üzereyken okur (bir parçanın hat süresi, en az 5 ms önce) ve Linux'ta dinleyicinin alma tamponu 16 KiB'tır (çekirdek 32 KiB'a katlar); hattı bekleyen bayt göndericinin kuyruğunda onaylanmamış kalır (`TestThrottleProxyPacedRead`: hattın önünde onaylanan bayt alma tamponu, okuma payı, hız·gecikme ve bir parçayla sınırlı). Kalan sapma: gecikme hattındaki bayt (hız·gecikme), onayın dönüş gecikmesi, vekilin alma tamponu (32 KiB), okuma payı ve hattı paylaşan itme başına bir parça göndericide hat geçmeden onaylanmış görünür; kuyruk bu kadar erken boşalır: 2 Mbit/sn, 50 ms'de ~0,4 sn, 0,3 Mbit/sn kalibrasyonunda ~1,8 sn (stall 2 sn'ye yakın; matris hücreleri ≥ 2 Mbit/sn'de stall'ın çok altında). Dönüş yönünde (vekilin hedefe açtığı bağlantı) alma tamponu ayarlanmaz, yanıtlar erken onaylanır (itme gidiş yönündedir, teslim ilerlemesini etkilemez); Linux dışında alma tamponu ayarlanmaz; çok yüksek hızlarda (yüzlerce Mbit/sn üstü) 32 KiB pencereli döngü bacağı ayarlanan hıza ulaşamayabilir (matris en çok 100 Mbit/sn). Rapor ölçüm başına itme yuvası devralmalarını nedene göre verir (`push_takeovers`: stall, teslim, hız; özette tablo). Yeniden ölçüm aşağıda ("Teslim ilerlemesi ve sadık vekil ölçümü").
+- **feat/push-stall-slot'tan sonra benzetim sapması:** hız sınırlayan vekil (`throttleProxy`) göndericiden okuyup kendi kuyruğunda tuttuğundan baytlar hattan geçmeden onaylanır; Linux'ta teslim bekleyen itmenin kuyruğu erken boşalır ve düşük hızda (ör. 2 Mbit/sn hub) yuva teslimden önce devralınabilir. feat/push-stall-slot ile feat/faithful-proxy arasındaki Linux ölçümleri düşük hızlarda 2026-11-16 ölçümüyle karşılaştırılamaz ([MAINNET-ONCESI.md](MAINNET-ONCESI.md), teslim ilerlemesi). **Vekil düzeltildi (feat/faithful-proxy):** vekil göndericiden yalnızca hat boşalmak üzereyken okur (bir parçanın hat süresi, en az 20 ms önce; feat/proxy-readahead'den önce 5 ms) ve Linux'ta dinleyicinin alma tamponu 16 KiB'tır (çekirdek 32 KiB'a katlar); hattı bekleyen bayt göndericinin kuyruğunda onaylanmamış kalır (`TestThrottleProxyPacedRead`: hattın önünde onaylanan bayt alma tamponu, okuma payı, hız·gecikme ve bir parçayla sınırlı). Kalan sapma: gecikme hattındaki bayt (hız·gecikme), onayın dönüş gecikmesi, vekilin alma tamponu (32 KiB), okuma payı ve hattı paylaşan itme başına bir parça göndericide hat geçmeden onaylanmış görünür; kuyruk bu kadar erken boşalır: 2 Mbit/sn, 50 ms'de ~0,4 sn, 0,3 Mbit/sn kalibrasyonunda ~1,8 sn (stall 2 sn'ye yakın; matris hücreleri ≥ 2 Mbit/sn'de stall'ın çok altında). Dönüş yönünde (vekilin hedefe açtığı bağlantı) alma tamponu ayarlanmaz, yanıtlar erken onaylanır (itme gidiş yönündedir, teslim ilerlemesini etkilemez); Linux dışında alma tamponu ayarlanmaz; çok yüksek hızlarda (yüzlerce Mbit/sn üstü) 32 KiB pencereli döngü bacağı ayarlanan hıza ulaşamayabilir (matris en çok 100 Mbit/sn). Rapor ölçüm başına itme yuvası devralmalarını nedene göre verir (`push_takeovers`: stall, teslim, hız; özette tablo). Yeniden ölçüm aşağıda ("Teslim ilerlemesi ve sadık vekil ölçümü").
 
 - **İtme yuvası teslim ölçümü (feat/push-slot-delivery, Actions 43893936454, `profile: hub`, 5 ölçüm, 50 ms).** Yuva artık alıcı bloğu işleyip kapatınca boşalır ([MAINNET-ONCESI.md](MAINNET-ONCESI.md), blok süresi maddesi). 10 Mbit/sn'de yapraklar ikişer gelir: 3,10 / 3,10 / 6,23 / 6,25 / 9,28 / 9,32 / 12,41 / 12,42 sn; en geç yaprağın ortancası 12,37 sn (önceki 11,66 sn; fark kopyalar arası bekleme ve kapatma turudur). 2 Mbit/sn'de 5 ölçümün 4'ünde yapraklar ikişer ~14,6 / 29 / 44 / 58 sn'de gelir; 40 varıştan 39'u gerçekleşti, en geç yaprağın ortancası 45,9 sn. Bir ölçümde 7. yaprak 120 sn içinde almadı: o ölçümde son çiftin diğer yaprağı 53,2 sn'de, yani tek kopyanın bütün hattı kullanacağı sürede geldi; 7. yaprağın itmesi aktarımdan önce başarısız oldu ya da iptal edildi. Hız sınırıyla devralma değil: `sendChunk` 14 sn olduğundan pay ~13 sn'dir. Kesin neden kayıtlardan belirlenemedi (Debug kayıtları yok). Bu hücre kopya başına ~1 Mbit/sn ile alıcının asgari hızının (≈1,05 Mbit/sn) sınırındadır.
 - **Teslim ilerlemesi ve sadık vekil ölçümü (feat/faithful-proxy, Actions 44063938095, commit f264ae7, `profile: hub`, 5 ölçüm, 50 ms; #86'nın Linux teslim ilerlemesi açık).** Vekil göndericiden hat hızında okur (yukarıda, Kalanlar). Bütün hücrelerde itme yuvası devralması sıfır (stall 0, teslim 0, hız 0): teslim bekleyen yuva hiçbir ölçümde teslimden önce devralınmadı. 10 Mbit/sn'de yapraklar ikişer gelir, ilk ölçüm 3,03 / 3,08 / 6,02 / 6,11 / 9,00 / 9,10 / 11,91 / 12,08 sn; ölçüm başına son yaprak 11,98–12,27 sn (önceki ilk ölçüm 12,42 sn). 2 Mbit/sn'de 5 ölçümün 5'inde yapraklar ikişer ~14,5 / 29 / 43,5 / 58 sn'de gelir, son yaprak 58,12–58,36 sn; 40 varıştan 40'ı gerçekleşti (önceki 39/40). En geç yaprağın ortancası (özet hücresi) 10 Mbit/sn'de 9,26 sn, 2 Mbit/sn'de 43,94 sn (önceki 12,37 ve 45,9 sn); bu ölçüt her ölçümde hangi yaprağın son geldiğine bağlıdır (son çift ölçümden ölçüme değişince düğüm ortancaları düşer), karşılaştırma için ölçüm başına son yaprak süresi daha doğrudur. Kalibrasyon: 2 Mbit/sn 7,35 sn (beklenen ~7,3), 0,3 Mbit/sn ulaşmadı (beklenen). Benzetimdir; yolda TCP sonlandıran ara kutu ve çok makineli ağ ölçülmedi.
