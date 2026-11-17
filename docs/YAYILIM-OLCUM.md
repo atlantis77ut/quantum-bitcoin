@@ -170,31 +170,31 @@ Doğrulama ve çözümleme yayılım süresinin yanında küçüktür; süreyi y
 
 ## Sadık vekille tam matris (2026-11-17)
 
-GitHub Actions, "Yayılım ölçümü", çalıştırma 44065774611, `profile: full`, hücre başına 5 ölçüm, commit 77a2335 (feat/faithful-proxy: vekil hat hızında okur; #86 Linux teslim ilerlemesi ve 2026-11-16 teslim kuralı açık). Bütün hücrelerde itme yuvası devralması sıfır (stall, teslim, hız). Kalibrasyon 2 Mbit/sn 7,36 sn, 0,3 Mbit/sn ulaşmadı (beklenen). Yukarıdaki 2026-11-16 tabloları eski vekille alındı.
+GitHub Actions, "Yayılım ölçümü", çalıştırma 44072246045, `profile: full`, hücre başına 5 ölçüm, commit 1acc8bd (feat/proxy-readahead: vekil hat hızında okur, okuma payı en az 20 ms; #86 Linux teslim ilerlemesi ve 2026-11-16 teslim kuralı açık). Bütün hücrelerde itme yuvası devralması sıfır (stall, teslim, hız), 0,3 Mbit/sn kalibrasyonu dışında bütün ölçümler ulaştı. Kalibrasyon 2 Mbit/sn 7,34 sn, 0,3 Mbit/sn ulaşmadı (beklenen). Yukarıdaki 2026-11-16 tabloları eski vekille alındı.
 
 **line, 3 atlama** (en geç düğümün ortancası, sn; parantezde 2026-11-16):
 
 | Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
 |---|---|---|---|
-| 2 | 22,18 (22,01) | 22,29 (22,24) | 22,51 (22,46) |
-| 10 | 4,69 (4,65) | 4,92 (4,87) | 5,14 (5,10) |
-| 20 | 2,53 (2,47) | 2,75 (2,70) | 2,97 (2,93) |
-| 50 | 1,26 (1,17) | 1,62 (1,40) | 1,72 (1,62) |
-| 100 | 0,78 (0,74) | 1,00 (0,97) | 1,22 (1,19) |
+| 2 | 22,02 (22,01) | 22,24 (22,24) | 22,47 (22,46) |
+| 10 | 4,65 (4,65) | 4,87 (4,87) | 5,10 (5,10) |
+| 20 | 2,48 (2,47) | 2,70 (2,70) | 2,93 (2,93) |
+| 50 | 1,18 (1,17) | 1,40 (1,40) | 1,63 (1,62) |
+| 100 | 0,74 (0,74) | 0,96 (0,97) | 1,19 (1,19) |
 
 **star-hub, 8 yaprak** (ölçüm başına son yaprağın ortancası, sn; 2026-11-16 hub tablosu teslim kuralından önceydi, karşılaştırılamaz):
 
 | Mbit/sn \ tek yön | 25 ms | 50 ms | 75 ms |
 |---|---|---|---|
-| 2 | 58,07 | 58,24 | 58,34 |
-| 10 | 12,07 | 12,36 | 12,53 |
-| 20 | 6,26 | 6,63 | 6,79 |
-| 50 | 2,87 | 3,24 | 3,48 |
-| 100 | 1,77 | 2,00 | 2,28 |
+| 2 | 58,06 | 58,18 | 58,31 |
+| 10 | 11,81 | 12,26 | 12,63 |
+| 20 | 6,21 | 6,34 | 6,86 |
+| 50 | 2,75 | 2,93 | 3,41 |
+| 100 | 1,61 | 1,98 | 2,21 |
 
-Ek: star-leaf 20 Mbit/sn 6,36 sn, 100 Mbit/sn 1,83 sn; line 20 Mbit/sn 100 işlem 1,37 sn, boş blok 0,47 sn.
+Ek: star-leaf 20 Mbit/sn 5,71 sn, 100 Mbit/sn 1,79 sn; line 20 Mbit/sn 100 işlem 1,36 sn, boş blok 0,49 sn.
 
-**Okuma:** 2–20 Mbit/sn ve 100 Mbit/sn `line` hücreleri eskisinin %0–5 içindedir. 50 Mbit/sn hücreleri %6–16 yavaştır ve ölçümler arası yayılım büyüktür (50 ms'de son düğüm 1,49–1,86 sn, eskisi 1,40): vekilin okuma payı (en az 5 ms) 50 Mbit/sn'de bir parçanın hat süresinin (~2,6 ms) yalnızca ~2 katıdır, zamanlama gecikmesi hattı kısa süre boşta bırakabilir (100 Mbit/sn'de ~4 parça, etki küçük). Bu, ölçüm aracının bulgusudur, düğüm davranışı değildir; blok süresi kararının eşiği (≤ 1–2 sn) 100 Mbit/sn `line` hücrelerinde değişmedi (0,78–1,22 sn).
+**Okuma:** `line` hücreleri 2026-11-16 değerlerinin ±%1 içindedir; vekilin sadık hâle gelmesi blok süresi kararının dayandığı tabloyu değiştirmedi (100 Mbit/sn 0,74–1,19 sn). Okuma payı 5 ms iken (feat/faithful-proxy, çalıştırma 44065774611) 50 Mbit/sn hücreleri %6–16 yavaş ve dağınıktı (50 ms'de 1,62 sn, son düğüm 1,49–1,86 sn): pay bir parçanın hat süresinin (~2,6 ms) yalnızca ~2 katıydı, zamanlama gecikmesi hattı boşta bırakıyordu; 20 ms'lik pay (50 Mbit/sn'de ~7,6 parça) bunu giderdi. Göndericide erken onaylanan pay zaman cinsinden 20 ms'dir, teslim ilerlemesinin stall'ının (2 sn) çok altındadır.
 
 ## Kalanlar ve sınırlar
 
