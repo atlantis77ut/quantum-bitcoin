@@ -90,6 +90,9 @@ type Blockchain struct {
 	// beforeBlockLoad (yalnızca testler) önbellek kaçırmasında kilitsiz disk okumasından önce
 	// çağrılır; zincir oluşturulurken atanır, sonra değişmez.
 	beforeBlockLoad func()
+	// afterHistorySnapshot (yalnızca testler) AddressHistory anlık görüntüyü alıp zincir kilidini
+	// bıraktıktan sonra, taramadan önce çağrılır; zincir oluşturulurken atanır.
+	afterHistorySnapshot func()
 
 	// Blok indeksi (bkz. chain.go). Hepsi mu ile korunur.
 	index     map[string]*indexEntry // özet → indeks kaydı (ana ve yan bloklar)
