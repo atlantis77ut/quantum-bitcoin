@@ -66,13 +66,15 @@ func localIOErr(op string, err error) error {
 }
 
 // IsLocalDataErr hatanın yerel veri hatası olduğunu söyler: indeksteki bir bloğun kaydı diskte
-// yok, yerel durum bozuk ya da disk okunamıyor veya yazılamıyor (ErrLocalIO). Eşin kusuru
+// yok, yerel durum bozuk, disk okunamıyor veya yazılamıyor (ErrLocalIO) ya da düğüm gerideyken
+// geçiş denemesi ertelendi (ErrRetryDeferred). Eşin kusuru
 // değildir; ağ katmanı eşi bunun için ertelemez. ErrLocalIO writeSync'te ve getBlock, getRaw,
 // readInt ile indeks geri alma kaydı okumasında verilir. Bu yardımcılar uzlaşma yolu dışında da
 // (API bakiye/nonce, havuz, eşe blok sunma, açılış) çağrılır; IsLocalDataErr'i yalnızca
 // ön-senkronizasyon kullanır.
 func IsLocalDataErr(err error) bool {
-	return errors.Is(err, ErrBlockDataMissing) || errors.Is(err, ErrCorruptState) || errors.Is(err, ErrLocalIO)
+	return errors.Is(err, ErrBlockDataMissing) || errors.Is(err, ErrCorruptState) || errors.Is(err, ErrLocalIO) ||
+		errors.Is(err, ErrRetryDeferred)
 }
 
 // noteBehindLocked activateLocked'ın sonunda geride kalma kaydını günceller: err denemenin

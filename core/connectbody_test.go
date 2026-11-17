@@ -266,6 +266,7 @@ func TestRecoverCorruptBodyAlarm(t *testing.T) {
 	}
 	t.Cleanup(func() { bc2.Close() })
 	bc2.now = now
+	bc2.retryDefer = 0 // açılış denemesinden hemen sonra yeniden gönderim (retry_test.go)
 	if tipHash(t, bc2) != s2.Hash {
 		t.Fatal("açılışta bozuk gövdeli bloğa geçildi ya da sağlam ağır öneke geçilmedi")
 	}

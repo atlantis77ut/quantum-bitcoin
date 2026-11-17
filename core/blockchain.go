@@ -114,6 +114,11 @@ type Blockchain struct {
 	behind string
 	// writeFault testler içindir: nil değilse writeSync diske yazmak yerine onun hatasını döndürür.
 	writeFault func(op string) error
+	// retryDefer düğüm gerideyken başarısız geçişten sonra bilinen bir bloğun yeniden gönderiminin
+	// geçişi yeniden denemediği süredir (sn; NewBlockchain'de TargetSpacing, test yardımcıları 0).
+	retryDefer int64
+	// behindTriedAt düğüm gerideyken son başarısız geçiş denemesinin zamanıdır (bc.now; chain.go).
+	behindTriedAt int64
 
 	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
 	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır
@@ -158,6 +163,8 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 		syncAllow: map[string]struct{}{},
 
 		blockCache: newBlockCache(blockCacheMaxEntries, blockCacheMaxBytes),
+
+		retryDefer: p.TargetSpacing, // takılıyken yeniden gönderim seyreltilir (chain.go)
 	}
 	// Kodda üretilen genesis, sabitlenmiş özete eşit, kendi hedefine kazılmış ve biçimce
 	// geçerli olmalı; aksi halde kodlama sessizce değişmiş demektir (ağ bölünmesi).
