@@ -2,6 +2,7 @@ package core
 
 import (
 	"container/list"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -38,7 +39,8 @@ type blockCacheEntry struct {
 	block *Block
 	size  int
 
-	// ids bloğun işlem kimlikleridir; ilk BlockTxIDs çağrısında bir kez hesaplanır.
+	// ids bloğun işlem kimlikleridir: diskten yüklenen blokta doğrulama sırasında hesaplanıp
+	// put'ta atanır, yoksa ilk BlockTxIDs çağrısında bir kez hesaplanır.
 	idsOnce sync.Once
 	ids     [][32]byte
 }
@@ -82,7 +84,8 @@ func (c *blockCache) peek(hash string) *blockCacheEntry {
 }
 
 // put bloğu ekler; tek başına bütçeyi aşan blok saklanmaz. Sınırlar aşılırsa en eski çıkar.
-func (c *blockCache) put(hash string, b *Block, size int) {
+// ids nil değilse bloğun işlem kimlikleridir ve girdiye atanır.
+func (c *blockCache) put(hash string, b *Block, size int, ids [][32]byte) {
 	if size > c.maxBytes {
 		return
 	}
@@ -92,7 +95,11 @@ func (c *blockCache) put(hash string, b *Block, size int) {
 		c.order.MoveToFront(el)
 		return
 	}
-	c.items[hash] = c.order.PushFront(&blockCacheEntry{hash: hash, block: b, size: size})
+	e := &blockCacheEntry{hash: hash, block: b, size: size}
+	if ids != nil {
+		e.idsOnce.Do(func() { e.ids = ids })
+	}
+	c.items[hash] = c.order.PushFront(e)
 	c.bytes += size
 	for c.order.Len() > c.maxEntries || c.bytes > c.maxBytes {
 		el := c.order.Back()
@@ -104,12 +111,13 @@ func (c *blockCache) put(hash string, b *Block, size int) {
 }
 
 // BlockTxIDs b'nin işlem kimliklerini (IDBytes, blok sırasıyla) döndürür. b, API okumasının
-// döndürdüğü ve hâlâ önbellekte duran girdinin kendisiyse kimlikler girdide bir kez hesaplanıp
-// saklanır (bloğun ilk isteği öder, sonrakiler bedavadır); değilse (önbellekte yok, eşzamanlı
-// kaçırmada yarışı kaybetmiş ya da önbellek dışı yoldan gelmiş blok) her çağrıda hesaplanır ve
-// saklanmaz. Hesaplama zincir ve önbellek kilidi tutulmadan yapılır; girdi bu sırada önbellekten
-// düşse de çağıranın elindeki kimlikler geçerlidir. Dönen dilim paylaşılır ve salt okunurdur.
-// Kimlik dilimi (blok başına ~8 KiB) önbelleğin bayt bütçesine sayılmaz.
+// döndürdüğü ve hâlâ önbellekte duran girdinin kendisiyse girdideki kimlikler döner (diskten
+// yüklenen blokta doğrulamada hesaplanmıştır; yoksa ilk çağrıda bir kez hesaplanıp saklanır);
+// değilse (önbellekte yok, eşzamanlı kaçırmada yarışı kaybetmiş ya da önbellek dışı yoldan gelmiş
+// blok) her çağrıda hesaplanır ve saklanmaz. Hesaplama zincir ve önbellek kilidi tutulmadan
+// yapılır; girdi bu sırada önbellekten düşse de çağıranın elindeki kimlikler geçerlidir. Dönen
+// dilim paylaşılır ve salt okunurdur. Kimlik dilimi (blok başına ~8 KiB) önbelleğin bayt
+// bütçesine sayılmaz.
 func (bc *Blockchain) BlockTxIDs(b *Block) [][32]byte {
 	if e := bc.blockCache.peek(b.Hash); e != nil && e.block == b {
 		e.idsOnce.Do(func() { e.ids = TxIDs(b.Transactions) })
@@ -151,8 +159,8 @@ func (bc *Blockchain) startBlockReadLocked(hash string, gate ReadGate) (blockRea
 
 // finishBlockRead okumayı bc.mu tutulmadan bitirir: kaçırmada gövdeyi diskten okur, çözer ve
 // önbelleğe koyar; kapının release'ini (hata yolları dahil) bir kez çağırır. Diskten okunan
-// gövdedeki özet alanı hash ile tutmazsa önbelleğe girmez (başlık özeti ve Merkle kökü yeniden
-// hesaplanmaz).
+// gövde başlığa yeniden bağlanır (verifyLoadedBlock): tutmazsa ErrCorruptState döner ve önbelleğe
+// girmez. Doğrulamada hesaplanan işlem kimlikleri girdiyle saklanır (BlockTxIDs).
 //
 // Kilitsiz okuma şu değişmeze dayanır: blok gövdesinin anahtarı (çıplak özet) hiç silinmez ve
 // üzerine başka içerik yazılmaz (budama yok, saklanmayan yan bloklar hiç yazılmaz; durum
@@ -179,9 +187,34 @@ func (bc *Blockchain) finishBlockRead(r blockRead) (*Block, error) {
 	if err := json.Unmarshal(data, &b); err != nil {
 		return nil, fmt.Errorf("%w: blok %s: %v", ErrCorruptState, hash, err)
 	}
+	ids, err := verifyLoadedBlock(hash, &b)
+	if err != nil {
+		return nil, err
+	}
+	bc.blockCache.put(hash, &b, len(data), ids)
+	return &b, nil
+}
+
+// verifyLoadedBlock diskten çözülen bloğu anahtarına yeniden bağlar ve işlem kimliklerini
+// döndürür. Sırayla: gövdedeki özet alanı anahtar mı, başlığın özeti anahtar mı (kanonik olmayan
+// PrevHash/MerkleRoot burada düşer), işlem sayısı sınırda mı (özetlemeden önce), işlemlerin
+// Merkle kökü başlıktaki kök mü. Uzlaşma doğrulaması değildir (PoW, zaman, imza ve bakiye
+// denetlenmez; blok kabul edilirken denetlendi); diskteki bozulmayı yakalar. Eksik veri alarmını
+// tetiklemez (o uzlaşma yolunundur): çağıran bozuk durum hatası alır.
+func verifyLoadedBlock(hash string, b *Block) ([][32]byte, error) {
 	if b.Hash != hash {
 		return nil, fmt.Errorf("%w: %s anahtarında %s bloğu", ErrCorruptState, hash, b.Hash)
 	}
-	bc.blockCache.put(hash, &b, len(data))
-	return &b, nil
+	if b.CalculateHash() != hash {
+		return nil, fmt.Errorf("%w: %s bloğunun başlığı özetiyle tutmuyor", ErrCorruptState, hash)
+	}
+	if len(b.Transactions) == 0 || len(b.Transactions)-1 > MaxTxPerBlock {
+		return nil, fmt.Errorf("%w: %s bloğunda %d işlem", ErrCorruptState, hash, len(b.Transactions))
+	}
+	ids := TxIDs(b.Transactions)
+	root := merkleNodes(idLeaves(ids))
+	if hex.EncodeToString(root[:]) != b.MerkleRoot {
+		return nil, fmt.Errorf("%w: %s bloğunun işlemleri Merkle köküyle tutmuyor", ErrCorruptState, hash)
+	}
+	return ids, nil
 }
