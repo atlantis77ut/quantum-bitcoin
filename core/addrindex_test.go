@@ -295,3 +295,50 @@ func TestAddrHistorySnapshotOutsideLock(t *testing.T) {
 		t.Fatalf("sonraki sayfa yeni bloğu göstermiyor: %d kayıt", len(h.Txs))
 	}
 }
+
+// TestAddrHistoryCloseWaits Close'un kilitsiz taramanın bitmesini beklediğini, kapanıştan sonraki
+// isteğin hata döndüğünü sınar.
+func TestAddrHistoryCloseWaits(t *testing.T) {
+	bc := newTestChain(t)
+	miner := newKey(t).Address
+	if _, err := bc.AddBlock(nil, miner); err != nil {
+		t.Fatal(err)
+	}
+	entered, proceed := make(chan struct{}), make(chan struct{})
+	bc.afterHistorySnapshot = func() {
+		entered <- struct{}{}
+		<-proceed
+	}
+	var got AddrHistory
+	done := make(chan error, 1)
+	go func() {
+		h, err := bc.AddressHistory(miner, "", 10)
+		got = h
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("anlık görüntüye ulaşılmadı")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- bc.Close() }()
+	select {
+	case <-closed:
+		proceed <- struct{}{}
+		<-done
+		t.Fatal("Close tarama bitmeden döndü")
+	case <-time.After(200 * time.Millisecond):
+	}
+	proceed <- struct{}{}
+	if err := <-done; err != nil || len(got.Txs) != 1 {
+		t.Fatalf("tarama: %v, %d kayıt", err, len(got.Txs))
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	bc.afterHistorySnapshot = nil
+	if _, err := bc.AddressHistory(miner, "", 10); err == nil {
+		t.Fatal("kapanıştan sonra geçmiş okundu")
+	}
+}

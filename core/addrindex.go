@@ -154,8 +154,8 @@ func blockAddrPuts(b *Block) ([]txIndexPut, error) {
 // bc.tip ve bc.main ile aynı batch'te, yazma kilidi altında değişir (genesis yazımı ve
 // activateLocked); bu yüzden kilit altında alınan anlık görüntü ucun durumudur ve ana zincir
 // denetimi bellekteki bc.main yerine anlık görüntüdeki h_ anahtarıyla yapılır. LevelDB
-// yineleyicisi açıkken veritabanı kapatılmamalıdır: düğümde API sunucusu bc.Close'dan önce
-// kapanır ve süren istekleri bekler (main.go, 10 sn), anlık görüntü yanıt yazılmadan bırakılır.
+// yineleyicisi açıkken veritabanı kapatılmamalıdır: tarama boyunca closeMu okuma kilidi tutulur,
+// Close onu bekler; kapanıştan sonra gelen istek anlık görüntü alamaz ve hata döner.
 func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHistory, error) {
 	if !crypto.IsValidAddress(address) {
 		return AddrHistory{}, fmt.Errorf("%w: adres", ErrBadCursor)
@@ -173,6 +173,8 @@ func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHis
 		rng.Limit = addrTxKey(address, h, p)
 	}
 
+	bc.closeMu.RLock() // yineleyici ve anlık görüntü bırakılana kadar (ertelemeler ters sırada)
+	defer bc.closeMu.RUnlock()
 	bc.mu.RLock()
 	snap, err := bc.db.GetSnapshot()
 	tipHeight, tipHash := bc.tip.Height, bc.tip.Hash
