@@ -9,7 +9,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 )
 
-// Kalıcı eksik veri alarmı (budama hazırlığı, davranışı değiştirmez). Her indeks kaydı gövdesiyle
+// Kalıcı eksik veri alarmı (budama hazırlığı; eksik veride davranışı değiştirmez, bozuk gövdede
+// değiştirir, aşağıda). Her indeks kaydı gövdesiyle
 // aynı batch'te yazılır (storeAndActivateLocked, genesis); ana zincirdeki her bloğun undo ve
 // indeks geri alma kaydı zincir güncellemesiyle yazılır. Zincire geçerken (activateLocked)
 // bağlanacak bir bloğun gövdesi ya da geri sarılacak bir bloğun undo veya indeks geri alma kaydı
@@ -21,10 +22,17 @@ import (
 //
 // Alarm geçişi değiştirmez: hata eskisi gibi döner, hiçbir blok geçersiz işaretlenmez, uç
 // değişmez. Veri geri gelirse (ör. yedekten) aynı blok yeniden gelince geçiş olur, alarm kalır.
+//
+// Bozuk gövde (kullanıcı kararı 2026-11-17, devils-advocate sonrası; feat/verify-connect-body):
+// bağlanacak bloğun gövdesi diskte var ama çözülemiyor ya da başlığıyla tutmuyorsa
+// (connectBody, chain.go) düğüm eksik gövdeyle birebir aynı davranır ve aynı alarmı
+// dataCorruptBody türüyle verir. Eskiden çözülemeyen gövde alarmsız ErrCorruptState'ti,
+// çözülebilen ama başlığıyla tutmayan gövde ise hiç fark edilmezdi.
 const keyDataAlarm = "missing_data_alarm"
 
 // ErrBlockDataMissing indeksteki bir bloğun gövdesinin, undo ya da indeks geri alma kaydının diskte olmadığını
-// söyler. Kalıcı geçersizlik değildir (blok geçersiz işaretlenmez).
+// ya da gövdesinin diskte bozuk olduğunu (dataCorruptBody) söyler. Kalıcı geçersizlik değildir
+// (blok geçersiz işaretlenmez).
 var ErrBlockDataMissing = errors.New("blok verisi diskte yok")
 
 // Eksik verinin türü (MissingDataRecord.Kind).
@@ -32,16 +40,22 @@ const (
 	dataBody      = "body"
 	dataUndo      = "undo"
 	dataIndexUndo = "index_undo" // indeks geri alma kaydı (txindex.go)
+	// dataCorruptBody: gövde diskte var ama çözülemiyor ya da başlığıyla tutmuyor (connectBody).
+	dataCorruptBody = "corrupt_body"
 )
 
 // missingDataError eksik verinin hangi bloğa ait olduğunu taşır. Eski sınıflandırma korunur:
-// gövde hatası leveldb.ErrNotFound'u, undo hatası ErrCorruptState'i de sarar.
+// gövde hatası leveldb.ErrNotFound'u, undo hatası ErrCorruptState'i de sarar; bozuk gövde hatası
+// ErrCorruptState'i (hangi denetimin düştüğüyle birlikte) sarar.
 type missingDataError struct {
 	hash, kind string
 	cause      error
 }
 
 func (e *missingDataError) Error() string {
+	if e.kind == dataCorruptBody {
+		return fmt.Sprintf("blok gövdesi diskte bozuk (%s): %v", e.hash, e.cause)
+	}
 	return fmt.Sprintf("%v: %s (%s)", ErrBlockDataMissing, e.kind, e.hash)
 }
 
@@ -51,7 +65,7 @@ func (e *missingDataError) Unwrap() []error { return []error{ErrBlockDataMissing
 // tutar.
 type MissingDataRecord struct {
 	Hash   string `json:"hash"`   // verisi okunamayan blok
-	Kind   string `json:"kind"`   // "body", "undo" ya da "index_undo"
+	Kind   string `json:"kind"`   // "body", "undo", "index_undo" ya da "corrupt_body"
 	Tip    string `json:"tip"`    // olay anındaki uç
 	Target string `json:"target"` // geçilemeyen dalın ucu
 	Time   int64  `json:"time"`   // yerel saat, Unix saniye
@@ -81,6 +95,13 @@ func (bc *Blockchain) dataAlarmLocked(md *missingDataError, target *indexEntry) 
 		bc.log.Error("eksik veri alarmı diske yazılamadı (yalnızca bellekte etkin)", "err", err)
 	}
 	bc.dataAlarm = rec
+	if md.kind == dataCorruptBody {
+		// Yazma anındaki bellek hatası yedeğe de aynen gider; bu yüzden yalnızca disk değil bellek
+		// de sınanmalıdır. Kendi kendine onarım yok: yedek ya da yeniden eşitleme.
+		bc.log.Error("EKSİK VERİ ALARMI: indeksteki bir bloğun gövdesi diskte bozuk (başlığıyla tutmuyor), daha çok işli zincire geçilemiyor; onaylara güvenmeyin, diski ve belleği sınayın (yedek de aynı bozukluğu taşıyabilir), gerekirse veri dizinini silip yeniden eşitleyin",
+			"blok", md.hash, "tur", md.kind, "neden", md.cause, "uc", bc.tip.Hash, "hedef", target.Hash, "olay", rec.Count)
+		return
+	}
 	bc.log.Error("EKSİK VERİ ALARMI: indeksteki bir bloğun verisi diskte yok, daha çok işli zincire geçilemiyor; onaylara güvenmeyin, diski ve yedeği denetleyin",
 		"blok", md.hash, "tur", md.kind, "uc", bc.tip.Hash, "hedef", target.Hash, "olay", rec.Count)
 }

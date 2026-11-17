@@ -106,6 +106,9 @@ type Blockchain struct {
 	deepReorg *DeepReorgRecord    // nil değilse kalıcı derin reorg alarmı (bkz. reorgalarm.go)
 	dataAlarm *MissingDataRecord  // nil değilse kalıcı eksik veri alarmı (bkz. dataalarm.go)
 	syncAllow map[string]struct{} // yan zincir sınırı uygulanmayacak bloklar (bkz. sync.go)
+	// indexWarn indeks kaydının gövdesiyle tutmadığı en son loglanan bloktur (activateLocked):
+	// aynı blok yeniden denenince log satırı yinelenmez.
+	indexWarn string
 
 	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
 	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır

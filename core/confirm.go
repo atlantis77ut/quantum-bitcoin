@@ -27,7 +27,7 @@ type Confirmation struct {
 	BlockWork      *big.Int // bloğun kendi işi (ana zincirde değilse nil); bkz. AttackDepth
 	ElapsedSeconds int64    // MTP(uç) − MTP(blok); ana zincirde değilse 0
 	DeepReorg      bool     // derin reorg alarmı: onaylara güvenilmez
-	MissingData    bool     // eksik veri alarmı: düğüm daha çok işli zincire geçemeyebilir
+	MissingData    bool     // eksik ya da bozuk veri alarmı: düğüm daha çok işli zincire geçemeyebilir
 	BelowMinWork   bool     // uç en az zincir işinin altında: düğüm senkronize değil
 }
 

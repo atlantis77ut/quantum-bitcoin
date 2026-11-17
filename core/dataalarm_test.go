@@ -172,25 +172,9 @@ func mustJSON(t *testing.T, v interface{}) []byte {
 	return data
 }
 
-// Bozuk gövde eskisi gibi ErrCorruptState'tir, eksik veri değildir: alarm verilmez.
-func TestCorruptBodyNoDataAlarm(t *testing.T) {
-	bc := newTestChain(t)
-	g := genesisOf(t, bc)
-	main := extend(t, bc, g, 2, newKey(t).Address)
-	mustAccept(t, bc, main...)
-	side := extend(t, bc, g, 3, newKey(t).Address)
-	mustAccept(t, bc, side[:2]...)
-	if err := bc.db.Put([]byte(side[0].Hash), []byte("{"), nil); err != nil {
-		t.Fatal(err)
-	}
-	err := bc.AcceptBlock(side[2])
-	if !errors.Is(err, ErrCorruptState) || errors.Is(err, ErrBlockDataMissing) {
-		t.Fatalf("hata %v", err)
-	}
-	if bc.MissingDataAlarm() {
-		t.Fatal("bozuk gövde eksik veri alarmı verdi")
-	}
-}
+// Bozuk gövde artık alarm verir (kullanıcı kararı 2026-11-17): TestCorruptBranchBodyAlarm
+// (connectbody_test.go). Bozuk undo ve indeks geri alma kaydı eskisi gibi alarmsız
+// ErrCorruptState'tir (TestIndexUndoForeignKeyRejected).
 
 // Ebeveyn, medyan zaman ataları ve geri sarılan blokların gövdeleri diskte olmasa da reorg olur
 // (budama hazırlığı): durum, işlem indeksi ve adres geçmişi kazanan zincirin baştan uygulanmasıyla
