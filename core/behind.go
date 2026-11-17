@@ -40,6 +40,11 @@ import (
 // kardeş zincir sürerdi). Eşiğe ancak art arda onlarca başarısız denemeyle (her yeni blok bir
 // denemedir) ulaşıldığından geçici bir hata kazımı duraklatmaz; zamanlayıcıyla yeniden deneme
 // gerekmez.
+//
+// Operatör duraklamayı kapatabilir (SetMineWhileBehind, -mine-while-behind): kayıt ve gösterge
+// aynen sürer, yalnızca kazım durmaz. Yukarıdaki sistemik senaryonun çaresidir: dürüst
+// madenciler bayrakla yeniden başlayıp kendi dallarını uzatır; dal geçilemeyen daldan kesin
+// olarak ağır olunca kayıt kendiliğinden silinir. Varsayılan kapalıdır.
 
 // ErrMiningPaused düğümün, bildiği daha çok işli zincirin kazım duraklatma eşiği kadar gerisinde
 // kaldığını ve ona geçemediğini söyler (Mine).
@@ -73,9 +78,10 @@ func (bc *Blockchain) noteBehindLocked(target *indexEntry, err error) {
 	switch {
 	case prev == "" && bc.behind != "":
 		// Geçiş başına tek satır: kayıt dururken yeni hedefler ve yeniden gönderimler loglanmaz.
-		bc.log.Error("GERİDE: düğüm bildiği daha çok işli zincire geçemiyor; onaylara güvenmeyin, nedeni giderin (eksik ya da bozuk veri, disk, saat). Açık kazım duraklatma eşiğine ulaşırsa kazım durur",
+		bc.log.Error("GERİDE: düğüm bildiği daha çok işli zincire geçemiyor; onaylara güvenmeyin, nedeni giderin (eksik ya da bozuk veri, disk, saat). Açık kazım duraklatma eşiğine ulaşırsa kazım durur (-mine-while-behind kapalıysa)",
 			"hedef", target.Hash, "hedef_yukseklik", target.Height, "uc", bc.tip.Hash, "uc_yukseklik", bc.tip.Height,
-			"geride_blok", bc.behindLeadLocked(), "esik", bc.params.miningPauseLead(), "neden", err)
+			"geride_blok", bc.behindLeadLocked(), "esik", bc.params.miningPauseLead(),
+			"kazim_duraklatma_kapali", bc.mineWhileBehind.Load(), "neden", err)
 	case prev != "" && bc.behind == "":
 		bc.log.Info("düğüm bildiği en çok işli zincirde; geride kalma kaydı silindi", "uc", bc.tip.Hash, "uc_yukseklik", bc.tip.Height)
 	}
@@ -117,13 +123,30 @@ func (bc *Blockchain) BehindBlocks() int64 {
 	return bc.behindLeadLocked()
 }
 
-// MiningPaused geride kalma açığı kazım duraklatma eşiğine ulaştıysa true döner: kazım yapılmaz.
+// MiningPaused geride kalma açığı kazım duraklatma eşiğine ulaştıysa ve operatör duraklamayı
+// kapatmadıysa true döner: kazım yapılmaz.
 func (bc *Blockchain) MiningPaused() bool {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return bc.miningPausedLocked()
 }
 
+// MiningPauseOverridden açık eşiğe ulaştığı hâlde kazımın yalnızca operatör duraklamayı
+// kapattığı için sürdüğünü söyler (madenci bunu bir kez uyarır).
+func (bc *Blockchain) MiningPauseOverridden() bool {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.mineWhileBehind.Load() && bc.pauseLeadReachedLocked()
+}
+
+// SetMineWhileBehind kazım duraklamasını kapatır (true) ya da açar (false); düğüm politikası,
+// varsayılan false. Geride kalma kaydı ve göstergesi değişmez.
+func (bc *Blockchain) SetMineWhileBehind(on bool) { bc.mineWhileBehind.Store(on) }
+
 func (bc *Blockchain) miningPausedLocked() bool {
+	return !bc.mineWhileBehind.Load() && bc.pauseLeadReachedLocked()
+}
+
+func (bc *Blockchain) pauseLeadReachedLocked() bool {
 	return bc.behind != "" && bc.behindLeadLocked() >= bc.params.miningPauseLead()
 }

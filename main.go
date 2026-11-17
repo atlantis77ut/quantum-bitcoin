@@ -34,6 +34,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "API için TLS sertifika dosyası (boşsa HTTP)")
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
 	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
+	mineWhileBehind := flag.Bool("mine-while-behind", false, "Düğüm bildiği daha çok işli zincire geçemeyip ~2 saatlik iş geride kalınca kazımı durdurmaz, bayat uca kazmaya devam eder (yalnızca nedeni bilen operatör için; ör. bütün düğümleri aynı blokta takan bir hatada dürüst zinciri sürdürmek)")
 	clearAlarm := flag.Bool("clear-reorg-alarm", false, "Kalıcı derin reorg alarmını temizler ve çıkar (olay incelendikten sonra)")
 	clearDataAlarm := flag.Bool("clear-data-alarm", false, "Kalıcı eksik veri alarmını (diskte olmayan ya da başlığıyla tutmayan blok gövdesi, diskte olmayan undo ya da indeks geri alma kaydı) temizler ve çıkar (disk ve bellek incelendikten sonra)")
 	mineThreads := flag.Int("mine-threads", 0, "Kazım iş parçacığı sayısı (0: tüm çekirdekler)")
@@ -172,6 +173,15 @@ func main() {
 	}
 	if backend != nil {
 		bc.SetMineBackend(backend)
+	}
+	if *mineWhileBehind {
+		if *mineTo == "" {
+			slog.Warn("-mine-while-behind -mine olmadan etkisiz")
+		} else {
+			// Yapılandırmada kalabilir ama her açılışta uyarılır: duraklama kalıcı olarak kapalıdır.
+			bc.SetMineWhileBehind(true)
+			slog.Warn("-mine-while-behind açık: düğüm bildiği daha çok işli zincirin çok gerisinde kalsa da kazım durmaz; ağ o dalda ilerliyorsa bayat uca kazılan bloklar boşa gider")
+		}
 	}
 	if *clearAlarm {
 		rec, err := bc.ClearDeepReorgAlarm()
