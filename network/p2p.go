@@ -1113,6 +1113,20 @@ func withFirst(h string, loc []string) []string {
 	return out
 }
 
+// relaySyncedTip senkronizasyonla değişen ucu yayar (downloadBodies); from bloğun indirildiği
+// eştir, ona geri itilmez. Diskteki gövde başlığıyla tutmazsa (core.ErrCorruptState) yayın
+// atlanır ve hata kaydedilir (logCorruptBody); başka okuma hatasında yayın sessizce atlanır.
+func (ps *P2PServer) relaySyncedTip(tip, from string) {
+	b, err := ps.Blockchain.BlockByHash(tip)
+	if err != nil {
+		if errors.Is(err, core.ErrCorruptState) {
+			ps.logCorruptBody(tip, err)
+		}
+		return
+	}
+	ps.relayFrom(b, from)
+}
+
 // downloadBodies oturumun yetkili eksik gövdelerini sırayla indirip doğrular; kısmi
 // ilerleme de duyurulur. Yeni uç bu eşten indirildiyse eşe geri itilmez.
 func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped func() bool) error {
@@ -1122,15 +1136,11 @@ func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped fun
 	defer func() {
 		if tip := bc.TipHash(); tip != before {
 			ps.log.Info("eşle senkronize olundu", "peer", peer, "uc", tip)
-			if b, err := bc.BlockByHash(tip); err == nil {
-				from := ""
-				if got[tip] {
-					from = peer
-				}
-				ps.relayFrom(b, from)
-			} else if errors.Is(err, core.ErrCorruptState) {
-				ps.logCorruptBody(tip, err)
+			from := ""
+			if got[tip] {
+				from = peer
 			}
+			ps.relaySyncedTip(tip, from)
 		}
 	}()
 	deadline := time.Now().Add(syncPeerBudget) // gövdelerin kendi süre bütçesi var
