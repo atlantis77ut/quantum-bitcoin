@@ -356,7 +356,9 @@ func (l *linkLimiter) waitBacklog(ahead time.Duration) {
 }
 
 // readAhead vekilin hat boşalmadan ne kadar önce okuyabileceğidir: bir parçanın hat süresi,
-// en az proxyReadAhead (zamanlama gecikmesi hattı boşta bırakmasın).
+// en az proxyReadAhead (zamanlama gecikmesi hattı boşta bırakmasın; 5 ms 50 Mbit/sn'de yalnızca
+// ~2 parça pay bırakıyordu, feat/proxy-readahead). Göndericide erken onaylanan pay zaman
+// cinsinden readAhead kadardır, stall'ın (2 sn) çok altında.
 func (l *linkLimiter) readAhead() time.Duration {
 	return max(proxyReadAhead, time.Duration(float64(proxyChunk)/l.bps*float64(time.Second)))
 }
@@ -387,7 +389,7 @@ func (l *linkLimiter) reserve(n int, now time.Time) time.Time {
 const (
 	proxyChunk     = 16 << 10
 	proxyQueue     = 16
-	proxyReadAhead = 5 * time.Millisecond
+	proxyReadAhead = 20 * time.Millisecond
 	proxyRcvBuf    = 16 << 10
 )
 
