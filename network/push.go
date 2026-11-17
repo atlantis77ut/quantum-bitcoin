@@ -144,7 +144,29 @@ type pushSlots struct {
 	mu      sync.Mutex
 	limit   int
 	holders map[string]*pushHolder
+	// taken devralmaların nedene göre sayısıdır (yalnızca ölçüm için okunur, propbench.go).
+	taken PushTakeovers
 }
+
+// PushTakeovers itme yuvası devralmalarının nedene göre sayısıdır (yayılım ölçümü raporu).
+type PushTakeovers struct {
+	Stall int `json:"stall"` // yazarken stall boyunca parça yazılamadı
+	Drain int `json:"drain"` // teslim beklerken kuyruk stall boyunca ilerlemedi (Linux)
+	Pace  int `json:"pace"`  // hız sınırının gerisinde kaldı
+}
+
+// Add iki sayımı toplar.
+func (t PushTakeovers) Add(o PushTakeovers) PushTakeovers {
+	return PushTakeovers{Stall: t.Stall + o.Stall, Drain: t.Drain + o.Drain, Pace: t.Pace + o.Pace}
+}
+
+// Devralma nedenleri (stuckLocked).
+const (
+	takeNone = iota
+	takeStall
+	takeDrain
+	takePace
+)
 
 type pushHolder struct {
 	start    time.Time
@@ -161,14 +183,14 @@ func newPushSlots(limit int) *pushSlots {
 	return &pushSlots{limit: limit, holders: map[string]*pushHolder{}}
 }
 
-// stuckLocked yuvası devralınabilecek bir tutanı döndürür; yoksa boş. Teslim bekleyen tutanın
-// kuyruğu (probe) burada yuvalar doluyken, s.mu altında okunur (ioctl, bloklamaz); drain de
-// başlangıç değeri için bir kez okur.
-func (s *pushSlots) stuckLocked(now time.Time, l *pushLimits) string {
+// stuckLocked yuvası devralınabilecek bir tutanı ve nedenini döndürür; yoksa boş. Teslim
+// bekleyen tutanın kuyruğu (probe) burada yuvalar doluyken, s.mu altında okunur (ioctl,
+// bloklamaz); drain de başlangıç değeri için bir kez okur.
+func (s *pushSlots) stuckLocked(now time.Time, l *pushLimits) (string, int) {
 	for peer, h := range s.holders {
 		pace := h.start.Add(l.sendChunk + time.Duration(h.n*int64(time.Second)/l.recvMinRate))
 		if now.After(pace) {
-			return peer
+			return peer, takePace
 		}
 		if h.draining {
 			if h.probe == nil {
@@ -184,10 +206,13 @@ func (s *pushSlots) stuckLocked(now time.Time, l *pushLimits) string {
 			}
 		}
 		if now.Sub(h.last) >= l.stall {
-			return peer
+			if h.draining {
+				return peer, takeDrain
+			}
+			return peer, takeStall
 		}
 	}
-	return ""
+	return "", takeNone
 }
 
 // acquire eş için yuva alır: boş yuva yoksa tutanlardan biri takılana (stuckLocked) ya da yuva
@@ -197,8 +222,16 @@ func (s *pushSlots) acquire(peer string, l *pushLimits) {
 		s.mu.Lock()
 		now := time.Now()
 		if len(s.holders) >= s.limit {
-			if stuck := s.stuckLocked(now, l); stuck != "" {
+			if stuck, why := s.stuckLocked(now, l); stuck != "" {
 				delete(s.holders, stuck)
+				switch why {
+				case takeStall:
+					s.taken.Stall++
+				case takeDrain:
+					s.taken.Drain++
+				case takePace:
+					s.taken.Pace++
+				}
 			}
 		}
 		if len(s.holders) < s.limit {
@@ -238,6 +271,13 @@ func (s *pushSlots) drain(peer string, probe func() (int, bool)) {
 	if q, ok := probe(); ok {
 		h.probe, h.queued, h.last = probe, q, time.Now()
 	}
+}
+
+// takeovers şimdiye kadarki devralma sayılarıdır.
+func (s *pushSlots) takeovers() PushTakeovers {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.taken
 }
 
 func (s *pushSlots) release(peer string) {

@@ -216,3 +216,22 @@ func TestPropagationBench(t *testing.T) {
 		}
 	}
 }
+
+// Hiç kullanılmamış hatta (next sıfır zaman) waitBacklog beklemez; dolu hatta birikme payına
+// inene kadar bekler.
+func TestLinkLimiterWaitBacklog(t *testing.T) {
+	l := newLinkLimiter(8) // 1 MB/sn
+	done := make(chan struct{})
+	go func() { l.waitBacklog(10 * time.Millisecond); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("kullanılmamış hatta waitBacklog bekledi")
+	}
+	l.reserve(200_000, time.Now()) // ~200 ms birikme
+	start := time.Now()
+	l.waitBacklog(50 * time.Millisecond)
+	if d := time.Since(start); d < 100*time.Millisecond || d > time.Second {
+		t.Fatalf("200 ms birikmede 50 ms paya %v'de inildi", d)
+	}
+}

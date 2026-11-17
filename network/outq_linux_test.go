@@ -108,4 +108,7 @@ func TestNonClosingReceiverSlotTakenOver(t *testing.T) {
 	if err := <-first; !errors.Is(err, errNotDelivered) {
 		t.Fatalf("ilk itme: %v, beklenen errNotDelivered", err)
 	}
+	if got := ps.pushSlots.takeovers(); got != (PushTakeovers{Drain: 1}) {
+		t.Fatalf("devralmalar %+v, beklenen bir teslim devralması", got)
+	}
 }

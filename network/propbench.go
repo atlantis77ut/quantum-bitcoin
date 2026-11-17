@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"quantum-bitcoin/core"
@@ -198,6 +200,8 @@ func (f *PropFixture) BenchBlock(dir string) (BlockTiming, error) {
 // sırasıyla) bloğu kazıcının kabulünden sonra kabul ettiği süredir; ulaşmadıysa -1.
 type PropRun struct {
 	Arrival []time.Duration
+	// Takeovers bütün düğümlerdeki itme yuvası devralmalarının toplamıdır (push.go).
+	Takeovers PushTakeovers
 }
 
 // BenchPropagation tek bir yayılım ölçümü yapar: düğümleri kurar, kazıcıda bloğu kabul ettirip
@@ -318,6 +322,9 @@ func (f *PropFixture) BenchPropagation(c PropConfig) (PropRun, error) {
 		}(k, nodes[i].Blockchain)
 	}
 	wg.Wait()
+	for _, ps := range nodes {
+		run.Takeovers = run.Takeovers.Add(ps.pushSlots.takeovers())
+	}
 	return run, nil
 }
 
@@ -332,6 +339,28 @@ func newLinkLimiter(mbit float64) *linkLimiter {
 	return &linkLimiter{bps: mbit * 1e6 / 8}
 }
 
+// waitBacklog hattın birikmesi ahead'e inene kadar bekler. Hat bütün bağlantılarca
+// paylaşıldığından bekleme her uyanışta yeniden hesaplanır.
+func (l *linkLimiter) waitBacklog(ahead time.Duration) {
+	for {
+		l.mu.Lock()
+		// next.Add(-ahead) önce: hiç kullanılmamış hatta next sıfır zamandır, Until(next) en
+		// küçük süreye doyar ve ahead çıkarılınca taşıp dev bir beklemeye dönerdi.
+		wait := time.Until(l.next.Add(-ahead))
+		l.mu.Unlock()
+		if wait <= 0 {
+			return
+		}
+		time.Sleep(wait)
+	}
+}
+
+// readAhead vekilin hat boşalmadan ne kadar önce okuyabileceğidir: bir parçanın hat süresi,
+// en az proxyReadAhead (zamanlama gecikmesi hattı boşta bırakmasın).
+func (l *linkLimiter) readAhead() time.Duration {
+	return max(proxyReadAhead, time.Duration(float64(proxyChunk)/l.bps*float64(time.Second)))
+}
+
 // reserve now'da gelen n baytın hattan son çıkış anını döndürür.
 func (l *linkLimiter) reserve(n int, now time.Time) time.Time {
 	l.mu.Lock()
@@ -344,11 +373,22 @@ func (l *linkLimiter) reserve(n int, now time.Time) time.Time {
 	return l.next
 }
 
-// Proxy parçası ve kuyruk derinliği: hattaki bayt, hız·gecikme ile bu tamponun toplamıdır
-// (pipeDepth). Kuyruk dolunca okuma durur ve gönderen TCP geri basıncı görür.
+// Proxy parçası ve kuyruk derinliği: kanal hız·gecikme kadar baytı (gecikme hattı) ve bir pay
+// taşır (pipeDepth). Hız sınırlı yönde okumayı waitBacklog durdurur, kanal payı pratikte boş
+// kalır; sınırsız yönde kanal dolunca okuma durur ve gönderen TCP geri basıncı görür.
+//
+// Vekil göndericiden yalnızca hat boşalmak üzereyken okur (readAhead; feat/faithful-proxy) ve
+// dinleyicinin alma tamponu küçüktür (proxyRcvBuf, Linux): gerçek ağda hattı bekleyen bayt
+// göndericinin kuyruğunda onaylanmamış durur, vekil önden okusaydı çekirdeği baytları hattan
+// geçmeden onaylardı ve göndericinin onaylanmamış kuyruğu (push.go teslim ilerlemesi) erken
+// boşalırdı. Kalan sapma: gecikme hattındaki bayt (hız·gecikme), onayın dönüş gecikmesi, alma
+// tamponu, okuma payı ve hattı paylaşan itme başına bir parça göndericide yine onaylanmış görünür
+// (docs/YAYILIM-OLCUM.md); hedefe açılan dönüş bağlantısında alma tamponu ayarlanmaz.
 const (
-	proxyChunk = 16 << 10
-	proxyQueue = 16
+	proxyChunk     = 16 << 10
+	proxyQueue     = 16
+	proxyReadAhead = 5 * time.Millisecond
+	proxyRcvBuf    = 16 << 10
 )
 
 // Benzetim sınırları: hız·gecikme kadar bayt proxy kuyruğunda bellekte durur (en çok
@@ -388,7 +428,10 @@ type throttleProxy struct {
 }
 
 func newThrottleProxy(target string, lim, back *linkLimiter, latency time.Duration) (*throttleProxy, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
+		return setRcvBuf(c, proxyRcvBuf)
+	}}
+	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +525,9 @@ func (p *throttleProxy) pipe(dst, src net.Conn, lim *linkLimiter) {
 	go func() {
 		defer close(ch)
 		for {
+			if lim != nil {
+				lim.waitBacklog(lim.readAhead())
+			}
 			buf := make([]byte, proxyChunk)
 			n, err := src.Read(buf)
 			if n > 0 {

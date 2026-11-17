@@ -81,22 +81,22 @@ func TestDrainingHolderTakeover(t *testing.T) {
 	s.drain("a", nil)
 	now := time.Now().Add(200 * time.Millisecond) // stall geçti, hız sınırı (1 sn) geçmedi
 	s.mu.Lock()
-	stuck := s.stuckLocked(now, &l)
+	stuck, why := s.stuckLocked(now, &l)
 	s.mu.Unlock()
-	if stuck != "b" {
+	if stuck != "b" || why != takeStall {
 		t.Fatalf("stall sonrası devralınabilir %q, beklenen yazan tutan b", stuck)
 	}
 	s.release("b")
 	s.mu.Lock()
-	stuck = s.stuckLocked(now, &l)
+	stuck, _ = s.stuckLocked(now, &l)
 	s.mu.Unlock()
 	if stuck != "" {
 		t.Fatalf("teslim bekleyen tutan stall ile devralındı: %q", stuck)
 	}
 	s.mu.Lock()
-	stuck = s.stuckLocked(now.Add(2*time.Second), &l)
+	stuck, why = s.stuckLocked(now.Add(2*time.Second), &l)
 	s.mu.Unlock()
-	if stuck != "a" {
+	if stuck != "a" || why != takePace {
 		t.Fatalf("hız sınırından sonra devralınabilir %q, beklenen a", stuck)
 	}
 }
@@ -140,7 +140,11 @@ func TestDrainingHolderProbe(t *testing.T) {
 	stuckAt := func(s *pushSlots, at time.Time) string {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.stuckLocked(at, &l)
+		peer, why := s.stuckLocked(at, &l)
+		if peer != "" && why != takeDrain {
+			t.Errorf("teslim bekleyen %s devralma nedeni %d, beklenen takeDrain", peer, why)
+		}
+		return peer
 	}
 
 	q := 4 * writeChunk
@@ -195,5 +199,28 @@ func TestDrainingHolderProbe(t *testing.T) {
 	blind.drain("b", func() (int, bool) { return 0, false })
 	if got := stuckAt(blind, time.Now().Add(time.Minute)); got != "" {
 		t.Fatalf("okunamayan kuyrukta stall uygulandı: %q", got)
+	}
+}
+
+// acquire devralmayı nedenine göre sayar: yazarken stall ve hız sınırı (teslim nedeni Linux'ta
+// outq_linux_test.go'da).
+func TestPushSlotsCountTakeovers(t *testing.T) {
+	l := defaultPushLimits()
+	l.stall = 50 * time.Millisecond
+	l.sendChunk = time.Hour
+	s := newPushSlots(1)
+	s.acquire("a", &l)
+	s.acquire("b", &l) // a hiç yazmadı: stall
+	if got := s.takeovers(); got != (PushTakeovers{Stall: 1}) {
+		t.Fatalf("stall sonrası devralmalar %+v", got)
+	}
+
+	l.stall = time.Hour
+	l.sendChunk = 50 * time.Millisecond
+	p := newPushSlots(1)
+	p.acquire("a", &l)
+	p.acquire("b", &l) // a hız sınırının gerisinde
+	if got := p.takeovers(); got != (PushTakeovers{Pace: 1}) {
+		t.Fatalf("hız sınırı sonrası devralmalar %+v", got)
 	}
 }
