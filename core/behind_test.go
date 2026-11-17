@@ -267,3 +267,45 @@ func TestBehindRederivedOnReopen(t *testing.T) {
 		t.Fatalf("yeniden açılışta: kayıt %s, açık %d, duraklama %v", bc2.behind, bc2.BehindBlocks(), bc2.MiningPaused())
 	}
 }
+
+// Operatör duraklamayı kapatınca (-mine-while-behind) eşikteki düğüm kendi ucunun üstüne kazar;
+// kayıt ve açık aynen görünür, kazım özeti duraklamanın kapalı olduğunu söyler. Bayrak eşiğin
+// altında bir şey değiştirmez.
+func TestMineWhileBehind(t *testing.T) {
+	bc := newTestChain(t)
+	miner := newKey(t).Address
+	side, m1, _ := corruptSide(t, bc, 3)
+	acceptStuck(t, bc, side[1:]...)
+	if !bc.MiningPaused() || bc.MiningPauseOverridden() {
+		t.Fatal("eşikte kazım duraklamadı")
+	}
+
+	bc.SetMineWhileBehind(true)
+	if bc.MiningPaused() || !bc.MiningPauseOverridden() || bc.BehindBlocks() != 2 || bc.behind != side[2].Hash {
+		t.Fatalf("bayrakla: duraklama %v, aşıldı %v, açık %d, kayıt %s",
+			bc.MiningPaused(), bc.MiningPauseOverridden(), bc.BehindBlocks(), bc.behind)
+	}
+	info, err := bc.MiningInfo(1)
+	if err != nil || info.MiningPaused || !info.MiningPauseDisabled || info.BehindBlocks != 2 {
+		t.Fatalf("kazım özeti %+v, %v", info, err)
+	}
+	b, err := bc.AddBlock(nil, miner)
+	if err != nil {
+		t.Fatalf("bayrakla kazım durdu: %v", err)
+	}
+	if b.PrevHash != m1.Hash || tipHash(t, bc) != b.Hash {
+		t.Fatalf("kazılan blok %s (ebeveyn %s), uç %s", b.Hash, b.PrevHash, tipHash(t, bc))
+	}
+
+	// Açık 1'e indi: eşiğin altında bayrak bir şey değiştirmez.
+	if bc.BehindBlocks() != 1 || bc.MiningPauseOverridden() {
+		t.Fatalf("açık %d, aşıldı %v", bc.BehindBlocks(), bc.MiningPauseOverridden())
+	}
+	bc.SetMineWhileBehind(false)
+	if bc.MiningPaused() {
+		t.Fatal("eşiğin altında kazım duraklatıldı")
+	}
+	if info, err := bc.MiningInfo(1); err != nil || info.MiningPauseDisabled {
+		t.Fatalf("bayrak kapatıldı ama kazım özeti %+v, %v", info, err)
+	}
+}

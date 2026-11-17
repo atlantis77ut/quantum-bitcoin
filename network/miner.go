@@ -28,7 +28,7 @@ var minWorkWait = 5 * time.Second
 // Miner düğümün kazım döngüsüdür. Kazım zincir kilidi tutulmadan yapılır (core.Mine); uç
 // değişirse şablon yenilenir. Düğüm senkronize değilken (en az zincir işinin altında) ya da
 // bildiği daha çok işli zincirin kazım duraklatma eşiği kadar gerisinde kalıp ona geçemezken
-// (core/behind.go) kazılmaz. Kazılan blok eşlere yayılır ve bir süre sonra eşlerde aranır:
+// (core/behind.go) kazılmaz; operatör bu duraklamayı -mine-while-behind ile kapatabilir. Kazılan blok eşlere yayılır ve bir süre sonra eşlerde aranır:
 // hiçbir eş bloğu saklamamışsa madenci uyarılır (saat, ağ/genesis ayarı ya da bağlantı sorunu).
 type Miner struct {
 	ps      *P2PServer
@@ -56,7 +56,7 @@ func NewMiner(ps *P2PServer, address string) (*Miner, error) {
 // Run stop kapanana kadar kazar.
 func (m *Miner) Run(stop <-chan struct{}) {
 	bc := m.ps.Blockchain
-	waiting, paused := false, false
+	waiting, paused, overridden := false, false, false
 	for {
 		select {
 		case <-stop:
@@ -96,6 +96,14 @@ func (m *Miner) Run(stop <-chan struct{}) {
 		if paused {
 			m.log.Info("kazım duraklaması bitti; kazım sürüyor")
 			paused = false
+		}
+		// Operatör duraklamayı kapattıysa (-mine-while-behind) eşikte kazım sürer: geçişte bir kez uyarılır.
+		if over := bc.MiningPauseOverridden(); over != overridden {
+			if over {
+				m.log.Warn("düğüm kazım duraklatma eşiği kadar geride ama -mine-while-behind açık: bayat uca kazım sürüyor",
+					"geride_blok", bc.BehindBlocks())
+			}
+			overridden = over
 		}
 		// Şablon yalnızca uç değişince yenilenir: kazım sürerken gelen işlem bir sonraki bloğu bekler.
 		txs, err := m.ps.Mempool.Select(core.MaxTxPerBlock)

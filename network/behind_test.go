@@ -165,3 +165,34 @@ func TestPresyncLocalDataErrorNoBackoff(t *testing.T) {
 		t.Fatalf("uç %s, açık %d, alarm %v", dst.TipHash(), dst.BehindBlocks(), dst.MissingDataAlarm())
 	}
 }
+
+// -mine-while-behind ile duraklama kapalıyken eşikteki düğüm kazmaya devam eder ve /mininginfo
+// duraklamanın kapalı olduğunu gösterir.
+func TestMinerMinesWhileBehindWhenOverridden(t *testing.T) {
+	bc, tip := behindChain(t)
+	bc.SetMineWhileBehind(true)
+	h := NewAPIServer(":0", bc).Handler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/mininginfo", nil))
+	var mi map[string]interface{}
+	if w.Code != http.StatusOK || json.NewDecoder(w.Body).Decode(&mi) != nil {
+		t.Fatalf("/mininginfo = %d", w.Code)
+	}
+	if mi["behind_blocks"] != float64(2) || mi["mining_paused"] != false || mi["mining_pause_disabled"] != true {
+		t.Fatalf("kazım özeti %v", mi)
+	}
+
+	m, err := NewMiner(NewP2PServer("127.0.0.1:0", bc), minerAddr(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopMiner := runMiner(t, m)
+	deadline := time.Now().Add(20 * time.Second)
+	for m.mined.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	stopMiner()
+	if m.mined.Load() == 0 || bc.TipHash() == tip {
+		t.Fatalf("duraklama kapalıyken kazılmadı: uç %s, kazılan %d", bc.TipHash(), m.mined.Load())
+	}
+}

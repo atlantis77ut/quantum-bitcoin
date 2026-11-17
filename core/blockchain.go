@@ -121,6 +121,9 @@ type Blockchain struct {
 	// mineBackend nonce aramasını CPU yerine yapan arka uçtur (ör. GPU); nil ise CPU
 	// (bkz. minerworkers.go). Hata ya da doğrulanamayan sonuçta kalıcı olarak nil'e döner.
 	mineBackend atomic.Pointer[backendBox]
+	// mineWhileBehind operatörün kazım duraklamasını kapattığını söyler (behind.go,
+	// -mine-while-behind); varsayılan false.
+	mineWhileBehind atomic.Bool
 }
 
 // NewBlockchain verilen ağ için veritabanını açar; zincir boşsa ağın sabit genesis bloğunu

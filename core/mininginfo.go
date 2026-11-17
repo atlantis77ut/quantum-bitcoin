@@ -57,6 +57,9 @@ type MiningInfo struct {
 	// ulaştığını söyler (behind.go).
 	BehindBlocks int64
 	MiningPaused bool
+	// MiningPauseDisabled operatörün kazım duraklamasını kapattığını söyler (-mine-while-behind):
+	// açık eşiğe ulaşsa da MiningPaused false kalır.
+	MiningPauseDisabled bool
 }
 
 // MiningInfo son blocks ana zincir bloğunun kazım özetini döndürür; pencere uç yüksekliğiyle
@@ -85,6 +88,7 @@ func (bc *Blockchain) MiningInfo(blocks int64) (MiningInfo, error) {
 		return MiningInfo{}, err
 	}
 	info.NextBits = next
+	info.MiningPauseDisabled = bc.mineWhileBehind.Load()
 	limit, err := TargetFromBits(bc.params.PowLimitBits)
 	if err != nil {
 		return MiningInfo{}, err

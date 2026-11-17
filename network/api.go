@@ -619,6 +619,7 @@ func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
 		"behind_blocks":        m.BehindBlocks,
 		"mining_paused":        m.MiningPaused,
 	}
+	resp["mining_pause_disabled"] = m.MiningPauseDisabled // -mine-while-behind
 	if m.WindowBlocks > 0 {
 		resp["stale_rate"] = float64(m.StaleBlocks) / float64(m.WindowBlocks)
 	}
