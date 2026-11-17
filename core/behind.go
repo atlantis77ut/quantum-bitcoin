@@ -39,8 +39,9 @@ import (
 // madenciler aynı anda durur. Açığı kapatacak bloğu kazan kalmadığından duraklama kendiliğinden
 // bitmez, yeniden başlatma da kaydı yeniden kurar; ağ düzeltme sürümüne kadar durur (eskiden
 // kardeş zincir sürerdi). Eşiğe ancak art arda onlarca başarısız denemeyle (her yeni blok bir
-// denemedir) ulaşıldığından geçici bir hata kazımı duraklatmaz; zamanlayıcıyla yeniden deneme
-// gerekmez.
+// denemedir) ulaşıldığından geçici bir hata kazımı duraklatmaz. Kayıt dururken geçiş ayrıca
+// senkronizasyon turlarında retryDefer aralığıyla kendiliğinden yeniden denenir (RetryBehind):
+// onarımdan sonra yeni blok ya da yeniden gönderim beklenmez.
 //
 // Operatör duraklamayı kapatabilir (SetMineWhileBehind, -mine-while-behind): kayıt ve gösterge
 // aynen sürer, yalnızca kazım durmaz. Yukarıdaki sistemik senaryonun çaresidir: dürüst

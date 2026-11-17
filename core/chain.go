@@ -336,6 +336,30 @@ func (bc *Blockchain) retryKnownLocked(hash string) error {
 	return bc.activateLocked(e)
 }
 
+// RetryBehind düğüm gerideyken kayıttaki hedefe geçişi kendiliğinden yeniden dener; ağ katmanı
+// her senkronizasyon turunda çağırır. Kayıt yoksa ya da hedef artık uçtan ağır veya geçerli
+// değilse bir şey yapmaz (nil). Kayıttaki hedef son retryDefer saniye içinde denendiyse (yeni
+// blok, yeniden gönderim ya da bu yol) denemez: ErrRetryDeferred. Bekleme yalnızca o hedefin
+// denemesine bakar: başka bir başarısız dalın yeniden gönderimi kendiliğinden denemeyi
+// erteletemez. Böylece onarımdan (disk, eksik veri) sonra geçiş yeniden gönderim, yeni blok
+// ya da yeniden başlatma beklemeden, retryDefer dolduktan sonraki ilk senkronizasyon turunun
+// başında olur (yavaş eşler bir turu dakikalarca uzatabilir).
+// Maliyet kayıt dururken aralık başına en çok bir tam denemedir.
+func (bc *Blockchain) RetryBehind() error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	e, ok := bc.index[bc.behind]
+	if bc.behind == "" || !ok || e.Status == statusInvalid || e.work.Cmp(bc.tip.work) <= 0 {
+		return nil
+	}
+	if bc.behindTriedFor == e.Hash {
+		if d := bc.now() - bc.behindTriedAt; d >= 0 && d < bc.retryDefer {
+			return ErrRetryDeferred
+		}
+	}
+	return bc.activateLocked(e)
+}
+
 // markInvalidLocked bloğu ve indeksteki tüm torunlarını geçersiz işaretler.
 func (bc *Blockchain) markInvalidLocked(batch *leveldb.Batch, e *indexEntry) error {
 	stack := []*indexEntry{e}
@@ -380,7 +404,9 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 		}
 		bc.noteBehindLocked(target, err)
 		if err != nil && bc.behind != "" {
-			bc.behindTriedAt = bc.now() // yeniden gönderimin seyreltilmesi (retryKnownLocked)
+			// yeniden gönderimin seyreltilmesi (retryKnownLocked) ve kendiliğinden yeniden deneme (RetryBehind)
+			bc.behindTriedAt = bc.now()
+			bc.behindTriedFor = target.Hash
 		}
 	}()
 	fork, err := bc.forkPoint(target)

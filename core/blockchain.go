@@ -119,6 +119,9 @@ type Blockchain struct {
 	retryDefer int64
 	// behindTriedAt düğüm gerideyken son başarısız geçiş denemesinin zamanıdır (bc.now; chain.go).
 	behindTriedAt int64
+	// behindTriedFor o denemenin hedefidir: kendiliğinden yeniden deneme (RetryBehind) yalnızca
+	// kayıttaki hedef bu süre içinde denendiyse bekler.
+	behindTriedFor string
 
 	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
 	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır
