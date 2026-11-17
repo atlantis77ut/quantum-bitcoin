@@ -53,13 +53,22 @@ import (
 // ve bütün kopyalar birlikte gider. Gönderen yazdıktan sonra yazma yönünü kapatır (CloseWrite)
 // ve alıcının kapatmasını sendMax içinde bekler; alıcı (handleConnection) mesajı çözüp işledikten
 // sonra kapatır. Protokol değişmez, eski düğümlerde de çalışır. Bekleme sırasında parça
-// ilerlemesi olmadığından tutan "teslim bekliyor" işaretlenir: stall kuralı uygulanmaz, yalnızca
-// hız sınırı (sendChunk + yazılan / recvMinRate) kalır. Bedeli: hiç okumayan eş yuvayı stall
-// (2 sn) yerine bu sınıra kadar (dolu blokta ~28 sn) tutabilir; her takılan eş eşzamanlılığı
-// yine en çok bir artırır. Tam yazmadan sonra alıcının kapatması sıfırlama (RST) olarak da
-// gelebilir (okunmamış son bayt); bu teslim sayılır. Aynı RST, okumadan kapatan alıcıdan
-// (ör. kotası dolu) da gelebilir; ikisi ayırt edilemez, yuva o durumda erken boşalır (eski
-// davranış). İşlem grubu itmeleri teslim beklemez.
+// ilerlemesi olmadığından tutan "teslim bekliyor" işaretlenir; hız sınırı (sendChunk + yazılan /
+// recvMinRate) sürer. Teslim ilerlemesi (feat/push-stall-slot, 2026-11-17; 2026-11-16 kararının
+// inceltilmesi): Linux'ta gönderme kuyruğunda alıcının onaylamadığı bayt (unackedBytes,
+// outq_linux.go) izlenir; kuyruk stall boyunca en az writeChunk küçülmez ve boşalmazsa tutan
+// takılmış sayılır (yazma aşamasında stall başına bir parça gibi; damla damla okuyan eş yuvayı
+// tutamaz). Sıfıra inmiş kuyruk da küçülmez: bütün bayt alıcının çekirdeğine ulaşmış, yukarı
+// bant boşalmıştır, alıcı stall içinde kapatmazsa (okumuyor ya da işliyor) bekleyenlerden biri
+// yuvayı devralır. Eşik alıcının kendi alma tamponuna bağlı değildir (büyük SO_RCVBUF bütün
+// bloğu okumadan onaylatabilir). Yuva yine teslimde boşalır, takılan itme sürer; yanlış
+// sınıflamanın bedeli bir eşzamanlı itme fazlasıdır, her takılan eş eşzamanlılığı yine en çok
+// bir artırır. Linux dışında ve TCP olmayan bağlantıda kuyruk okunmaz: hiç okumayan eş yuvayı
+// stall (2 sn) yerine hız sınırına kadar (dolu blokta ~28 sn) tutabilir (eski davranış). Tam
+// yazmadan sonra alıcının kapatması sıfırlama (RST) olarak da gelebilir (okunmamış son bayt);
+// bu teslim sayılır. Aynı RST, okumadan kapatan alıcıdan (ör. kotası dolu) da gelebilir; ikisi
+// ayırt edilemez, yuva o durumda erken boşalır (eski davranış). İşlem grubu itmeleri teslim
+// beklemez.
 //
 // Kaynak: senkronizasyonla ya da uç beklemesiyle bir eşten indirilen blok o eşe geri itilmez.
 // Gelen bağlantıyla itilen blok kaynağına geri itilebilir (yankı): gelen bağlantının kaynak
@@ -141,18 +150,40 @@ type pushHolder struct {
 	start    time.Time
 	last     time.Time // son yazılan parça
 	n        int64     // yazılan bayt
-	draining bool      // yazma bitti, alıcının kapatması bekleniyor (stall uygulanmaz)
+	draining bool      // yazma bitti, alıcının kapatması bekleniyor (stall yalnızca probe ile)
+	// probe teslim bekleyen tutanın onaylanmamış bayt sayısını okur (unackedBytes); nil ise teslim
+	// ilerlemesi izlenmez. queued ilerleme sayılan son değerdir, last o andır.
+	probe  func() (int, bool)
+	queued int
 }
 
 func newPushSlots(limit int) *pushSlots {
 	return &pushSlots{limit: limit, holders: map[string]*pushHolder{}}
 }
 
-// stuckLocked yuvası devralınabilecek bir tutanı döndürür; yoksa boş.
+// stuckLocked yuvası devralınabilecek bir tutanı döndürür; yoksa boş. Teslim bekleyen tutanın
+// kuyruğu (probe) burada yuvalar doluyken, s.mu altında okunur (ioctl, bloklamaz); drain de
+// başlangıç değeri için bir kez okur.
 func (s *pushSlots) stuckLocked(now time.Time, l *pushLimits) string {
 	for peer, h := range s.holders {
 		pace := h.start.Add(l.sendChunk + time.Duration(h.n*int64(time.Second)/l.recvMinRate))
-		if (!h.draining && now.Sub(h.last) >= l.stall) || now.After(pace) {
+		if now.After(pace) {
+			return peer
+		}
+		if h.draining {
+			if h.probe == nil {
+				continue
+			}
+			q, ok := h.probe()
+			if !ok {
+				continue // bağlantı kapanıyor: yuva birazdan bırakılır
+			}
+			if q < h.queued && h.queued-q >= min(writeChunk, h.queued) { // en az bir parça ya da boşaldı
+				h.queued, h.last = q, now
+				continue
+			}
+		}
+		if now.Sub(h.last) >= l.stall {
 			return peer
 		}
 	}
@@ -191,13 +222,21 @@ func (s *pushSlots) progress(peer string, n int) {
 	}
 }
 
-// drain eşin yazmasının bittiğini, teslimin beklendiğini işler; eş yuva tutmuyorsa bir şey
-// yapmaz.
-func (s *pushSlots) drain(peer string) {
+// drain eşin yazmasının bittiğini, teslimin beklendiğini işler; probe nil değilse ve okunabiliyorsa
+// teslim ilerlemesi onunla izlenir (stuckLocked). Eş yuva tutmuyorsa bir şey yapmaz.
+func (s *pushSlots) drain(peer string, probe func() (int, bool)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if h, ok := s.holders[peer]; ok {
-		h.draining = true
+	h, ok := s.holders[peer]
+	if !ok {
+		return
+	}
+	h.draining = true
+	if probe == nil {
+		return
+	}
+	if q, ok := probe(); ok {
+		h.probe, h.queued, h.last = probe, q, time.Now()
 	}
 }
 
