@@ -16,8 +16,9 @@ import "math/big"
 //     fazla; eşikler bu payı hesaba katmalıdır.
 //   - Blocks: klasik onay sayısı.
 //
-// Entegrasyonlar (borsa vb.) üçünü birden eşik olarak kullanmalı; ayrıca derin reorg alarmı
-// ya da en az zincir işinin altındaki uç onayların hiçbirine güvenilmemesi demektir.
+// Entegrasyonlar (borsa vb.) üçünü birden eşik olarak kullanmalı; ayrıca derin reorg alarmı,
+// eksik veri alarmı, en az zincir işinin altındaki uç ya da geride kalma (BehindBlocks > 0)
+// onayların hiçbirine güvenilmemesi demektir.
 // Uzlaşma kuralı değildir.
 
 // Confirmation bir bloğun ana zincirdeki onay bilgisidir.
@@ -29,6 +30,7 @@ type Confirmation struct {
 	DeepReorg      bool     // derin reorg alarmı: onaylara güvenilmez
 	MissingData    bool     // eksik ya da bozuk veri alarmı: düğüm daha çok işli zincire geçemeyebilir
 	BelowMinWork   bool     // uç en az zincir işinin altında: düğüm senkronize değil
+	BehindBlocks   int64    // bildiği ama geçemediği daha çok işli zincirin kaç blokluk iş gerisinde (behind.go)
 }
 
 // ConfirmationOf bir bloğun iş ve zamana dayalı onay bilgisini döndürür.
@@ -40,6 +42,7 @@ func (bc *Blockchain) ConfirmationOf(hash string) (Confirmation, error) {
 		DeepReorg:    bc.deepReorg != nil,
 		MissingData:  bc.dataAlarm != nil,
 		BelowMinWork: bc.tip.work.Cmp(bc.params.minChainWork()) < 0,
+		BehindBlocks: bc.behindLeadLocked(),
 	}
 	e, ok := bc.index[hash]
 	if !ok || !bc.isMain(e) {

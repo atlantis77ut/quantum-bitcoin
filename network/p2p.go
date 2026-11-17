@@ -1033,6 +1033,11 @@ func (ps *P2PServer) continuePresync(peer string, st *peerPresync, stopped func(
 				st.fails = 0
 				return err
 			}
+			if core.IsLocalDataErr(err) {
+				// Yerel veri hatası (indeksteki bir bloğun kaydı eksik ya da bozuk) eşin
+				// başarısızlığı değildir: sayılmaz, eş ertelenmez (kullanıcı kararı 2026-11-17).
+				return err
+			}
 			if st.fails++; st.fails >= maxPresyncFails {
 				ps.dropPresync(peer, true, err) // eş gövdeleri vermiyor ya da geçersiz veriyor
 			}
