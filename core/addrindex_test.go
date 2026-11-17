@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func mustHistory(t *testing.T, bc *Blockchain, addr, before string, limit int) AddrHistory {
@@ -242,5 +243,102 @@ func TestAddrHistoryBadInputAndCorrupt(t *testing.T) {
 	}
 	if _, err := bc.AddressHistory(miner, "", 10); !errors.Is(err, ErrCorruptState) {
 		t.Fatalf("uçtan yüksek kayıt: %v", err)
+	}
+}
+
+// Sayfa zincir kilidi tutulmadan, kilit altında alınan anlık görüntüden taranır: tarama sürerken
+// yazma kilidi alınabilir ve o sırada eklenen blok sayfaya girmez (uç da eski kalır).
+func TestAddrHistorySnapshotOutsideLock(t *testing.T) {
+	bc := newTestChain(t)
+	miner := newKey(t).Address
+	for range 3 {
+		if _, err := bc.AddBlock(nil, miner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tip := tipHash(t, bc)
+
+	entered, proceed := make(chan struct{}), make(chan struct{})
+	bc.afterHistorySnapshot = func() {
+		entered <- struct{}{}
+		<-proceed
+	}
+	var got AddrHistory
+	done := make(chan error, 1)
+	go func() {
+		h, err := bc.AddressHistory(miner, "", 10)
+		got = h
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("anlık görüntüye ulaşılmadı")
+	}
+	if !bc.mu.TryLock() {
+		proceed <- struct{}{} // AddBlock kilitte asılı kalmasın
+		<-done
+		t.Fatal("tarama sürerken zincir kilidi tutuluyor")
+	}
+	bc.mu.Unlock()
+	_, addErr := bc.AddBlock(nil, miner) // tarama sürerken yeni blok
+	proceed <- struct{}{}
+	err := <-done
+	if addErr != nil || err != nil {
+		t.Fatalf("blok %v, geçmiş %v", addErr, err)
+	}
+	if got.TipHash != tip || len(got.Txs) != 3 || got.Txs[0].Height != 3 || got.Txs[0].Confirmations != 1 {
+		t.Fatalf("anlık görüntü dışı sayfa: uç %s, %d kayıt", got.TipHash, len(got.Txs))
+	}
+	bc.afterHistorySnapshot = nil
+	if h := mustHistory(t, bc, miner, "", 10); len(h.Txs) != 4 || h.Txs[0].Height != 4 {
+		t.Fatalf("sonraki sayfa yeni bloğu göstermiyor: %d kayıt", len(h.Txs))
+	}
+}
+
+// TestAddrHistoryCloseWaits Close'un kilitsiz taramanın bitmesini beklediğini, kapanıştan sonraki
+// isteğin hata döndüğünü sınar.
+func TestAddrHistoryCloseWaits(t *testing.T) {
+	bc := newTestChain(t)
+	miner := newKey(t).Address
+	if _, err := bc.AddBlock(nil, miner); err != nil {
+		t.Fatal(err)
+	}
+	entered, proceed := make(chan struct{}), make(chan struct{})
+	bc.afterHistorySnapshot = func() {
+		entered <- struct{}{}
+		<-proceed
+	}
+	var got AddrHistory
+	done := make(chan error, 1)
+	go func() {
+		h, err := bc.AddressHistory(miner, "", 10)
+		got = h
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("anlık görüntüye ulaşılmadı")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- bc.Close() }()
+	select {
+	case <-closed:
+		proceed <- struct{}{}
+		<-done
+		t.Fatal("Close tarama bitmeden döndü")
+	case <-time.After(200 * time.Millisecond):
+	}
+	proceed <- struct{}{}
+	if err := <-done; err != nil || len(got.Txs) != 1 {
+		t.Fatalf("tarama: %v, %d kayıt", err, len(got.Txs))
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	bc.afterHistorySnapshot = nil
+	if _, err := bc.AddressHistory(miner, "", 10); err == nil {
+		t.Fatal("kapanıştan sonra geçmiş okundu")
 	}
 }

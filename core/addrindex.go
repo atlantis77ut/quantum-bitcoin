@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
 
 	"quantum-bitcoin/crypto"
@@ -147,6 +148,14 @@ func blockAddrPuts(b *Block) ([]txIndexPut, error) {
 // döndürür. before boş değilse yalnızca o imleçten (hariç) eskiler gelir. Sayfa tek anlık
 // görüntüdür; sayfalar arasında reorg olursa imlecin altındaki kayıtlar değişebilir (TipHash ile
 // denetlenir). Tutarsız kayıt ErrCorruptState döner. Havuzdaki işlemler görünmez.
+//
+// Tarama zincir kilidi tutulmadan yapılır (feat/history-snapshot): okuma kilidi altında yalnızca
+// LevelDB anlık görüntüsü alınır ve uç okunur. atx_ ve h_ (ana zincir yükseklik) anahtarları
+// bc.tip ve bc.main ile aynı batch'te, yazma kilidi altında değişir (genesis yazımı ve
+// activateLocked); bu yüzden kilit altında alınan anlık görüntü ucun durumudur ve ana zincir
+// denetimi bellekteki bc.main yerine anlık görüntüdeki h_ anahtarıyla yapılır. LevelDB
+// yineleyicisi açıkken veritabanı kapatılmamalıdır: tarama boyunca closeMu okuma kilidi tutulur,
+// Close onu bekler; kapanıştan sonra gelen istek anlık görüntü alamaz ve hata döner.
 func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHistory, error) {
 	if !crypto.IsValidAddress(address) {
 		return AddrHistory{}, fmt.Errorf("%w: adres", ErrBadCursor)
@@ -164,10 +173,23 @@ func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHis
 		rng.Limit = addrTxKey(address, h, p)
 	}
 
+	bc.closeMu.RLock() // yineleyici ve anlık görüntü bırakılana kadar (ertelemeler ters sırada)
+	defer bc.closeMu.RUnlock()
 	bc.mu.RLock()
-	defer bc.mu.RUnlock()
-	out := AddrHistory{TipHeight: bc.tip.Height, TipHash: bc.tip.Hash}
-	it := bc.db.NewIterator(rng, nil)
+	snap, err := bc.db.GetSnapshot()
+	tipHeight, tipHash := bc.tip.Height, bc.tip.Hash
+	bc.mu.RUnlock()
+	if err != nil {
+		return AddrHistory{}, fmt.Errorf("adres geçmişi okunamadı: %w", err)
+	}
+	defer snap.Release()
+	if bc.afterHistorySnapshot != nil {
+		bc.afterHistorySnapshot()
+	}
+	out := AddrHistory{TipHeight: tipHeight, TipHash: tipHash}
+	var lastHeight int64 = -1
+	var lastMain string
+	it := snap.NewIterator(rng, nil)
 	defer it.Release()
 	for ok := it.Last(); ok; ok = it.Prev() {
 		key := string(it.Key())
@@ -190,12 +212,22 @@ func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHis
 			(v.Dir == "in" && v.Fee != 0) || (v.Coinbase && v.Dir != "in") || pos > MaxTxPerBlock {
 			return AddrHistory{}, fmt.Errorf("%w: adres geçmişi kaydı %q", ErrCorruptState, key)
 		}
-		if height > bc.tip.Height || bc.main[height] != v.Block {
+		if height > tipHeight {
+			return AddrHistory{}, fmt.Errorf("%w: adres geçmişi kaydı %q uçtan ileride", ErrCorruptState, key)
+		}
+		if height != lastHeight {
+			m, err := snap.Get([]byte(heightKey(height)), nil)
+			if err != nil && !errors.Is(err, leveldb.ErrNotFound) {
+				return AddrHistory{}, fmt.Errorf("adres geçmişi okunamadı: %w", err)
+			}
+			lastHeight, lastMain = height, string(m) // yoksa boş: aşağıda tutarsız sayılır
+		}
+		if lastMain != v.Block {
 			return AddrHistory{}, fmt.Errorf("%w: adres geçmişi kaydı %q ana zincirde olmayan %s bloğunu gösteriyor",
 				ErrCorruptState, key, v.Block)
 		}
 		out.Txs = append(out.Txs, AddrTx{TxID: v.ID, BlockHash: v.Block, Height: height, Index: pos,
-			Confirmations: bc.tip.Height - height + 1, Direction: v.Dir, Amount: v.Amount, Fee: v.Fee,
+			Confirmations: tipHeight - height + 1, Direction: v.Dir, Amount: v.Amount, Fee: v.Fee,
 			Counterparty: v.Counterparty, Coinbase: v.Coinbase})
 	}
 	if err := it.Error(); err != nil {

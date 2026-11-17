@@ -87,9 +87,15 @@ type Blockchain struct {
 	inflight inflightSet // tam doğrulaması süren bloklar (inflight.go); kendi kilidi vardır
 	// blockCache yalnızca API'nin gövde okumaları içindir (bkz. blockcache.go); kendi kilidi vardır.
 	blockCache *blockCache
+	// closeMu kilitsiz adres geçmişi taraması (addrindex.go) sürerken Close'u bekletir: açık
+	// yineleyiciyle LevelDB kapatılmamalıdır. Kilit sırası: önce closeMu, sonra mu.
+	closeMu sync.RWMutex
 	// beforeBlockLoad (yalnızca testler) önbellek kaçırmasında kilitsiz disk okumasından önce
 	// çağrılır; zincir oluşturulurken atanır, sonra değişmez.
 	beforeBlockLoad func()
+	// afterHistorySnapshot (yalnızca testler) AddressHistory anlık görüntüyü alıp zincir kilidini
+	// bıraktıktan sonra, taramadan önce çağrılır; zincir oluşturulurken atanır.
+	afterHistorySnapshot func()
 
 	// Blok indeksi (bkz. chain.go). Hepsi mu ile korunur.
 	index     map[string]*indexEntry // özet → indeks kaydı (ana ve yan bloklar)
@@ -659,6 +665,8 @@ func (bc *Blockchain) readInt(key string) (int64, error) {
 }
 
 func (bc *Blockchain) Close() error {
+	bc.closeMu.Lock()
+	defer bc.closeMu.Unlock()
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	return bc.db.Close()
