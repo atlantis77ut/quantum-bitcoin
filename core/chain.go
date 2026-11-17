@@ -329,7 +329,10 @@ func (bc *Blockchain) markInvalidLocked(batch *leveldb.Batch, e *indexEntry) err
 // (ebeveyn ve medyan zaman indeksten, geri sarılan blokların indeks anahtarları indeks geri alma
 // kaydından gelir). Bağlanacak bir bloğun gövdesi ya da geri sarılacak bir bloğun undo veya
 // indeks geri alma kaydı diskte yoksa hata eskisi gibi döner (geçiş yok, geçersiz işaret yok) ve
-// kalıcı eksik veri alarmı verilir (dataalarm.go).
+// kalıcı eksik veri alarmı verilir (dataalarm.go). Bağlanacak gövde diskten okununca başlığına
+// yeniden bağlanır (connectBody): bozuksa eksik gövde gibi davranılır (geçiş yok, geçersiz işaret
+// yok, alarm). Gövdesi doğrulanmış blokta yükseklik, önceki özet ya da medyan zaman hatası yerel
+// indeks bozulmasıdır: geçiş olmaz, blok geçersiz işaretlenmez (aşağıda).
 func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	defer func() {
 		var md *missingDataError
@@ -369,7 +372,7 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	var txPuts []txIndexPut // bağlanan blokların işlem indeksi kayıtları (txindex.go)
 	var failErr error
 	for _, e := range branch {
-		b, err := bc.getBlock(e.Hash)
+		b, err := bc.connectBody(e.Hash)
 		if err != nil {
 			return err
 		}
@@ -379,8 +382,21 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 		}
 		v := &stateView{bc: bc, base: ov, balances: map[string]int64{}, nonces: map[string]uint64{}}
 		if err := bc.checkStateful(b, prev, v); err != nil {
+			// Yükseklik, önceki özet ve medyan zaman saklamadan önce aynı indeks verisiyle
+			// denetlendi (precheckLocked) ve gövde yukarıda özetine bağlandı: bu üç hata burada
+			// ancak yerel indeks bozulmasından doğabilir. Dürüst blok torunlarıyla birlikte
+			// kalıcı geçersiz işaretlenmez; geçiş olmaz, alarm verilmez (kullanıcı kararı
+			// 2026-11-17).
+			if errors.Is(err, ErrBadIndex) || errors.Is(err, ErrBadPrevHash) || errors.Is(err, ErrTimestampOld) {
+				if bc.indexWarn != e.Hash { // yeniden gönderimle log satırı harcatılamasın
+					bc.indexWarn = e.Hash
+					bc.log.Error("blok indeksi gövdeyle tutmuyor (yerel bozulma); zincire geçilmedi, blok geçersiz işaretlenmedi",
+						"index", e.Height, "hash", e.Hash, "neden", err)
+				}
+				return fmt.Errorf("%w: %s bloğunun indeks kaydı gövdesiyle tutmuyor: %v", ErrCorruptState, e.Hash, err)
+			}
 			failErr = err
-			if isPermanentStatefulErr(err) || errors.Is(err, ErrBadIndex) || errors.Is(err, ErrBadPrevHash) {
+			if isPermanentStatefulErr(err) {
 				if err := bc.markInvalidLocked(invalid, e); err != nil {
 					return err
 				}
@@ -488,6 +504,30 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 		bc.log.Info("blok zincire eklendi", "index", e.Height, "hash", e.Hash)
 	}
 	return failErr
+}
+
+// connectBody zincire bağlanacak bloğun gövdesini diskten okur ve başlığına yeniden bağlar
+// (verifyLoadedBlock: özet alanı, başlığın yeniden hesaplanan özeti, işlem sayısı, işlem
+// kimliklerinden Merkle kökü; kimlik imzayı da kapsar). Her gövde yazılmadan önce bellekte tam
+// doğrulandığından tutmazlık yerel bozulmadır (bellek hatası, yazılım hatası, elle kurcalama;
+// diskteki bit bozulmasını çoğunlukla LevelDB'nin blok sağlaması okuma hatası olarak yakalar, o
+// hata burada sınıflandırılmaz). Doğrulanmayan gövde eskiden checkStateful'a girerdi: yanlış
+// bakiye yazılabilir ya da dürüst blok kalıcı geçersiz işaretlenebilirdi. Çözülemeyen ya da
+// başlığıyla tutmayan gövde dataCorruptBody türünde eksik veri hatasıdır (ErrCorruptState'i de
+// sarar): çağıran geçmez, geçersiz işaretlemez, kalıcı alarm verir (dataalarm.go). Bedeli zincir
+// yazma kilidi altında dolu blok başına ~1,4 MB SHA256'dır.
+func (bc *Blockchain) connectBody(hash string) (*Block, error) {
+	b, err := bc.getBlock(hash)
+	if err == nil {
+		_, err = verifyLoadedBlock(hash, b)
+	}
+	if err == nil {
+		return b, nil
+	}
+	if errors.Is(err, ErrCorruptState) { // eksik gövde (leveldb.ErrNotFound) ve okuma hataları değil
+		return nil, &missingDataError{hash: hash, kind: dataCorruptBody, cause: err}
+	}
+	return nil, err
 }
 
 // TipHash ana zincirin ucundaki bloğun özetidir.

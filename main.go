@@ -35,7 +35,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "API için TLS anahtar dosyası")
 	mineTo := flag.String("mine", "", "Kazım ödüllerinin gideceği adres (boşsa kazım yapılmaz)")
 	clearAlarm := flag.Bool("clear-reorg-alarm", false, "Kalıcı derin reorg alarmını temizler ve çıkar (olay incelendikten sonra)")
-	clearDataAlarm := flag.Bool("clear-data-alarm", false, "Kalıcı eksik veri alarmını (diskte olmayan blok gövdesi, undo ya da indeks geri alma kaydı) temizler ve çıkar (disk incelendikten sonra)")
+	clearDataAlarm := flag.Bool("clear-data-alarm", false, "Kalıcı eksik veri alarmını (diskte olmayan ya da başlığıyla tutmayan blok gövdesi, diskte olmayan undo ya da indeks geri alma kaydı) temizler ve çıkar (disk ve bellek incelendikten sonra)")
 	mineThreads := flag.Int("mine-threads", 0, "Kazım iş parçacığı sayısı (0: tüm çekirdekler)")
 	benchHashrate := flag.Duration("bench-hashrate", 0, "Q-BTC başlığında hashrate'i bu süre ölçer, yazdırır ve çıkar (ör. 30s)")
 	mineGPU := flag.Bool("mine-gpu", false, "Kazımı OpenCL aygıtında yapar (-tags opencl ile derlenmiş olmalı)")
