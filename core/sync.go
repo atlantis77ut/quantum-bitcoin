@@ -189,14 +189,28 @@ func (bc *Blockchain) HeadersRange(from int64, count int) ([]BlockHeader, int64,
 }
 
 // BlockByHash indeksteki bir bloğun gövdesini döndürür. Özet indekste değilse veritabanı
-// okunmaz (ağdan gelen özetle rastgele anahtar okunamasın).
+// okunmaz (ağdan gelen özetle rastgele anahtar okunamasın). Okunan gövde zincir kilidi
+// bırakıldıktan sonra başlığına yeniden bağlanır (verifyLoadedBlock, feat/verify-served-body;
+// eşlere sunum ve senkronizasyon sonrası yayın): tutmazsa ErrCorruptState döner, bozuk gövde
+// eşe gitmez. Eksik veri alarmı tetiklenmez (API okumaları gibi; alarm uzlaşma yolunundur).
+// Önbellek kullanılmaz: eşlerin istekleri API'nin önbelleğini boşaltmasın; her çağrı bir kez
+// işlem kimliklerini ve Merkle kökünü özetler (eşzamanlı sunum yuvalarıyla sınırlı).
 func (bc *Blockchain) BlockByHash(hash string) (*Block, error) {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
-	if e, ok := bc.index[hash]; !ok || e.Status == statusInvalid {
-		return nil, ErrUnknownBlock // geçersiz işaretli bloklar eşlere sunulmaz
+	b, err := func() (*Block, error) {
+		bc.mu.RLock()
+		defer bc.mu.RUnlock()
+		if e, ok := bc.index[hash]; !ok || e.Status == statusInvalid {
+			return nil, ErrUnknownBlock // geçersiz işaretli bloklar eşlere sunulmaz
+		}
+		return bc.getBlock(hash)
+	}()
+	if err != nil {
+		return nil, err
 	}
-	return bc.getBlock(hash)
+	if _, err := verifyLoadedBlock(hash, b); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // MainBlockByHash ana zincirdeki bir bloğu gövdesiyle ve aynı anlık görüntüdeki onay

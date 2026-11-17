@@ -198,6 +198,8 @@ type P2PServer struct {
 	// netWarn yapılandırılmış eşler için "başka ağda" uyarısının son zamanlarıdır (netid.go).
 	netWarnMu sync.Mutex
 	netWarn   map[string]time.Time
+	// corruptWarn son "bozuk gövde" kaydının zamanıdır (unix ns; logCorruptBody).
+	corruptWarn atomic.Int64
 
 	// Ortak yuva havuzları; her birinin bir payı korunan gruplara ayrılmıştır (peers.go).
 	conns   *slotPool
@@ -739,10 +741,30 @@ func (ps *P2PServer) serveBlock(conn net.Conn, remote string, id peerID, hash st
 	defer ps.releaseServe(id, lvl)
 	b, err := ps.Blockchain.BlockByHash(hash)
 	if err != nil {
+		if errors.Is(err, core.ErrCorruptState) {
+			ps.logCorruptBody(hash, err)
+		}
 		ps.reply(conn, remote, message{Type: msgBlock})
 		return
 	}
 	ps.reply(conn, remote, message{Type: msgBlock, Block: b})
+}
+
+// corruptLogEvery bozuk gövde kaydının en sık aralığıdır: sunum yuvaları eşzamanlılığı sınırlar,
+// sıklığı değil; aynı bozuk bloğu döngüyle isteyen eş kayıtları doldurmasın.
+const corruptLogEvery = time.Minute
+
+// logCorruptBody diskten okunan gövde başlığıyla tutmayınca (core.ErrCorruptState) hatayı en çok
+// corruptLogEvery'de bir kaydeder. Eksik veri alarmı tetiklenmez (API okumalarıyla aynı; alarm
+// uzlaşma yolunundur, API'den tetiklemek ayrı kullanıcı kararı).
+func (ps *P2PServer) logCorruptBody(hash string, err error) {
+	now := time.Now().UnixNano()
+	last := ps.corruptWarn.Load()
+	// Saat geri alındıysa (d < 0) beklenmez: kayıt geri alınan süre boyunca susmasın.
+	if d := now - last; (d >= 0 && d < int64(corruptLogEvery)) || !ps.corruptWarn.CompareAndSwap(last, now) {
+		return
+	}
+	ps.log.Error("diskteki blok gövdesi başlığıyla tutmuyor; eşlere sunulmuyor", "hash", hash, "err", err)
 }
 
 // acquireServe önce adres grubunun, sonra ortak sunum yuvalarından birini alır; yuva kısa
@@ -1106,6 +1128,8 @@ func (ps *P2PServer) downloadBodies(peer string, s *core.HeaderSync, stopped fun
 					from = peer
 				}
 				ps.relayFrom(b, from)
+			} else if errors.Is(err, core.ErrCorruptState) {
+				ps.logCorruptBody(tip, err)
 			}
 		}
 	}()
