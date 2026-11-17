@@ -95,6 +95,23 @@ def main():
             out.append(f"- {name}: {cell(load(d, name))}")
     out.append("")
 
+    rows = []
+    for name, rc, _, _ in status:
+        r = load(d, name) if rc == 0 else None
+        if r is None or "push_takeovers" not in r["simulation"]:
+            continue
+        tk = r["simulation"]["push_takeovers"] or []
+        tot = {k: sum(x.get(k, 0) for x in tk) for k in ("stall", "drain", "pace")}
+        rows.append(f"| {name} | {tot['stall']} | {tot['drain']} | {tot['pace']} |")
+    if rows:
+        out.append("## İtme yuvası devralmaları (bütün ölçümler ve düğümler, toplam)\n")
+        out.append("stall: yazarken parça yazılamadı; teslim: teslim beklerken onaylanmamış kuyruk ilerlemedi "
+                   "(Linux, network/push.go); hız: hız sınırının gerisinde kaldı.\n")
+        out.append("| Hücre | stall | teslim | hız |")
+        out.append("|---|---|---|---|")
+        out.extend(rows)
+        out.append("")
+
     out.append("## Çalıştırma durumu\n")
     out.append("| Hücre | Çıkış | Süre (sn) |")
     out.append("|---|---|---|")

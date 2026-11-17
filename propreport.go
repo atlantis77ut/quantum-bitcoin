@@ -58,6 +58,8 @@ type propSimReport struct {
 	MaxMs      []float64   `json:"max_ms"`
 	Reached    []int       `json:"reached"`
 	WorstMedMs float64     `json:"slowest_node_median_ms"`
+	// Takeovers ölçüm başına itme yuvası devralmalarıdır (bütün düğümler, nedene göre).
+	Takeovers []network.PushTakeovers `json:"push_takeovers"`
 }
 
 func millis(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
@@ -130,6 +132,7 @@ func newPropReport(c network.PropConfig, f *network.PropFixture, blocks []networ
 			}
 		}
 		s.Runs = append(s.Runs, row)
+		s.Takeovers = append(s.Takeovers, run.Takeovers)
 	}
 	r.Simulation = s
 	r.Reproduce = fmt.Sprintf("go build -o qbtc . && ./qbtc -bench-propagation -bench-prop-txs %d -bench-prop-hops %d"+
