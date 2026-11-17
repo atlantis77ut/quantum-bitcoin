@@ -109,6 +109,9 @@ type Blockchain struct {
 	// indexWarn indeks kaydının gövdesiyle tutmadığı en son loglanan bloktur (activateLocked):
 	// aynı blok yeniden denenince log satırı yinelenmez.
 	indexWarn string
+	// behind geçilemeyen en ağır hedefin özetidir; boşsa düğüm bildiği en çok işli zincirdedir
+	// (bkz. behind.go). Yalnızca bellekte tutulur.
+	behind string
 
 	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
 	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır

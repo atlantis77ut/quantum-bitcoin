@@ -26,7 +26,9 @@ const (
 var minWorkWait = 5 * time.Second
 
 // Miner düğümün kazım döngüsüdür. Kazım zincir kilidi tutulmadan yapılır (core.Mine); uç
-// değişirse şablon yenilenir. Kazılan blok eşlere yayılır ve bir süre sonra eşlerde aranır:
+// değişirse şablon yenilenir. Düğüm senkronize değilken (en az zincir işinin altında) ya da
+// bildiği daha çok işli zincirin kazım duraklatma eşiği kadar gerisinde kalıp ona geçemezken
+// (core/behind.go) kazılmaz. Kazılan blok eşlere yayılır ve bir süre sonra eşlerde aranır:
 // hiçbir eş bloğu saklamamışsa madenci uyarılır (saat, ağ/genesis ayarı ya da bağlantı sorunu).
 type Miner struct {
 	ps      *P2PServer
@@ -54,7 +56,7 @@ func NewMiner(ps *P2PServer, address string) (*Miner, error) {
 // Run stop kapanana kadar kazar.
 func (m *Miner) Run(stop <-chan struct{}) {
 	bc := m.ps.Blockchain
-	waiting := false
+	waiting, paused := false, false
 	for {
 		select {
 		case <-stop:
@@ -77,6 +79,24 @@ func (m *Miner) Run(stop <-chan struct{}) {
 			m.log.Info("en az zincir işine ulaşıldı; kazım başlıyor")
 			waiting = false
 		}
+		// Düğüm bildiği daha çok işli zincirin eşik kadar gerisindeyse ve ona geçemiyorsa ağ o
+		// dalda saatlerdir ilerliyordur: bayat ucun üstüne boşa kazılmaz (core/behind.go).
+		// Düğüm o zincire geçince ya da açık eşiğin altına inince kazım kendiliğinden sürer.
+		if bc.MiningPaused() {
+			if !paused {
+				m.log.Error("kazım duraklatıldı: düğüm bildiği daha çok işli zincirin çok gerisinde ve ona geçemiyor; veri dizinini onarın (yedek) ya da silip yeniden eşitleyin",
+					"geride_blok", bc.BehindBlocks())
+				paused = true
+			}
+			if !sleep(stop, minWorkWait) {
+				return
+			}
+			continue
+		}
+		if paused {
+			m.log.Info("kazım duraklaması bitti; kazım sürüyor")
+			paused = false
+		}
 		// Şablon yalnızca uç değişince yenilenir: kazım sürerken gelen işlem bir sonraki bloğu bekler.
 		txs, err := m.ps.Mempool.Select(core.MaxTxPerBlock)
 		if err != nil {
@@ -97,6 +117,8 @@ func (m *Miner) Run(stop <-chan struct{}) {
 			return
 		case errors.Is(err, core.ErrStaleTemplate):
 			continue // uç değişti: yeni şablon
+		case errors.Is(err, core.ErrMiningPaused):
+			continue // döngü başındaki duraklama beklemesine
 		case err != nil:
 			m.log.Error("kazım başarısız", "err", err)
 			if !sleep(stop, time.Second) {

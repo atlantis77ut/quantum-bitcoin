@@ -332,13 +332,15 @@ func (bc *Blockchain) markInvalidLocked(batch *leveldb.Batch, e *indexEntry) err
 // kalıcı eksik veri alarmı verilir (dataalarm.go). Bağlanacak gövde diskten okununca başlığına
 // yeniden bağlanır (connectBody): bozuksa eksik gövde gibi davranılır (geçiş yok, geçersiz işaret
 // yok, alarm). Gövdesi doğrulanmış blokta yükseklik, önceki özet ya da medyan zaman hatası yerel
-// indeks bozulmasıdır: geçiş olmaz, blok geçersiz işaretlenmez (aşağıda).
+// indeks bozulmasıdır: geçiş olmaz, blok geçersiz işaretlenmez (aşağıda). Deneme uçtan ağır ve
+// geçersiz olmayan bir hedefe ulaşamadan dönerse geride kalma kaydı güncellenir (behind.go).
 func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	defer func() {
 		var md *missingDataError
 		if errors.As(err, &md) {
 			bc.dataAlarmLocked(md, target)
 		}
+		bc.noteBehindLocked(target, err)
 	}()
 	fork, err := bc.forkPoint(target)
 	if err != nil {

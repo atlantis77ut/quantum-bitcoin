@@ -125,7 +125,8 @@ func (bc *Blockchain) minerTime(mtp int64, warn bool) int64 {
 
 // Mine şablonu zincir kilidi tutmadan, mineWorkerCount iş parçacığıyla kazar. Her turda
 // parçacıklar ardışık mineChunk'lık nonce dilimlerini tarar; turlar arasında koordinatör
-// parçacık durdurmayı ve uç değişimini denetler ve zaman damgasını yerel saate tazeler: uzun
+// parçacık durdurmayı, uç değişimini ve kazım duraklamasını (ErrMiningPaused, behind.go)
+// denetler ve zaman damgasını yerel saate tazeler: uzun
 // kazımda blok eskimiş damgayla (eşlerin medyanına göre geride) üretilmez. Bir turdaki tüm
 // parçacıklar aynı damgayla kazar ve tur bitmeden dönülmez. stop nil olabilir.
 func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
@@ -156,8 +157,11 @@ func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
 			default:
 			}
 		}
-		if bc.TipHash() != t.parent {
+		switch stale, paused := bc.mineState(t.parent); {
+		case stale:
 			return nil, ErrStaleTemplate
+		case paused:
+			return nil, ErrMiningPaused // şablon yarıda bırakılır: bayat ucun üstüne kazılmaz
 		}
 		if ts := bc.minerTime(t.mtp, false); !first && ts != b.Timestamp {
 			b.Timestamp = ts
@@ -204,6 +208,14 @@ func (bc *Blockchain) Mine(t *Template, stop <-chan struct{}) (*Block, error) {
 			return nil, ErrStaleTemplate
 		}
 	}
+}
+
+// mineState kazım turları arasındaki denetimdir: şablonun kurulduğu uç değişti mi, kazım
+// duraklatıldı mı (behind.go). Tek okuma kilidiyle.
+func (bc *Blockchain) mineState(parent string) (stale, paused bool) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.lastHash != parent, bc.miningPausedLocked()
 }
 
 // SubmitBlock kazılan bloğu ağdan gelen bloklarla aynı doğrulamadan geçirip zincire ekler.

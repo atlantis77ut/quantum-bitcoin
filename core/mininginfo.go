@@ -52,6 +52,11 @@ type MiningInfo struct {
 	DeepReorg     bool
 	MissingData   bool
 	BelowMinWork  bool
+	// BehindBlocks düğümün, bildiği ama geçemediği daha çok işli zincirin kaç blokluk iş
+	// gerisinde olduğudur (0: geride değil); MiningPaused açığın kazım duraklatma eşiğine
+	// ulaştığını söyler (behind.go).
+	BehindBlocks int64
+	MiningPaused bool
 }
 
 // MiningInfo son blocks ana zincir bloğunun kazım özetini döndürür; pencere uç yüksekliğiyle
@@ -72,6 +77,8 @@ func (bc *Blockchain) MiningInfo(blocks int64) (MiningInfo, error) {
 		DeepReorg:     bc.deepReorg != nil,
 		MissingData:   bc.dataAlarm != nil,
 		BelowMinWork:  tip.work.Cmp(bc.params.minChainWork()) < 0,
+		BehindBlocks:  bc.behindLeadLocked(),
+		MiningPaused:  bc.miningPausedLocked(),
 	}
 	next, err := bc.expectedBitsLocked(tip.Hash, nil)
 	if err != nil {

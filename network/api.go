@@ -616,6 +616,8 @@ func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
 		"deep_reorg_alarm":     m.DeepReorg,
 		"missing_data_alarm":   m.MissingData,
 		"below_min_chain_work": m.BelowMinWork,
+		"behind_blocks":        m.BehindBlocks,
+		"mining_paused":        m.MiningPaused,
 	}
 	if m.WindowBlocks > 0 {
 		resp["stale_rate"] = float64(m.StaleBlocks) / float64(m.WindowBlocks)
@@ -630,8 +632,10 @@ func (api *APIServer) handleMiningInfo(w http.ResponseWriter, r *http.Request) {
 // handleConfirmations blok sayısının yanında iş ve zamana dayalı onay bilgisini döndürür
 // (bkz. core/confirm.go): entegrasyonlar confirmations, elapsed_seconds ve work eşiklerinin
 // üçünü birlikte kullanmalı; deep_reorg_alarm, missing_data_alarm ya da below_min_chain_work
-// true ise hiçbir onaya güvenilmez. attacker_success, payı 0,10–0,40 olan saldırganın
-// attacker_success_depth blok geriden yetişme olasılığıdır (Nakamoto modeli, core/attack.go).
+// true ise ya da behind_blocks sıfırdan büyükse (düğüm bildiği daha çok işli zincire
+// geçemiyor, core/behind.go) hiçbir onaya güvenilmez. attacker_success, payı 0,10–0,40 olan
+// saldırganın attacker_success_depth blok geriden yetişme olasılığıdır (Nakamoto modeli,
+// core/attack.go).
 func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("hash")
 	if !core.IsHashHex(hash) {
@@ -653,10 +657,11 @@ func (api *APIServer) handleConfirmations(w http.ResponseWriter, r *http.Request
 		"deep_reorg_alarm":     c.DeepReorg,
 		"missing_data_alarm":   c.MissingData,
 		"below_min_chain_work": c.BelowMinWork,
+		"behind_blocks":        c.BehindBlocks,
 	}
-	// Saldırganın yetişme olasılığı (core/attack.go): blok ana zincirde değilse ya da alarm
-	// varsa verilmez (onaylara güvenilmez).
-	if c.Blocks > 0 && !c.DeepReorg && !c.MissingData && !c.BelowMinWork {
+	// Saldırganın yetişme olasılığı (core/attack.go): blok ana zincirde değilse, alarm varsa
+	// ya da düğüm gerideyse verilmez (onaylara güvenilmez).
+	if c.Blocks > 0 && !c.DeepReorg && !c.MissingData && !c.BelowMinWork && c.BehindBlocks == 0 {
 		z := core.AttackDepth(c, api.Blockchain.TargetSpacing())
 		probs := make(map[string]float64, len(attackShares))
 		for _, q := range attackShares {
