@@ -398,11 +398,18 @@ func (api *APIServer) serveBlock(w http.ResponseWriter, r *http.Request, latest 
 		return
 	}
 
+	// Kimlikler önbellekteki blokta bir kez hesaplanır (core.Blockchain.BlockTxIDs).
+	ids := api.Blockchain.BlockTxIDs(b)
 	txs := []blockTx{} // JSON'da null değil []
 	if txid != "" {
-		for i := range b.Transactions {
-			if id := b.Transactions[i].ID(); id == txid {
-				txs = append(txs, blockTx{TxID: id, Index: i, Transaction: b.Transactions[i]})
+		var want [32]byte
+		if _, err := hex.Decode(want[:], []byte(txid)); err != nil { // IsHashHex yukarıda denetledi
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "geçersiz txid parametresi"})
+			return
+		}
+		for i := range ids {
+			if ids[i] == want {
+				txs = append(txs, blockTx{TxID: txid, Index: i, Transaction: b.Transactions[i]})
 				break
 			}
 		}
@@ -413,7 +420,7 @@ func (api *APIServer) serveBlock(w http.ResponseWriter, r *http.Request, latest 
 		offset = txs[0].Index
 	} else {
 		for i := offset; i < len(b.Transactions) && len(txs) < limit; i++ {
-			txs = append(txs, blockTx{TxID: b.Transactions[i].ID(), Index: i, Transaction: b.Transactions[i]})
+			txs = append(txs, blockTx{TxID: hex.EncodeToString(ids[i][:]), Index: i, Transaction: b.Transactions[i]})
 		}
 	}
 	header := core.BlockHeader{Version: b.Version, Index: b.Index, Timestamp: b.Timestamp, PrevHash: b.PrevHash,
@@ -482,7 +489,7 @@ func (api *APIServer) handleMerkleProof(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})
 		return
 	}
-	proof, err := core.MerkleProof(b.Transactions, pos)
+	proof, err := core.MerkleProofFromIDs(api.Blockchain.BlockTxIDs(b), pos)
 	if err != nil {
 		api.log.Error("merkle kanıtı üretilemedi", "txid", id, "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "iç hata"})

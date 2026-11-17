@@ -37,6 +37,10 @@ type blockCacheEntry struct {
 	hash  string
 	block *Block
 	size  int
+
+	// ids bloğun işlem kimlikleridir; ilk BlockTxIDs çağrısında bir kez hesaplanır.
+	idsOnce sync.Once
+	ids     [][32]byte
 }
 
 type blockCache struct {
@@ -67,6 +71,16 @@ func (c *blockCache) get(hash string) (*Block, bool) {
 	return el.Value.(*blockCacheEntry).block, true
 }
 
+// peek girdiyi isabet/ıska sayacına ve LRU sırasına dokunmadan döndürür; yoksa nil.
+func (c *blockCache) peek(hash string) *blockCacheEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[hash]; ok {
+		return el.Value.(*blockCacheEntry)
+	}
+	return nil
+}
+
 // put bloğu ekler; tek başına bütçeyi aşan blok saklanmaz. Sınırlar aşılırsa en eski çıkar.
 func (c *blockCache) put(hash string, b *Block, size int) {
 	if size > c.maxBytes {
@@ -87,6 +101,21 @@ func (c *blockCache) put(hash string, b *Block, size int) {
 		delete(c.items, e.hash)
 		c.bytes -= e.size
 	}
+}
+
+// BlockTxIDs b'nin işlem kimliklerini (IDBytes, blok sırasıyla) döndürür. b, API okumasının
+// döndürdüğü ve hâlâ önbellekte duran girdinin kendisiyse kimlikler girdide bir kez hesaplanıp
+// saklanır (bloğun ilk isteği öder, sonrakiler bedavadır); değilse (önbellekte yok, eşzamanlı
+// kaçırmada yarışı kaybetmiş ya da önbellek dışı yoldan gelmiş blok) her çağrıda hesaplanır ve
+// saklanmaz. Hesaplama zincir ve önbellek kilidi tutulmadan yapılır; girdi bu sırada önbellekten
+// düşse de çağıranın elindeki kimlikler geçerlidir. Dönen dilim paylaşılır ve salt okunurdur.
+// Kimlik dilimi (blok başına ~8 KiB) önbelleğin bayt bütçesine sayılmaz.
+func (bc *Blockchain) BlockTxIDs(b *Block) [][32]byte {
+	if e := bc.blockCache.peek(b.Hash); e != nil && e.block == b {
+		e.idsOnce.Do(func() { e.ids = TxIDs(b.Transactions) })
+		return e.ids
+	}
+	return TxIDs(b.Transactions)
 }
 
 // ReadGate önbellek kaçırmasında disk okumasından önce, bc.mu okuma kilidi altında çağrılır; tip,
@@ -122,7 +151,8 @@ func (bc *Blockchain) startBlockReadLocked(hash string, gate ReadGate) (blockRea
 
 // finishBlockRead okumayı bc.mu tutulmadan bitirir: kaçırmada gövdeyi diskten okur, çözer ve
 // önbelleğe koyar; kapının release'ini (hata yolları dahil) bir kez çağırır. Diskten okunan
-// gövdenin özeti hash ile tutmazsa önbelleğe girmez.
+// gövdedeki özet alanı hash ile tutmazsa önbelleğe girmez (başlık özeti ve Merkle kökü yeniden
+// hesaplanmaz).
 //
 // Kilitsiz okuma şu değişmeze dayanır: blok gövdesinin anahtarı (çıplak özet) hiç silinmez ve
 // üzerine başka içerik yazılmaz (budama yok, saklanmayan yan bloklar hiç yazılmaz; durum
