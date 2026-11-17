@@ -38,10 +38,25 @@ func MerkleRoot(txs []Transaction) [32]byte {
 // MerkleProof txs[index] işleminin köke dahil olduğunu gösteren kardeş özetleri yapraktan köke
 // sırayla döndürür. Tek yapraklı ağaçta kanıt boştur.
 func MerkleProof(txs []Transaction, index int) ([][32]byte, error) {
-	if index < 0 || index >= len(txs) {
+	return MerkleProofFromIDs(TxIDs(txs), index)
+}
+
+// MerkleProofFromIDs MerkleProof gibidir; işlem kimlikleri önceden hesaplanmıştır
+// (ids[i] = txs[i].IDBytes(), blok sırasıyla; ör. Blockchain.BlockTxIDs).
+func MerkleProofFromIDs(ids [][32]byte, index int) ([][32]byte, error) {
+	if index < 0 || index >= len(ids) {
 		return nil, ErrMerkleIndex
 	}
-	return merklePath(txLeaves(txs), index, nil), nil
+	return merklePath(idLeaves(ids), index, nil), nil
+}
+
+// TxIDs işlemlerin kimliklerini (IDBytes) sırayla döndürür.
+func TxIDs(txs []Transaction) [][32]byte {
+	ids := make([][32]byte, len(txs))
+	for i := range txs {
+		ids[i] = txs[i].IDBytes()
+	}
+	return ids
 }
 
 // MerkleRootFromProof, kimliği id olan işlemin count işlemli bir blokta index sırasında olduğu
@@ -71,9 +86,13 @@ func VerifyMerkleProof(id [32]byte, index, count int, proof [][32]byte, root [32
 }
 
 func txLeaves(txs []Transaction) [][32]byte {
-	leaves := make([][32]byte, len(txs))
-	for i := range txs {
-		leaves[i] = merkleLeaf(txs[i].IDBytes())
+	return idLeaves(TxIDs(txs))
+}
+
+func idLeaves(ids [][32]byte) [][32]byte {
+	leaves := make([][32]byte, len(ids))
+	for i := range ids {
+		leaves[i] = merkleLeaf(ids[i])
 	}
 	return leaves
 }
