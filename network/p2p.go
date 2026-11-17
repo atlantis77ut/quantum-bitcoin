@@ -841,6 +841,7 @@ func (ps *P2PServer) syncLoop(stop <-chan struct{}) {
 		case <-t.C:
 		case <-ps.syncCh:
 		}
+		ps.retryBehind()
 		peers := ps.activePeers()
 		ps.pruneSyncState(peers, time.Now())
 		for _, peer := range peers {
@@ -855,6 +856,25 @@ func (ps *P2PServer) syncLoop(stop <-chan struct{}) {
 			ps.maybePullMempool(peer, err, stop)
 		}
 		ps.syncRounds.Add(1)
+	}
+}
+
+// retryBehind düğüm gerideyken zincire geçişi kendiliğinden yeniden dener (core.RetryBehind;
+// zincir aralık başına en çok bir deneme yapar). Başarısızlık Debug düzeyindedir: geride kalma
+// ve eksik veri alarmları çekirdekte bir kez loglanır, deneme başına uyarı satırı olmaz. Uç
+// değiştiyse uç bekleyenler uyandırılır; blok yayınlanmaz (eşler o zinciri zaten biliyor).
+func (ps *P2PServer) retryBehind() {
+	bc := ps.Blockchain
+	before := bc.TipHash()
+	err := bc.RetryBehind()
+	switch {
+	case err == nil:
+		if bc.TipHash() != before {
+			ps.notifyTip()
+		}
+	case errors.Is(err, core.ErrRetryDeferred):
+	default:
+		ps.log.Debug("geride kalınan zincire kendiliğinden geçiş denemesi başarısız", "err", err)
 	}
 }
 
