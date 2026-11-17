@@ -344,7 +344,9 @@ func newLinkLimiter(mbit float64) *linkLimiter {
 func (l *linkLimiter) waitBacklog(ahead time.Duration) {
 	for {
 		l.mu.Lock()
-		wait := time.Until(l.next) - ahead
+		// next.Add(-ahead) önce: hiç kullanılmamış hatta next sıfır zamandır, Until(next) en
+		// küçük süreye doyar ve ahead çıkarılınca taşıp dev bir beklemeye dönerdi.
+		wait := time.Until(l.next.Add(-ahead))
 		l.mu.Unlock()
 		if wait <= 0 {
 			return
