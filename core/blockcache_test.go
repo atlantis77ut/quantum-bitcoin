@@ -171,3 +171,50 @@ func TestLoadedBlockVerified(t *testing.T) {
 		t.Fatal("BlockTxIDs doğrulamada hesaplanan kimlikleri döndürmedi")
 	}
 }
+
+// Girdi boyutu diskteki JSON ile çözülmüş bellek tahmininin büyüğüdür; imzalı işlemli blokta
+// tahmin JSON'dan küçüktür (açık anahtar ve imza JSON'da base64).
+func TestBlockCacheChargesDecodedSize(t *testing.T) {
+	bc := newTestChain(t)
+	alice, bob := newKey(t), newKey(t)
+	fund(t, bc, alice, 1)
+	m := NewMempool(bc)
+	for nonce := uint64(1); nonce <= 3; nonce++ {
+		mustAdd(t, m, mpTx(t, bc, alice, bob.Address, Coin, MempoolMinFee, nonce))
+	}
+	signed := mineFromPool(t, bc, m)
+	plain, err := bc.AddBlock(nil, newKey(t).Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, blk := range []*Block{signed, plain} {
+		raw, err := bc.db.Get([]byte(blk.Hash), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _, err := bc.Reads(nil).MainBlockByHash(blk.Hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := bc.blockCache.peek(blk.Hash)
+		if e == nil {
+			t.Fatalf("blok %d önbellekte değil", blk.Index)
+		}
+		mem := blockMemSize(b, e.ids)
+		if e.size != max(len(raw), mem) || mem <= 32*len(b.Transactions) {
+			t.Fatalf("blok %d: girdi %d bayt, JSON %d, tahmin %d", blk.Index, e.size, len(raw), mem)
+		}
+		if blk == signed && mem >= len(raw) {
+			t.Fatalf("imzalı blokta tahmin %d, JSON %d'den küçük değil", mem, len(raw))
+		}
+	}
+	c := bc.blockCache
+	total := 0
+	for el := c.order.Front(); el != nil; el = el.Next() {
+		total += el.Value.(*blockCacheEntry).size
+	}
+	if c.bytes != total {
+		t.Fatalf("önbellek %d bayt sayıyor, girdiler %d", c.bytes, total)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"unsafe"
 )
 
 // Blok gövdesi önbelleği (yalnızca API okumaları: MainBlockByHash, MainBlockByHeight,
@@ -31,8 +32,28 @@ import (
 
 const (
 	blockCacheMaxEntries = 8
-	blockCacheMaxBytes   = 48 << 20 // kodlanmış (diskteki JSON) boyut toplamı
+	blockCacheMaxBytes   = 48 << 20 // girdi boyutlarının toplamı (blockMemSize)
 )
+
+// Bellek muhasebesi (feat/cache-accounting): girdi boyutu diskteki JSON boyutu ile çözülmüş
+// bloğun bellek tahmininin büyüğüdür (blockMemSize). İmzalı işlemde çözülmüş boyut JSON'dan
+// küçüktür (açık anahtar ve imza JSON'da base64, ~1,33 kat), imzasız coinbase'de birkaç bayt
+// büyük olabilir; tahmin ayırıcı ek yükünü saymaz. Geçerli bloklarda bayt sınırına ulaşılmaz:
+// uzlaşma kuralları (MaxTxPerBlock, adres biçimi, açık anahtar ve imza boyutu, sabit commitment)
+// dolu bloğu en kötü durumda da 3 MiB'ın altında tutar, 8 × 3 MiB < 48 MiB. Belleği girdi
+// sayısı sınırlar, bayt sınırı bozuk ya da beklenmedik büyük kayda karşı ikinci sınırdır.
+
+// blockMemSize çözülmüş bloğun ve işlem kimliklerinin yaklaşık bellek boyutudur: yapılar,
+// dizgi ve bayt dilimi içerikleri (kapasite), kimlik başına 32 bayt.
+func blockMemSize(b *Block, ids [][32]byte) int {
+	n := int(unsafe.Sizeof(*b)) + len(b.PrevHash) + len(b.MerkleRoot) + len(b.Hash) + len(ids)*32
+	for i := range b.Transactions {
+		tx := &b.Transactions[i]
+		n += int(unsafe.Sizeof(*tx)) + len(tx.Sender) + len(tx.Receiver) +
+			cap(tx.PublicKey) + cap(tx.Signature) + cap(tx.Commitment)
+	}
+	return n
+}
 
 type blockCacheEntry struct {
 	hash  string
@@ -116,8 +137,8 @@ func (c *blockCache) put(hash string, b *Block, size int, ids [][32]byte) {
 // değilse (önbellekte yok, eşzamanlı kaçırmada yarışı kaybetmiş ya da önbellek dışı yoldan gelmiş
 // blok) her çağrıda hesaplanır ve saklanmaz. Hesaplama zincir ve önbellek kilidi tutulmadan
 // yapılır; girdi bu sırada önbellekten düşse de çağıranın elindeki kimlikler geçerlidir. Dönen
-// dilim paylaşılır ve salt okunurdur. Kimlik dilimi (blok başına ~8 KiB) önbelleğin bayt
-// bütçesine sayılmaz.
+// dilim paylaşılır ve salt okunurdur. Diskten yüklenen bloğun kimlik dilimi (blok başına
+// ~8 KiB) girdi boyutuna sayılır (blockMemSize).
 func (bc *Blockchain) BlockTxIDs(b *Block) [][32]byte {
 	if e := bc.blockCache.peek(b.Hash); e != nil && e.block == b {
 		e.idsOnce.Do(func() { e.ids = TxIDs(b.Transactions) })
@@ -191,7 +212,7 @@ func (bc *Blockchain) finishBlockRead(r blockRead) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	bc.blockCache.put(hash, &b, len(data), ids)
+	bc.blockCache.put(hash, &b, max(len(data), blockMemSize(&b, ids)), ids)
 	return &b, nil
 }
 
