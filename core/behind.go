@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 )
@@ -54,12 +55,24 @@ var ErrMiningPaused = errors.New("kazım duraklatıldı: düğüm bildiği daha 
 // ölçü, TargetSpacing'den türetilir (~2 saat).
 func (p *Params) miningPauseLead() int64 { return p.ReorgAlarmDepth }
 
+// ErrLocalIO blok saklama, zincire geçiş ve durum okumalarındaki bir LevelDB okuma ya da yazma hatasıdır
+// (disk dolu, G/Ç hatası, kapanmış veritabanı): eşin gönderdiği veriyle ilgisi yoktur.
+var ErrLocalIO = errors.New("yerel disk hatası")
+
+// localIOErr LevelDB hatasını ErrLocalIO ile sarar; asıl hata da errors.Is ile görünür kalır.
+// leveldb.ErrNotFound buraya gelmez: eksik kayıt eksik veri hatasıdır (dataalarm.go).
+func localIOErr(op string, err error) error {
+	return fmt.Errorf("%w: %s: %w", ErrLocalIO, op, err)
+}
+
 // IsLocalDataErr hatanın yerel veri hatası olduğunu söyler: indeksteki bir bloğun kaydı diskte
-// yok ya da yerel durum bozuk. Eşin kusuru değildir; ağ katmanı eşi bunun için ertelemez.
-// Sarılmamış LevelDB okuma ve yazma hataları (disk dolu dahil) bu sınıfta değildir (ayırt
-// edilemiyor): ön-senkronizasyonda eşin başarısızlığı sayılırlar.
+// yok, yerel durum bozuk ya da disk okunamıyor veya yazılamıyor (ErrLocalIO). Eşin kusuru
+// değildir; ağ katmanı eşi bunun için ertelemez. ErrLocalIO writeSync'te ve getBlock, getRaw,
+// readInt ile indeks geri alma kaydı okumasında verilir. Bu yardımcılar uzlaşma yolu dışında da
+// (API bakiye/nonce, havuz, eşe blok sunma, açılış) çağrılır; IsLocalDataErr'i yalnızca
+// ön-senkronizasyon kullanır.
 func IsLocalDataErr(err error) bool {
-	return errors.Is(err, ErrBlockDataMissing) || errors.Is(err, ErrCorruptState)
+	return errors.Is(err, ErrBlockDataMissing) || errors.Is(err, ErrCorruptState) || errors.Is(err, ErrLocalIO)
 }
 
 // noteBehindLocked activateLocked'ın sonunda geride kalma kaydını günceller: err denemenin

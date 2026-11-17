@@ -91,7 +91,7 @@ func (bc *Blockchain) loadIndexUndo(hash string) ([]string, error) {
 		return nil, &missingDataError{hash: hash, kind: dataIndexUndo, cause: ErrCorruptState}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("indeks geri alma kaydı okunamadı (%s): %w", hash, err)
+		return nil, localIOErr("indeks geri alma kaydı okunamadı ("+hash+")", err)
 	}
 	var keys []string
 	if err := json.Unmarshal(data, &keys); err != nil {

@@ -255,6 +255,29 @@ func (bc *Blockchain) precheckLocked(b *Block) (*indexEntry, error) {
 	return parent, nil
 }
 
+// Blok saklama ve zincire geçiş yolundaki eşzamanlı yazmalar (writeSync).
+const (
+	opStoreBlock  = "blok diske yazılamadı"
+	opMarkInvalid = "indeks yazılamadı"
+	opChainUpdate = "zincir güncellenemedi"
+)
+
+// writeSync batch'i eşzamanlı yazar; hata yerel disk hatasıdır (ErrLocalIO, behind.go): eşin
+// kusuru değildir, blok geçersiz işaretlenmez. Testler writeFault ile yazma hatası verir.
+func (bc *Blockchain) writeSync(batch *leveldb.Batch, op string) error {
+	var err error
+	if bc.writeFault != nil {
+		err = bc.writeFault(op)
+	}
+	if err == nil {
+		err = bc.db.Write(batch, &opt.WriteOptions{Sync: true})
+	}
+	if err != nil {
+		return localIOErr(op, err)
+	}
+	return nil
+}
+
 // storeAndActivateLocked gövdesi doğrulanmış bloğu indekse ve diske yazar; ucun işini
 // geçiyorsa en çok iş taşıyan zincire geçer. Yazma kilidi altında çağrılır.
 func (bc *Blockchain) storeAndActivateLocked(b *Block) error {
@@ -275,8 +298,8 @@ func (bc *Blockchain) storeAndActivateLocked(b *Block) error {
 	if err := bc.putEntry(batch, e); err != nil {
 		return err
 	}
-	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
-		return fmt.Errorf("blok diske yazılamadı: %w", err)
+	if err := bc.writeSync(batch, opStoreBlock); err != nil {
+		return err
 	}
 	bc.addToIndex(e)
 	delete(bc.syncAllow, b.Hash)
@@ -430,8 +453,8 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	}
 
 	if invalid.Len() > 0 {
-		if err := bc.db.Write(invalid, &opt.WriteOptions{Sync: true}); err != nil {
-			return fmt.Errorf("indeks yazılamadı: %w", err)
+		if err := bc.writeSync(invalid, opMarkInvalid); err != nil {
+			return err
 		}
 	}
 	if failErr != nil && newTip.work.Cmp(bc.tip.work) <= 0 {
@@ -477,8 +500,8 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
-		return fmt.Errorf("zincir güncellenemedi: %w", err)
+	if err := bc.writeSync(batch, opChainUpdate); err != nil {
+		return err
 	}
 
 	// Disk yazıldı; bellekteki görünümü eşitle.
@@ -601,7 +624,7 @@ func (bc *Blockchain) getRaw(key string) (string, bool, error) {
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", false, localIOErr("durum okunamadı ("+key+")", err)
 	}
 	return string(data), true, nil
 }

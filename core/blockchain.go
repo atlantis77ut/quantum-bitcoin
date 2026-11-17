@@ -112,6 +112,8 @@ type Blockchain struct {
 	// behind geçilemeyen en ağır hedefin özetidir; boşsa düğüm bildiği en çok işli zincirdedir
 	// (bkz. behind.go). Yalnızca bellekte tutulur.
 	behind string
+	// writeFault testler içindir: nil değilse writeSync diske yazmak yerine onun hatasını döndürür.
+	writeFault func(op string) error
 
 	mineChunk   int          // kazımda parçacık başına denetimler arası nonce sayısı; 0 ise mineChunk (testler küçültür)
 	mineHook    func()       // testler için: her nonce turundan önce, koordinatör parçacığında çağrılır
@@ -649,7 +651,7 @@ func (bc *Blockchain) getBlock(hash string) (*Block, error) {
 		return nil, &missingDataError{hash: hash, kind: dataBody, cause: err}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("blok okunamadı (%s): %w", hash, err)
+		return nil, localIOErr("blok okunamadı ("+hash+")", err)
 	}
 	var block Block
 	if err := json.Unmarshal(data, &block); err != nil {
@@ -664,7 +666,7 @@ func (bc *Blockchain) readInt(key string) (int64, error) {
 		return 0, nil // Hiç işlem görmemiş adres
 	}
 	if err != nil {
-		return 0, err
+		return 0, localIOErr("durum okunamadı ("+key+")", err)
 	}
 	v, err := strconv.ParseInt(string(data), 10, 64)
 	if err != nil {
