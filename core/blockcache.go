@@ -40,8 +40,8 @@ const (
 // küçüktür (açık anahtar ve imza JSON'da base64, ~1,33 kat), imzasız coinbase'de birkaç bayt
 // büyük olabilir; tahmin ayırıcı ek yükünü saymaz. Geçerli bloklarda bayt sınırına ulaşılmaz:
 // uzlaşma kuralları (MaxTxPerBlock, adres biçimi, açık anahtar ve imza boyutu, sabit commitment)
-// dolu bloğu ~1,8 MB JSON ile sınırlar, 8 × 1,8 MB < 48 MiB. Belleği girdi sayısı sınırlar,
-// bayt sınırı bozuk ya da beklenmedik büyük kayda karşı ikinci sınırdır.
+// dolu bloğu en kötü durumda da 3 MiB'ın altında tutar, 8 × 3 MiB < 48 MiB. Belleği girdi
+// sayısı sınırlar, bayt sınırı bozuk ya da beklenmedik büyük kayda karşı ikinci sınırdır.
 
 // blockMemSize çözülmüş bloğun ve işlem kimliklerinin yaklaşık bellek boyutudur: yapılar,
 // dizgi ve bayt dilimi içerikleri (kapasite), kimlik başına 32 bayt.
