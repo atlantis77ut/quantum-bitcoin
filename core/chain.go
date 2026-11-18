@@ -420,6 +420,9 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 	for i, j := 0, len(branch)-1; i < j; i, j = i+1, j-1 {
 		branch[i], branch[j] = branch[j], branch[i]
 	}
+	if err := bc.probeAlarmBodyLocked(branch); err != nil {
+		return err
+	}
 
 	ov := newOverlay(bc)
 	var disconnected []*indexEntry
@@ -586,6 +589,7 @@ func (bc *Blockchain) activateLocked(target *indexEntry) (err error) {
 // sarar): çağıran geçmez, geçersiz işaretlemez, kalıcı alarm verir (dataalarm.go). Bedeli zincir
 // yazma kilidi altında dolu blok başına ~1,4 MB SHA256'dır.
 func (bc *Blockchain) connectBody(hash string) (*Block, error) {
+	bc.bodyLoads.Add(1)
 	b, err := bc.getBlock(hash)
 	if err == nil {
 		_, err = verifyLoadedBlock(hash, b)
@@ -597,6 +601,32 @@ func (bc *Blockchain) connectBody(hash string) (*Block, error) {
 		return nil, &missingDataError{hash: hash, kind: dataCorruptBody, cause: err}
 	}
 	return nil, err
+}
+
+// probeAlarmBodyLocked, eksik veri alarmı bu daldaki bir bloğun gövdesinin eksik ya da bozuk
+// olduğunu söylüyorsa geçişten önce yalnızca o gövdeyi yoklar; hâlâ okunamıyorsa connectBody'nin
+// hatasını döndürür ve geçiş denemesi geri sarılacak blokların kayıtlarını ve dalın önekini
+// yeniden okumadan biter. Alarm o bloğun bütün atalarının bir denemede geçildiğini gösterir;
+// eksik gövdede tam deneme de geçiş yapmaz, geçersiz işaretlemez. Sonuç şu istisnalar dışında
+// aynıdır: alarmdan sonra ortaya çıkan bir sorun (atada FTL'e takılan zaman damgası — saat geri
+// gittiyse tam deneme o atanın öncesindeki ağır öneke geçerdi —, yeni eksik undo ya da ata
+// gövdesi, indeks tutmazlığı, G/Ç hatası) alarmdaki gövde onarılana kadar görülmez; deneme eksik
+// veri hatasıyla biter, alarm kaydı eski bloğu gösterir. Eş bunu tetikleyemez: alarm yalnızca
+// yerel veri hatasından kurulur. Gövde düzeldiyse tam deneme yapılır (o gövde bir kez fazla
+// okunur). Alarm kaydı böylece son başarısız gövdenin ipucudur; -clear-data-alarm ile silinirse
+// sonraki deneme eskisi gibi tamdır.
+func (bc *Blockchain) probeAlarmBodyLocked(branch []*indexEntry) error {
+	a := bc.dataAlarm
+	if a == nil || (a.Kind != dataBody && a.Kind != dataCorruptBody) {
+		return nil
+	}
+	for _, e := range branch {
+		if e.Hash == a.Hash {
+			_, err := bc.connectBody(e.Hash)
+			return err
+		}
+	}
+	return nil
 }
 
 // TipHash ana zincirin ucundaki bloğun özetidir.
