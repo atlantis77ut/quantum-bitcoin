@@ -26,7 +26,7 @@
 | `txGate` (quota.go) | 64 işlem/sn, 256 ani (iç anahtar; grup tavanı 4 katı, feat/tx-rate-inner-key); geçersiz işlem 10 dk ceza (iç anahtar, 3 iç anahtarda grup). | Tek adresle komşunun işlemlerini düşüremez; 4 adresle grup tavanını doldurup düşürür; 3 adresle bütün grubu 10 dk keser. Tek geçersiz işlemle komşuyu kesemez (Yol A adım 3). |
 | `prot.discourage` (peers.go) | Geçersiz blok ya da bozuk JSON → iç anahtar 1 sa; `ErrBadDifficulty` kademeli; 3 iç anahtarda grup 1 sa. | 3 adresle bütün grubu 1 sa dışarıda bırakır. Tek bozuk mesajla komşuyu ya da sürüm farkıyla dürüst eşi hemen düşüremez (Yol A adım 3). |
 | `protection.recent` (peers.go) | Yeni uç bloğunu ilk getiren son 8 eş korunur; grup başına bir yer. | Korumayı bloğu getiren iç anahtar kazanır, komşu yararlanmaz (Yol A adım 3). |
-| Ayrılmış yuvalar (peers.go:40-42) | Çözümleme 3/8, sunum 6/16, bağlantı 16/64. | Korunan grubun payını komşu da kullanır. |
+| Ayrılmış yuvalar (peers.go) | Çözümleme 3/8, sunum 6/16, bağlantı 16/64, uç bekleme 8/32 (tippoll.go). | Korunan grubun payını komşu da kullanır. Grup kotası koruma düzeyinden önce alındığından, yeni ucu getirerek koruma kazanan iç anahtar grubun tek yuvasını tutan komşusu yüzünden dışarıda kalabilir (bilinçli; §7 madde 5). |
 
 **Gruba değil, eş adresine bağlı olanlar:** `presyncBackoff` ve `presyncs` (p2p.go, `P2PServer` alanları), `lastMempoolSync` (mempoolsync.go:33). Gönderen kovası (relaybudget.go) bütün eşler için ortaktır.
 
@@ -123,3 +123,9 @@ B seçilirse, oturum açılmadan önce şunlar sağlanmalıdır:
    - 10 dk'lık pencerede 3 farklı iç anahtar cezalanırsa bütün grup cezalanır.
 3. **İtibar kaynağı aynen kalır.** Yeni uç bloğunu ilk getiren korunur; işlem iletmek itibar vermez.
 4. **`ErrBadDifficulty` cezası kademeli olur:** ilk ihlalde uyarı, tekrarında artan süre.
+5. **Ortak havuz kotaları Yol B'ye kadar gruba bağlı kalır (2026-11-18).** Bağlantı, çözümleme, sunum ve uç bekleme kotaları (`connQuota`, `decodeQuota`, `serveQuota`, `waitQuota`) ortak global havuzların (64, 8, 16, 32 yuva) grup başına dilimleridir; işlem hızı kovası gibi arkasında global havuz olmayan bir sınır değildir. Kimlik olmadan komşular arası adalet ile global havuzların tükenmesi doğrudan takas edilir. Değerlendirilen ve seçilmeyen seçenekler:
+   - **İç anahtara bölüp grup tavanını m = 4 yapmak** (işlem hızındaki gibi): korunmayan payı dolduracak /24 sayısı düşer (çözümleme 5'ten 2'ye, sunum 10'dan 3'e, bağlantı 12'den 3'e, uç bekleme 24'ten 6'ya). Havuzları m katı büyütmek çözümlemede ~96 MiB bellek ister (yuva başına 3 MiB'a kadar mesaj) ve grup başına tek çözümleme yuvasının ML-DSA doğrulamasını seri tutması kalkar.
+   - **Kazanılmış korumalı iç anahtara kendi kota girdisi** (denendi, `guvenlik-denetimi` sonrası bırakıldı): kazanılmış ve korunmayan düzey ortak havuzun `shared` payını birlikte kullanır (peers.go `slotPool.chans`); yeni ucu birkaç kez ilk getiren saldırgan grup başına iki yuva tutup havuzu daha az /24 ile kilitlerdi (çözümleme 5'ten 3'e, sunum 10'dan 7'ye, bağlantı 12'den 7'ye, uç bekleme 24'ten 20'ye).
+   - **Kazanılmış eş varken komşuların yer açması** (grup toplamı değişmez): tek yuvalı kotalarda hızlı ileten eşin dürüst komşusu, eş listede kaldıkça hiç mesaj gönderemezdi.
+
+   Bedeli: aynı /24'teki (/48) bir kiracı, korunmayan ya da yeni ucu getirerek koruma kazanmış dürüst komşusunun yuvasını tutabilir; yapılandırılmış eşin komşuları onun payını kullanır. Çaresi eş kimliğidir (Yol B, lansmandan sonra).
