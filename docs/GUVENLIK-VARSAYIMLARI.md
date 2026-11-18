@@ -18,7 +18,7 @@ Bu not borsalar, entegrasyonlar ve kamuya yapılan iletişim içindir. Q-BTC'nin
 - "Kuantuma dayanıklı imzalar zinciri güvenli kılar"
 - "ASIC'e dirençli" ya da "Bitcoin ASIC'leri Q-BTC'yi kazamaz"
 
-Doğru ifade: ML-DSA-65 imzaları, kabul görmüş güvenlik varsayımları altında, kuantum bilgisayarlı saldırganın imza sahteciliğine karşı tasarlanmıştır. Uygulama ve yan kanal riskleri bu kapsamın dışındadır. Zincirin yeniden yazılmasına karşı koruma yalnızca dürüst hashrate çoğunluğundan gelir. Kuantum hızlandırmasının (Grover) madenciliğe etkisi bu notta değerlendirilmemiştir.
+Doğru ifade: ML-DSA-65 imzaları, kabul görmüş güvenlik varsayımları altında, kuantum bilgisayarlı saldırganın imza sahteciliğine karşı tasarlanmıştır. Uygulama ve yan kanal riskleri bu kapsamın dışındadır. Düğümün açılıştaki bilinen-yanıt denetimi (crypto/selftest.go) yalnızca bağlı imza kütüphanesinin sabit bir vektörde beklenen sonucu verdiğini gösterir; uygulamanın doğruluğunu ya da yan kanallara dayanıklılığını kanıtlamaz. Zincirin yeniden yazılmasına karşı koruma yalnızca dürüst hashrate çoğunluğundan gelir. Kuantum hızlandırmasının (Grover) madenciliğe etkisi bu notta değerlendirilmemiştir.
 
 ## Donanım uyumluluğu
 

@@ -31,8 +31,12 @@ jobs:
         id: oqs-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: /tmp/liboqs-install
-          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}
+          # İkinci dizin ML-DSA-65'i etkin olmayan derlemedir: yalnızca düğümün böyle bir
+          # kütüphaneyle açılmadığını sınamak içindir, /usr/local'a kurulmaz.
+          path: |
+            /tmp/liboqs-install
+            /tmp/liboqs-no65
+          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}-no65
 
       - name: liboqs derle
         if: steps.oqs-cache.outputs.cache-hit != 'true'
@@ -44,6 +48,10 @@ jobs:
             -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF \
             -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install
           ninja -C /tmp/liboqs/build install
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build-no65 -GNinja \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_44" -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-no65
+          ninja -C /tmp/liboqs/build-no65 install
 
       - name: liboqs kur
         run: |
@@ -62,6 +70,34 @@ jobs:
           go build ./...
           go vet ./...
           go test -race -count=1 ./...
+
+      - name: Açılış denetimi uçtan uca (ML-DSA-65'i etkin olmayan liboqs ile düğüm açılmaz)
+        run: |
+          export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
+          go build -o /tmp/qbtc-selftest .
+          # Denetimden geçen kütüphane: ölçüm kipi denetimden sonra çalışır ve 0 ile çıkar.
+          /tmp/qbtc-selftest -network testnet -bench-hashrate 1s > /tmp/selftest-ok.log 2>&1 || { cat /tmp/selftest-ok.log; exit 1; }
+          grep -F '"algoritma":"ML-DSA-65"' /tmp/selftest-ok.log
+          # ML-DSA-65'siz kütüphane: düğüm 1 ile çıkar ve veri dizinini açmaz. Denetim durdurmasaydı
+          # düğüm çalışmayı sürdürür, timeout 124 döndürürdü.
+          ls /tmp/liboqs-no65/lib
+          rc=0
+          timeout 60 env LD_LIBRARY_PATH=/tmp/liboqs-no65/lib /tmp/qbtc-selftest -network regtest \
+            -db /tmp/selftest-no65-db > /tmp/selftest-no65.log 2>&1 || rc=$?
+          cat /tmp/selftest-no65.log
+          test "$rc" -eq 1
+          grep -F 'ML-DSA-65 bu liboqs derlemesinde' /tmp/selftest-no65.log
+          test ! -e /tmp/selftest-no65-db
+
+      - name: ML-DSA-65 vektörünün OpenSSL ile yeniden üretimi (koşucunun OpenSSL'i desteklemiyorsa bildirimle atlanır)
+        run: |
+          rc=0
+          python3 -I scripts/mldsa65_vektor.py || rc=$?
+          if [ "$rc" -eq 3 ]; then
+            echo "::notice title=ML-DSA-65 vektörü::Koşucudaki OpenSSL ML-DSA-65'i desteklemiyor; OpenSSL ile yeniden üretim atlandı. Vektörü liboqs'a karşı Go testi denetler."
+          elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
 
       - name: OpenCL (pocl, CPU üzerinde)
         run: |
