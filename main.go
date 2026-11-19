@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"quantum-bitcoin/core"
+	"quantum-bitcoin/crypto"
 	"quantum-bitcoin/gpu"
 	"quantum-bitcoin/network"
 )
@@ -56,6 +57,16 @@ func main() {
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	// İmza kütüphanesi her kipten önce sabit vektörle denetlenir (crypto/selftest.go). ML-DSA-65'i
+	// etkin olmayan ya da farklı davranan bir liboqs ile düğüm açılır, imzalı ilk işlemi içeren
+	// blokta uyarı vermeden ağdan kopardı; ölçüm kipleri de aynı kütüphaneyle anlamsız olurdu.
+	if err := crypto.SelfTest(); err != nil {
+		slog.Error("imza kütüphanesi denetimden geçemedi; çalışılmıyor", "err", err, "liboqs", crypto.LibraryVersion(),
+			"ipucu", "liboqs ML-DSA-65 etkin olarak ve CI'da sınanan sürümle kurulmalı (.github/workflows/ci.yml, LIBOQS_VERSION)")
+		os.Exit(1)
+	}
+	slog.Info("imza kütüphanesi denetimi geçti", "algoritma", crypto.Algorithm, "liboqs", crypto.LibraryVersion())
 
 	if (*tlsCert == "") != (*tlsKey == "") {
 		slog.Error("tls-cert ve tls-key birlikte verilmeli")
