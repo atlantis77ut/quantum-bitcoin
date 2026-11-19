@@ -1,0 +1,15 @@
+{
+  "network": "testnet",
+  "timestamp": 1794096000,
+  "message": "Q-BTC testnet genesis 2026-11-08",
+  "bits": "1f00ffff",
+  "pow_limit_bits": "2000ffff",
+  "nonce": 168553,
+  "receiver": "QBTCd3a378937e0e43e9baf18c21b24dd539e398f1bf",
+  "coinbase_txid": "239630bf032f8b41f44ee5bac43d6b4026bf4acd9995fe6d9f13e5001c7789ed",
+  "merkle_root": "9329198a9da4c1a5ca1e84fd22da73c0d1ae5ad091cc8ea6ebf8f00996a2db45",
+  "hash": "00009ece2400256262b63f068e80aea26f7f6a5682a6688428783a01ace7b34c",
+  "sig_domain": "QBTC-SIG-v5|testnet|00009ece2400256262b63f068e80aea26f7f6a5682a6688428783a01ace7b34c",
+  "kat_txid": "f9ac5dab63d144232a87371c58c0795d67bfd7ba5ec573c2dcb0c708bb07765f",
+  "kat_signing_hash": "cbba7779b2f52f5f37173baccc5cfe7af8b35c0f9804dd7166bbc2a521a3cca3"
+}

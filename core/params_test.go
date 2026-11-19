@@ -9,8 +9,10 @@ import (
 	"quantum-bitcoin/crypto"
 )
 
-// Bağımsız Python uygulamasıyla (Go kodundan ayrı yazılmış) üretilmiş bilinen-yanıt
-// vektörleri. Params'taki sabitlerden ayrı tutulur: biri değişirse test kırmızıya döner.
+// Bağımsız Python uygulamasıyla (Go kodundan ayrı yazılmış; scripts/genesis_vektor.py) üretilmiş
+// bilinen-yanıt vektörleri. Params'taki sabitlerden ayrı tutulur: biri değişirse test kırmızıya
+// döner. Betiğin ürettiği dosyalar testdata altındadır (TestGenesisVectorFiles); buradaki
+// sabitler elle yazılır ve betikle birlikte yeniden üretilmez.
 var genesisVectors = []struct {
 	p        *Params
 	receiver string
@@ -101,7 +103,8 @@ func TestParamsBits(t *testing.T) {
 	}
 }
 
-// katTx Python vektöründeki sabit baytlı işlemdir (imzası geçerli olmak zorunda değil).
+// katTx bağımsız betikteki (scripts/genesis_vektor.py, KAT_* sabitleri) sabit baytlı işlemdir;
+// imzası geçerli olmak zorunda değildir.
 func katTx() Transaction {
 	pub := make([]byte, 32)
 	for i := range pub {

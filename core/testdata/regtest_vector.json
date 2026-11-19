@@ -1,0 +1,15 @@
+{
+  "network": "regtest",
+  "timestamp": 1794096000,
+  "message": "Q-BTC regtest genesis",
+  "bits": "200fffff",
+  "pow_limit_bits": "200fffff",
+  "nonce": 2,
+  "receiver": "QBTC4e6964f9e432957c47b419629131c28aea8f3e6e",
+  "coinbase_txid": "63a8d5fbe5f111b7aca94c3cac5210d99d4765b98924229404a3f9a57ddb554b",
+  "merkle_root": "82ab1a2dd38881206fbdbf76cc3c03a76694e3994d6a4c2241d3d3068f4d5d72",
+  "hash": "0c9f0d89a173a869e2293a062ddbf9c2a1c3c71c8dc4f7a0d2d8828ebcf6e79d",
+  "sig_domain": "QBTC-SIG-v5|regtest|0c9f0d89a173a869e2293a062ddbf9c2a1c3c71c8dc4f7a0d2d8828ebcf6e79d",
+  "kat_txid": "f9ac5dab63d144232a87371c58c0795d67bfd7ba5ec573c2dcb0c708bb07765f",
+  "kat_signing_hash": "be7b15ee7a9a1ddec37440b73248dae72b36f7537fd6827c2ab534af2d153449"
+}

@@ -16,7 +16,7 @@ Terimler:
 | Çok çekirdekli CPU kazıcısı | `core/minerworkers.go`, `-mine-threads` | Hazır. |
 | Hashrate ölçümü | `-bench-hashrate`, `scripts/gpu-olcum.sh`, [GPU-OLCUM.md](GPU-OLCUM.md) | Hazır. Rapor, başlangıç ve taban önerisini (`core.LaunchTargets`) içerir. Gerçek GPU'da hiç çalıştırılmadı. |
 | Mainnet parametreleri | `core/params.go` `MainnetParams` | Genesis boş, başlangıç hedefi ve taban yer tutucu. Düğüm mainnet'i reddeder (`TestMainnetRefusedBeforeLaunch`). |
-| Genesis vektörleri | `core/params_test.go` `genesisVectors` | Testnet ve regtest için elle yazılmış sabitler. |
+| Genesis vektörleri | `core/params_test.go` `genesisVectors`; `core/testdata/<ağ>_vector.json` | Testnet ve regtest için elle yazılmış sabitler ve bağımsız betiğin (§4.3) ürettiği dosyalar. |
 
 Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdaki eksikler kapanmadan lansman yapılamaz.
 
@@ -26,7 +26,7 @@ Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdak
 
 1. **Düğüm, bağlandığı liboqs'un doğru ML-DSA-65'i uyguladığını denetlemiyor.** liboqs sürümü yalnızca CI'da sabit (0.15.0). Depoda sabit bir bilinen-yanıt vektörü yok; testler yalnızca imzala-doğrula gidiş dönüşünü sınar. 0.12.0'dan önceki liboqs ML-DSA'nın taslak sürümünü uygular. Eski bir kurulumla derleyen katılımcı ilk 240 blokta uyumlu görünür (bu bloklarda imzalı işlem yoktur: coinbase olgunluğu 240), ilk harcamayı içeren blokta zincirden kopar. Lansman günü denetimlerinin hiçbiri bunu görmez. **Kapandı (feat/mldsa-kat):** düğüm her kipten önce `crypto.SelfTest` ile sabit bir vektörü denetler ve geçemezse çalışmaz. **Düzeltme:** bu maddedeki "eski bir kurulumla derleyen katılımcı" senaryosu depodaki liboqs-go sürümüyle oluşmaz (0.12.0'dan eski liboqs ile derleme başarısız olur; kaynaktan çıkarım, denenmedi); denetimin kapattığı gerçek durum ML-DSA-65'i etkin olmayan ya da farklı davranan bir liboqs'tur. Ayrıntı ve kalanlar: [MAINNET-ONCESI.md](MAINNET-ONCESI.md) madde 6.
 2. **Genesis'i kazıyan araç yok.** Tek iz `grindGenesis` test yardımcısıdır (tek çekirdek, 50 milyon nonce sınırı). Mainnet başlangıç hedefinde genesis yalnızca GPU kazıcısıyla ve dakikalar içinde bulunabilir.
-3. **Bağımsız vektörü üreten betik depoda yok.** Lansmanda mainnet vektörünü dakikalar içinde üretecek, önceden sınanmış bir betik gerekir.
+3. **Bağımsız vektörü üreten betik depoda yok.** Lansmanda mainnet vektörünü dakikalar içinde üretecek, önceden sınanmış bir betik gerekir. **Kapandı (feat/genesis-vector):** `scripts/genesis_vektor.py` (§4.3).
 4. **Lansman commit'i elle kaynak düzenlemesi ister.** Bugünkü hâliyle `params.go`, `params_test.go` (yeni vektör ve mainnet'i reddetme testi) ve `main.go` yardım metni elle değiştirilmelidir. Süre baskısı altında derleme ya da test hatası çıkarmaya açıktır.
 5. **6(b)'deki "T_g ≥ t_b" şartını sabitleyen test yok.**
 6. **Lansman adımlarını ve provayı anlatan çalıştırma kılavuzu yok.**
@@ -116,13 +116,13 @@ Davranış:
 
 Lansman commit'i Go kaynağına dokunmaz, iki küçük veri dosyasını değiştirir:
 
-- **`core/mainnet.json`** (ikiliye `go:embed` ile gömülür): genesis'in zaman damgası, mesajı, nonce'u, özeti ve Bitcoin başlıkları. Lansmandan önce boştur ve `MainnetParams` bugünkü gibi genesis'siz kalır. Çözümleme katıdır (bilinmeyen alan reddedilir); dolu ama bozuk bir dosyada ikili hiç başlamaz.
-- **`core/testdata/mainnet_vector.json`**: bağımsız betiğin ürettiği mainnet vektörü.
+- **`core/mainnet.json`** (ikiliye `go:embed` ile gömülür): genesis'in zaman damgası, mesajı, nonce'u, özeti ve Bitcoin başlıkları. Lansmandan önce boştur ve `MainnetParams` bugünkü gibi genesis'siz kalır. Çözümleme katıdır (bilinmeyen alan reddedilir); dolu ama bozuk bir dosyada ikili hiç başlamaz. Dosya bağımsız betiğin girdi biçimindedir (§4.3), betik onu doğrudan okur; bu yüzden ağ adını, başlangıç hedefini ve tabanı da taşır. Yükleyici ağ adının `mainnet`, hedeflerin `MainnetParams.Bits` ve `MainnetParams.PowLimitBits` olduğunu denetler. Bu iki değer lansman commit'iyle değil, günler önce olağan bir PR ile yazılır (§3.4); lansman commit'i yine yalnızca veridir.
+- **`core/testdata/mainnet_vector.json`**: bağımsız betiğin `core/mainnet.json`'dan ürettiği mainnet vektörü.
 
 Testler:
 - Mainnet genesis'i boşken bugünkü reddetme testi çalışır.
 - Doluyken lansman şartları sınanır: mesaj Bitcoin başlığının özetini içerir, başlıklar iş ispatını taşır, T_g ≥ t_b, taban kuralı tutar, vektör özetle eşleşir.
-- "Boş mu dolu mu" kararını yalnızca yükleyiciye bırakmamak için çapraz denetim: vektör dosyası varsa gömülü genesis dolu ve ona eşit olmak zorundadır (dolu bir dosyanın sessizce boş okunması testten geçemez).
+- "Boş mu dolu mu" kararını yalnızca yükleyiciye bırakmamak için çapraz denetim: vektör dosyası varsa gömülü genesis dolu ve ona eşit olmak zorundadır (dolu bir dosyanın sessizce boş okunması testten geçemez). Bu denetimin iskeleti depodadır (`TestGenesisVectorFiles`): genesis'i tanımlı her ağın vektör dosyası Go kodunun hesabıyla aynı olmalıdır, genesis'i tanımsız ağın vektör dosyası olamaz.
 - Dolu dal bugün çalışmadığından aynı denetimler testte geçici bir kopya üzerinde, kolay bir hedefle ve sahte arka uçla uçtan uca çalıştırılır.
 
 Korunanlar ve lansman sonrası:
@@ -134,10 +134,29 @@ Seçilmeyen seçenek: genesis'i çalışma anında bir dosyadan ya da bayraktan 
 
 ### 4.3 Bağımsız vektör betiği
 
-`scripts/genesis_vektor.py`, yalnızca Python standart kitaplığıyla:
-- Girdiden (ağ adı, mesaj, zaman damgası, hedef, nonce) alıcı adresini, coinbase kimliğini, Merkle kökünü ve blok özetini Go kodunu çağırmadan hesaplar; özetin hedefi karşıladığını denetler.
-- Mainnet için Bitcoin başlıklarını da kendisi doğrular ve T_g ≥ t_b şartını denetler.
-- Kendi içinde regtest ve testnet için beklenen değerleri taşır; CI'da bunları yeniden üretip karşılaştırır.
+**Kapandı (feat/genesis-vector).** `scripts/genesis_vektor.py`, yalnızca Python standart kitaplığıyla (3.8 ya da sonrası) ve Go kodunu çağırmadan:
+- Girdiden (ağ adı, mesaj, zaman damgası, başlangıç hedefi, zorluk tabanı, nonce) alıcı adresini, coinbase kimliğini, Merkle kökünü ve blok özetini hesaplar. İki hedefin kodlamasının kanonik olduğunu, başlangıç hedefinin tabandan ve tabanın 2^252 − 1'den kolay olmadığını (`Params.Validate` ile aynı şartlar) ve özetin hedefi karşıladığını denetler. Taban başlığa girmez; vektör onu da sabitlesin diye girdidedir.
+- Ağın imza alanını ve sabit baytlı bir bilinen-yanıt işleminin kimliği ile o alanda imzalanan mesajının özetini de hesaplar. Böylece vektör, mainnet imzalarının bağlanacağı alanı da sabitler.
+- Mainnet için iki Bitcoin başlığını kendisi doğrular: her biri kendi iş ispatını taşımalı, hedefleri gerçek Bitcoin zorluğu ölçeğinde olmalı, ikincisi ilkine bağlanmalıdır. Mesaj tam olarak `Q-BTC mainnet genesis | BTC <ilk başlığın özeti>` olmalı, T_g ≥ t_b tutmalı, taban tam olarak min(başlangıç hedefi · 2^16, 0x1d00ffff) olmalıdır (madde 6a'daki taban kuralı).
+
+Komutlar:
+- `denetle` vektör dosyalarını baştan hesaplar. Dosya eksiksiz ve betiğin üreteceği baytlarla aynı olmalıdır. Saate bakmaz; her yerde aynı sonucu verir.
+- `uret` girdi dosyasından vektörü üretir. Girdide bulunan türetilmiş alanları (kazım aracının yazdığı özet) hesaplananla karşılaştırır. T_g bu makinenin saatinden 300 sn'den (FTL) fazla ilerideyse durur. Var olan bir vektör dosyasının üzerine yazmaz; içerik aynıysa geçer.
+- Lansman günü ikinci makinede `uret`, `-o` ile commit'teki vektör dosyası gösterilerek yeniden çalıştırılır. Geçerse commit'teki vektör girdiden üretilenle aynıdır ve T_g o makinenin saatinden en çok 300 sn ileridedir; betik farkı saniye olarak yazdırır (§3.2'deki "ikinci makinenin kendi saati"). Daha sıkı bir eşik lansman betiğinin işidir.
+
+Depodaki bağ:
+- Regtest ve testnet vektörleri `core/testdata/<ağ>_vector.json` dosyalarındadır. CI'da betik bunları baştan hesaplar; `TestGenesisVectorFiles` aynı dosyaları Go kodunun hesabıyla karşılaştırır. Kodlama iki uygulamadan yalnızca birinde değişirse biri kırmızıya döner; lansmana kadar betik Go koduyla birlikte güncel kalır.
+- Betiğin kendi sınamaları (`scripts/genesis_vektor_test.py`, CI adımı): bozulmuş girdiler ve dosyalar, gerçek Bitcoin başlıklarıyla mainnet şartları, gerçek mainnet kurallarıyla hedef ve taban tabloları (taban, `LaunchTargets`'in üreteceği değerle karşılaştırılır), komut satırı.
+
+İlk tasarımdan farklar: beklenen değerler betiğin içinde değil vektör dosyalarındadır (Go testi aynı dosyaları okur; Go kaynağını düzenli ifadelerle çözümlemek gerekmez); girdi dosyası ağ adını, başlangıç hedefini ve tabanı da taşır (§4.2).
+
+Sınırlar:
+- Mainnet şartları, genesis hedefi gevşetilmiş bir kural kümesiyle sınanır: gerçek hedefte nonce aramak sınamada yapılamaz ve depoya mainnet görünümlü geçerli bir genesis konmaz. Gerçek hedefle deneme tam provadadır (§4.4). Komut satırı kuralları gevşetemez.
+- Betikteki Bitcoin zorluk tabanı (`BITCOIN_MAX_BITS`) 976600. bloğun (2026-11-19) zorluğunun 1/16'sıdır ve tam provada yenilenir. Kazım aracı (§4.1) kendi tabanını ayrıca taşır; ikisi provada birlikte denenir.
+- T_g − t_b için üst sınır yoktur: gerçek ama bayat bir Bitcoin bloğu betikten geçer. Betik farkı yazdırır; sınır, yerel saat ile başlık zamanlarının tutarlılığı olarak kazım aracı PR'ında belirlenir (§4.1) ve betiğe de eklenir.
+- Betik başlıkların en çok iş taşıyan Bitcoin zincirinde olduğunu bilemez. Özet herkesçe gezgin sitelerinden denetlenir; bir onay şartı bayat blok riskini azaltır, kaldırmaz.
+- Betik başlangıç hedefinin ölçülen hashrate'e karşılık geldiğini bilemez (girdide hashrate yoktur). Bugünkü yer tutucu değerlerle (başlangıç = taban = 0x1d00ffff) kazılmış bir genesis taban kuralına uyar ve betikten geçer. Bunu yakalayan, kazım aracının ölçüm raporuyla öz-tutarlılık denetimidir (§4.1).
+- Regtest ve testnette taban için başlangıç hedefiyle sıralama dışında kural yoktur; değerini ağın parametresine Go testi bağlar.
 
 ### 4.4 Prova
 
@@ -147,6 +166,7 @@ Seçilmeyen seçenek: genesis'i çalışma anında bir dosyadan ya da bayraktan 
   - Atılacak ayrı bir anahtarla ve farklı bir etiket adıyla imzalanır. Gerçek anahtarla imzalanmış geçerli ikinci bir "mainnet" etiketi hiçbir zaman üretilmez.
   - Veri dizini açıkça verilir ve provadan sonra silinir (kalan bir prova zinciri lansman günü düğümün açılmasını engeller).
   - İtme adımı özel bir deneme deposuna karşı denenir. Bugün `main` dalında koruma kuralı yoktur; sonradan eklenirse lansman itmesi yeniden denenmelidir.
+  - Provadan önce betikteki ve araçtaki Bitcoin zorluk tabanı o günün zorluğuna göre yenilenir (§4.3); prova güncel başlıkların iki uygulamadan da geçtiğini gösterir.
 - Ayrı bir "prova ağı" eklenmez.
 
 ## 5. PR sırası
@@ -154,7 +174,7 @@ Seçilmeyen seçenek: genesis'i çalışma anında bir dosyadan ya da bayraktan 
 Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 
 1. **ML-DSA-65 bilinen-yanıt denetimi:** sabit vektör testte ve düğüm açılışında (kriptografi; lansman araçlarından bağımsız ve en acil olanı). **Kapandı (feat/mldsa-kat).**
-2. Bağımsız vektör betiği ve CI adımı. (Uzlaşma kodu değişmez.)
+2. Bağımsız vektör betiği ve CI adımı. (Uzlaşma kodu değişmez.) **Kapandı (feat/genesis-vector).**
 3. Gömülü mainnet genesis dosyası ve lansman şartı testleri (`core/params.go`).
 4. Genesis kazım aracı, ön-uçuş kipi ve lansman kaydı.
 5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası.
