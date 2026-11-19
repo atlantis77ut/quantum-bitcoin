@@ -185,24 +185,35 @@ func TestSignatureBoundToNetwork(t *testing.T) {
 	}
 }
 
-// Genesis'i tanımsız mainnet ne başlatılabilir ne de onun için imza atılabilir/doğrulanabilir.
-func TestMainnetRefusedBeforeLaunch(t *testing.T) {
-	if _, err := NewBlockchain(t.TempDir(), MainnetParams); !errors.Is(err, ErrNoGenesis) {
-		t.Fatalf("NewBlockchain: %v", err)
-	}
-	if _, err := NewGenesisBlock(MainnetParams); !errors.Is(err, ErrNoGenesis) {
-		t.Fatalf("NewGenesisBlock: %v", err)
+// Genesis'i tanımsız ağ ne başlatılabilir ne de onun için imza atılabilir/doğrulanabilir. Test
+// mainnet'in genesis'siz bir kopyasıyla çalışır: lansman dosyası (mainnet.json) dolduktan sonra da
+// aynı kalır. Dosya boşken gerçek MainnetParams da aynı şekilde reddedilir (TestMainnetLaunchFile
+// dosya ile MainnetParams'ın tutarlılığını denetler).
+func TestNetworkWithoutGenesisRefused(t *testing.T) {
+	bare := withEmission(&Params{Name: "mainnet", Bits: MainnetParams.Bits, PowLimitBits: MainnetParams.PowLimitBits,
+		TargetSpacing: MainnetParams.TargetSpacing})
+	networks := []*Params{bare}
+	if MainnetParams.GenesisHash == "" {
+		networks = append(networks, MainnetParams)
 	}
 	alice, bob := newKey(t), newKey(t)
-	tx := Transaction{Receiver: bob.Address, Amount: Coin, ExpiryHeight: testExpiry, Nonce: 1}
-	if err := tx.Sign(alice, MainnetParams); !errors.Is(err, ErrNoGenesis) {
-		t.Fatalf("Sign: %v", err)
-	}
-	if err := tx.Sign(alice, RegtestParams); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.VerifyStateless(MainnetParams); !errors.Is(err, ErrNoGenesis) {
-		t.Fatalf("VerifyStateless: %v", err)
+	for _, p := range networks {
+		if _, err := NewBlockchain(t.TempDir(), p); !errors.Is(err, ErrNoGenesis) {
+			t.Fatalf("NewBlockchain: %v", err)
+		}
+		if _, err := NewGenesisBlock(p); !errors.Is(err, ErrNoGenesis) {
+			t.Fatalf("NewGenesisBlock: %v", err)
+		}
+		tx := Transaction{Receiver: bob.Address, Amount: Coin, ExpiryHeight: testExpiry, Nonce: 1}
+		if err := tx.Sign(alice, p); !errors.Is(err, ErrNoGenesis) {
+			t.Fatalf("Sign: %v", err)
+		}
+		if err := tx.Sign(alice, RegtestParams); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.VerifyStateless(p); !errors.Is(err, ErrNoGenesis) {
+			t.Fatalf("VerifyStateless: %v", err)
+		}
 	}
 	if _, err := ParamsByName("yoknet"); err == nil {
 		t.Fatal("bilinmeyen ağ adı kabul edildi")

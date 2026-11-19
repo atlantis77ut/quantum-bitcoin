@@ -11,6 +11,7 @@ satırı kuralları gevşetemez; bunu da buradaki bir sınama gösterir.
 import importlib.util
 import json
 import pathlib
+import struct
 import subprocess
 import sys
 import tempfile
@@ -151,7 +152,7 @@ class VectorFileTest(unittest.TestCase):
             with self.assertRaisesRegex(gv.VectorError, "biçimde değil", msg=name):
                 gv.check(changed)
         with self.assertRaisesRegex(gv.VectorError, "JSON çözülemedi"):
-            gv.check("﻿" + text)
+            gv.check(chr(0xFEFF) + text)
 
     def test_changed_input_misses_target(self):
         doc = json.loads(vector_text("testnet"))
@@ -252,6 +253,23 @@ class MainnetRulesTest(unittest.TestCase):
         loose = gv.decode_bits(0x1D00FFFF, "sınama")
         self.assertEqual(gv.bitcoin_header(BTC_0, loose, "sınama").hash, BTC_0_HASH)
         self.assertEqual(gv.bitcoin_header(BTC_1, loose, "sınama").prev, BTC_0_HASH)
+
+    def test_non_canonical_header_bits(self):
+        # Kanonik olmayan nBits iş ispatından bağımsız reddedilir. İki sahte başlık kendi hedefini
+        # karşılar; 0x20007fff ile 0x1f7fff00 aynı hedeftir, yalnızca ikincisi kanoniktir.
+        def fake_header(bits):
+            target = gv.compact_to_target(bits)
+            for nonce in range(1 << 20):
+                raw = bytes(72) + struct.pack("<II", bits, nonce)
+                if int.from_bytes(gv.sha256(gv.sha256(raw)), "little") <= target:
+                    return raw.hex()
+            raise AssertionError("nonce bulunamadı")
+
+        self.assertEqual(gv.compact_to_target(0x20007FFF), gv.compact_to_target(0x1F7FFF00))
+        wide = 1 << 255
+        self.assertEqual(gv.bitcoin_header(fake_header(0x1F7FFF00), wide, "sınama").time, 0)
+        with self.assertRaisesRegex(gv.VectorError, "kanonik"):
+            gv.bitcoin_header(fake_header(0x20007FFF), wide, "sınama")
 
     def test_valid(self):
         doc, vector = mined(mainnet_input(), EASY_MAINNET)
@@ -400,6 +418,39 @@ class MainnetRulesTest(unittest.TestCase):
         gv.bitcoin_header(BTC_976600, target, "sınama")
         with self.assertRaisesRegex(gv.VectorError, "gerçek Bitcoin zorluğu"):
             gv.bitcoin_header(BTC_976600, target - 1, "sınama")
+
+
+class LaunchExampleTest(unittest.TestCase):
+    """core/testdata/launch: Go'daki lansman dosyası yükleyicisi (core/launch.go) ile bu betiğin ortak
+    sınama verisi. Lansman dosyasını Go testi de baştan kurar; vektörü bu betik üretmiştir."""
+
+    def read(self, name):
+        path = ROOT / "core" / "testdata" / "launch" / name
+        return path.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    def test_vector_is_produced_from_launch_file(self):
+        launch_text, vector_text = self.read("easy_mainnet.json"), self.read("easy_mainnet_vector.json")
+        launch = json.loads(launch_text)
+        vector, produced = gv.produce(launch_text, launch["timestamp"], EASY_MAINNET)
+        self.assertEqual(produced, vector_text)
+        self.assertEqual(gv.check(vector_text, EASY_MAINNET), vector)
+        self.assertEqual(vector["hash"], launch["hash"])
+        # Lansman dosyası bu sınamanın baştan kurduğu girdiyle aynıdır (aynı ilk nonce, aynı özet);
+        # alan sırası Go'daki launchFile sırasıdır ve yazımı betiğin yazımıdır.
+        doc, mined_vector = mined(mainnet_input(), EASY_MAINNET)
+        self.assertEqual(mined_vector, vector)
+        rebuilt = {"network": doc["network"], "timestamp": doc["timestamp"], "message": doc["message"],
+                   "bits": doc["bits"], "pow_limit_bits": doc["pow_limit_bits"], "nonce": doc["nonce"],
+                   "hash": mined_vector["hash"], "bitcoin_headers": doc["bitcoin_headers"]}
+        self.assertEqual(gv.serialize(rebuilt), launch_text)
+
+    def test_real_rules_reject_the_example(self):
+        # Örnek mainnet biçimlidir ama gerçek kurallarla geçersizdir: tabanı gerçek tavandan kolaydır.
+        for name in ("easy_mainnet.json", "easy_mainnet_vector.json"):
+            with self.assertRaisesRegex(gv.VectorError, "^pow_limit_bits: taban 200fffff mainnet", msg=name):
+                gv.produce(self.read(name), BTC_976600_TIME + 900)
+        with self.assertRaisesRegex(gv.VectorError, "^pow_limit_bits: taban 200fffff mainnet"):
+            gv.check(self.read("easy_mainnet_vector.json"))
 
 
 class ProduceTest(unittest.TestCase):

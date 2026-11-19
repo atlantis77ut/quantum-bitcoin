@@ -15,7 +15,7 @@ Terimler:
 | GPU kazıcısı (OpenCL 1.2) | `gpu/`, `-tags opencl -mine-gpu` | Hazır. Bulduğu her nonce CPU'da yeniden doğrulanır. CI'da yalnızca pocl ile (CPU üzerinde) doğruluğu sınanır. Çekirdek depodaki üreteçle (`gpu/gen/genkernel.py`) üretilir. |
 | Çok çekirdekli CPU kazıcısı | `core/minerworkers.go`, `-mine-threads` | Hazır. |
 | Hashrate ölçümü | `-bench-hashrate`, `scripts/gpu-olcum.sh`, [GPU-OLCUM.md](GPU-OLCUM.md) | Hazır. Rapor, başlangıç ve taban önerisini (`core.LaunchTargets`) içerir. Gerçek GPU'da hiç çalıştırılmadı. |
-| Mainnet parametreleri | `core/params.go` `MainnetParams` | Genesis boş, başlangıç hedefi ve taban yer tutucu. Düğüm mainnet'i reddeder (`TestMainnetRefusedBeforeLaunch`). |
+| Mainnet parametreleri | `core/params.go` `MainnetParams`; `core/mainnet.json`, `core/launch.go` | Genesis gömülü lansman dosyasından gelir; dosya bugün boş, başlangıç hedefi ve taban yer tutucu. Düğüm genesis'siz mainnet'i reddeder (`TestNetworkWithoutGenesisRefused`, `TestMainnetLaunchFile`). |
 | Genesis vektörleri | `core/params_test.go` `genesisVectors`; `core/testdata/<ağ>_vector.json` | Testnet ve regtest için elle yazılmış sabitler ve bağımsız betiğin (§4.3) ürettiği dosyalar. |
 
 Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdaki eksikler kapanmadan lansman yapılamaz.
@@ -27,8 +27,8 @@ Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdak
 1. **Düğüm, bağlandığı liboqs'un doğru ML-DSA-65'i uyguladığını denetlemiyor.** liboqs sürümü yalnızca CI'da sabit (0.15.0). Depoda sabit bir bilinen-yanıt vektörü yok; testler yalnızca imzala-doğrula gidiş dönüşünü sınar. 0.12.0'dan önceki liboqs ML-DSA'nın taslak sürümünü uygular. Eski bir kurulumla derleyen katılımcı ilk 240 blokta uyumlu görünür (bu bloklarda imzalı işlem yoktur: coinbase olgunluğu 240), ilk harcamayı içeren blokta zincirden kopar. Lansman günü denetimlerinin hiçbiri bunu görmez. **Kapandı (feat/mldsa-kat):** düğüm her kipten önce `crypto.SelfTest` ile sabit bir vektörü denetler ve geçemezse çalışmaz. **Düzeltme:** bu maddedeki "eski bir kurulumla derleyen katılımcı" senaryosu depodaki liboqs-go sürümüyle oluşmaz (0.12.0'dan eski liboqs ile derleme başarısız olur; kaynaktan çıkarım, denenmedi); denetimin kapattığı gerçek durum ML-DSA-65'i etkin olmayan ya da farklı davranan bir liboqs'tur. Ayrıntı ve kalanlar: [MAINNET-ONCESI.md](MAINNET-ONCESI.md) madde 6.
 2. **Genesis'i kazıyan araç yok.** Tek iz `grindGenesis` test yardımcısıdır (tek çekirdek, 50 milyon nonce sınırı). Mainnet başlangıç hedefinde genesis yalnızca GPU kazıcısıyla ve dakikalar içinde bulunabilir.
 3. **Bağımsız vektörü üreten betik depoda yok.** Lansmanda mainnet vektörünü dakikalar içinde üretecek, önceden sınanmış bir betik gerekir. **Kapandı (feat/genesis-vector):** `scripts/genesis_vektor.py` (§4.3).
-4. **Lansman commit'i elle kaynak düzenlemesi ister.** Bugünkü hâliyle `params.go`, `params_test.go` (yeni vektör ve mainnet'i reddetme testi) ve `main.go` yardım metni elle değiştirilmelidir. Süre baskısı altında derleme ya da test hatası çıkarmaya açıktır.
-5. **6(b)'deki "T_g ≥ t_b" şartını sabitleyen test yok.**
+4. **Lansman commit'i elle kaynak düzenlemesi ister.** Bugünkü hâliyle `params.go`, `params_test.go` (yeni vektör ve mainnet'i reddetme testi) ve `main.go` yardım metni elle değiştirilmelidir. Süre baskısı altında derleme ya da test hatası çıkarmaya açıktır. **Kapandı (feat/mainnet-launch-file):** lansman commit'i yalnızca iki veri dosyasıdır (§4.2).
+5. **6(b)'deki "T_g ≥ t_b" şartını sabitleyen test yok.** **Kapandı (feat/mainnet-launch-file):** şartı lansman dosyası yükleyicisi ve bağımsız betik denetler; ikisinin testleri de bozulmuş hâlini reddeder (§4.2, §4.3).
 6. **Lansman adımlarını ve provayı anlatan çalıştırma kılavuzu yok.**
 7. **README ve LICENSE yok.** Lisansı olmayan kamuya açık depo hukuken açık kaynak sayılmaz. Bu yüzden 6(a)'daki "açık kaynak kazıcı yayımlanır" şartı lisans seçilmeden karşılanmış olmaz.
 
@@ -80,7 +80,7 @@ Yayımlanmış bir genesis geri alınamaz; yeniden lansman "adil lansman" iddias
 
 Lansmandan günler önce:
 1. Lansman donanımında GPU ölçümü yapılır, rapor yayımlanır.
-2. Başlangıç ve taban hedefi rapordan hesaplanıp olağan bir PR ile `MainnetParams`'a yazılır. Bunlar genesis mesajına bağlı değildir; önceden açıklanmaları lansman günü girdisini azaltır.
+2. Başlangıç ve taban hedefi rapordan hesaplanıp olağan bir PR ile `MainnetParams`'a yazılır; aynı PR `core/params.go`'daki `mainnetTargetsChosen` işaretini true yapar. Bunlar genesis mesajına bağlı değildir; önceden açıklanmaları lansman günü girdisini azaltır. İşaret false iken dolu bir lansman dosyası reddedilir: bu PR unutulursa dolu dosyayla derlenen ikili başlamaz ve testler kırmızıya döner.
 3. Tohum listesi, imza anahtarı, lisans ve README tamamlanır. Lansman eşiği ve iptal ölçütleri (§7 madde 3) duyurulur.
 4. Bütün akış iki makinede, ayrı bir klonda en az bir kez prova edilir (§4.4).
 
@@ -114,16 +114,25 @@ Davranış:
 
 ### 4.2 Veri dosyaları: lansman commit'i yalnızca veri olsun
 
-Lansman commit'i Go kaynağına dokunmaz, iki küçük veri dosyasını değiştirir:
+**Kapandı (feat/mainnet-launch-file; `core/launch.go`).** Lansman commit'i Go kaynağına dokunmaz, iki küçük veri dosyasını değiştirir:
 
-- **`core/mainnet.json`** (ikiliye `go:embed` ile gömülür): genesis'in zaman damgası, mesajı, nonce'u, özeti ve Bitcoin başlıkları. Lansmandan önce boştur ve `MainnetParams` bugünkü gibi genesis'siz kalır. Çözümleme katıdır (bilinmeyen alan reddedilir); dolu ama bozuk bir dosyada ikili hiç başlamaz. Dosya bağımsız betiğin girdi biçimindedir (§4.3), betik onu doğrudan okur; bu yüzden ağ adını, başlangıç hedefini ve tabanı da taşır. Yükleyici ağ adının `mainnet`, hedeflerin `MainnetParams.Bits` ve `MainnetParams.PowLimitBits` olduğunu denetler. Bu iki değer lansman commit'iyle değil, günler önce olağan bir PR ile yazılır (§3.4); lansman commit'i yine yalnızca veridir.
+- **`core/mainnet.json`** (ikiliye `go:embed` ile gömülür): ağ adı, genesis'in zaman damgası, mesajı, başlangıç hedefi, taban, nonce'u, özeti ve iki Bitcoin başlığı. Dosya bağımsız betiğin girdi biçimindedir (§4.3); betik onu doğrudan okur.
+  - Lansmandan önce dosya boş bir nesnedir (`{}`) ve `MainnetParams` genesis'siz kalır.
+  - Doluysa eksiksiz ve kanonik olmalıdır: çözülen içerik yeniden kodlandığında dosyayla bayt bayt aynı çıkmalıdır. Bilinmeyen ya da eksik alan, yinelenen anahtar, kesirli sayı ve artık veri böylece reddedilir.
+  - Dolu dosya lansman şartlarını paket başlatılırken denetler; tutmuyorsa ikili hiçbir ağda başlamaz (panik). Şartlar: ağ adı `mainnet`; hedefler seçilmiştir (`mainnetTargetsChosen`, yer tutucu değildir); dosyadaki hedefler `MainnetParams.Bits` ve `MainnetParams.PowLimitBits`; taban kuralı; iki Bitcoin başlığının iş ispatı, zorluk ölçeği ve bağı; mesaj biçimi; T_g ≥ t_b; alanlardan kurulan genesis'in özeti dosyadaki özettir ve hedefi karşılar.
+  - Yükleyici saate bakmaz: paket başlatılırken çalışır ve her makinede aynı sonucu vermelidir. Gelecekteki bir T_g'yi `TestMainnetLaunchFile` ve betiğin `uret` komutu yakalar (ikisi de lansman commit'inin CI'ında çalışır).
+  - Başlangıç hedefi ve taban lansman commit'iyle değil, günler önce olağan bir PR ile `MainnetParams`'a yazılır (§3.4); lansman commit'i yine yalnızca veridir.
 - **`core/testdata/mainnet_vector.json`**: bağımsız betiğin `core/mainnet.json`'dan ürettiği mainnet vektörü.
 
+Elle düzenlenen üç yer veriye bağlandı: `MainnetParams` genesis'i gömülü dosyadan alır; reddetme testi genesis'siz bir kopyayla çalışır (`TestNetworkWithoutGenesisRefused`); `-network` yardım metni mainnet'in durumunu izler. Varsayılan ağ lansmandan sonra da testnet kalır.
+
 Testler:
-- Mainnet genesis'i boşken bugünkü reddetme testi çalışır.
-- Doluyken lansman şartları sınanır: mesaj Bitcoin başlığının özetini içerir, başlıklar iş ispatını taşır, T_g ≥ t_b, taban kuralı tutar, vektör özetle eşleşir.
-- "Boş mu dolu mu" kararını yalnızca yükleyiciye bırakmamak için çapraz denetim: vektör dosyası varsa gömülü genesis dolu ve ona eşit olmak zorundadır (dolu bir dosyanın sessizce boş okunması testten geçemez). Bu denetimin iskeleti depodadır (`TestGenesisVectorFiles`): genesis'i tanımlı her ağın vektör dosyası Go kodunun hesabıyla aynı olmalıdır, genesis'i tanımsız ağın vektör dosyası olamaz.
-- Dolu dal bugün çalışmadığından aynı denetimler testte geçici bir kopya üzerinde, kolay bir hedefle ve sahte arka uçla uçtan uca çalıştırılır.
+- `TestMainnetLaunchFile`: gömülü dosya ile `MainnetParams` tutarlıdır. Boşken mainnet genesis'sizdir; doluyken şartlar gerçek kurallarla yeniden denetlenir. Taban kuralı genesis'ten bağımsız, her koşuda denetlenir: hedefler günler önce yazıldığında da tutmalıdır.
+- `TestGenesisVectorFiles`: "boş mu dolu mu" kararı yalnızca yükleyiciye bırakılmaz. Genesis'i tanımlı her ağın vektör dosyası Go kodunun hesabıyla (mainnet'te Bitcoin alanları dahil) aynı olmalıdır; genesis'i tanımsız ağın vektör dosyası olamaz. Lansman commit'inde iki dosyadan biri gelip öbürü gelmezse ya da ikisi tutmazsa test kırmızıya döner.
+- `TestLaunchEasyTarget`, `TestLaunchRejected`, `TestParseLaunchFile`, `TestParseBitcoinHeader`, `TestLaunchFloorRule`: dolu dal bugün gömülü dosyayla çalışmadığından aynı yol kolay hedefli bir örnekle uçtan uca sınanır (gerçek kurallar, yalnızca tavan gevşetilmiş ve hedefler seçilmiş sayılmış). Her şartın bozulmuş hâli reddedilir; her örnek bir şartı hedefler ve hata metninin o şartın denetiminden geldiği denetlenir (mesajı ya da zamanı değişen örnekler yeniden kazılır, özetleri tutar), yani bir şartın denetimi kaldırılırsa test kırmızıya döner.
+- `core/testdata/launch` altındaki iki dosya Go yükleyicisi ile betiğin ortak sınama verisidir: lansman dosyasını iki taraf da baştan kurar, vektörünü betik üretmiştir, Go testi vektörü kendi hesabıyla karşılaştırır. Lansman günü akışı da budur. Örnek mainnet biçimlidir ama gerçek kurallarla geçersizdir (tabanı gerçek tavandan kolaydır): iki uygulama da onu gerçek kurallarla reddeder, bunu da testler gösterir.
+- CI adımı: lansman dosyası doluysa vektör var olmalı ve betiğin o dosyadan ürettiğiyle aynı olmalıdır; boşsa mainnet vektörü olamaz.
+- Kazım aracının sahte arka uçla uçtan uca testi araç PR'ındadır (§4.1).
 
 Korunanlar ve lansman sonrası:
 - Testnet ve regtest vektörleri bugünkü gibi elle yazılmış Go sabitleri olarak kalır. Üreteç betiğiyle veri dosyasını birlikte yeniden üreten bir PR onları sessizce değiştiremez.
@@ -152,10 +161,10 @@ Depodaki bağ:
 
 Sınırlar:
 - Mainnet şartları, genesis hedefi gevşetilmiş bir kural kümesiyle sınanır: gerçek hedefte nonce aramak sınamada yapılamaz ve depoya mainnet görünümlü geçerli bir genesis konmaz. Gerçek hedefle deneme tam provadadır (§4.4). Komut satırı kuralları gevşetemez.
-- Betikteki Bitcoin zorluk tabanı (`BITCOIN_MAX_BITS`) 976600. bloğun (2026-11-19) zorluğunun 1/16'sıdır ve tam provada yenilenir. Kazım aracı (§4.1) kendi tabanını ayrıca taşır; ikisi provada birlikte denenir.
+- Betikteki Bitcoin zorluk tabanı (`BITCOIN_MAX_BITS`) 976600. bloğun (2026-11-19) zorluğunun 1/16'sıdır ve tam provada yenilenir. Go tarafındaki karşılığı `core/launch.go`'daki `launchBitcoinMaxBits`'tir; bugün yalnızca lansman dosyası yükleyicisi kullanır, kazım aracının (§4.1) yazdığı dosya da aynı yükleyiciden geçecektir. İki sabit provada birlikte yenilenir ve denenir.
 - T_g − t_b için üst sınır yoktur: gerçek ama bayat bir Bitcoin bloğu betikten geçer. Betik farkı yazdırır; sınır, yerel saat ile başlık zamanlarının tutarlılığı olarak kazım aracı PR'ında belirlenir (§4.1) ve betiğe de eklenir.
 - Betik başlıkların en çok iş taşıyan Bitcoin zincirinde olduğunu bilemez. Özet herkesçe gezgin sitelerinden denetlenir; bir onay şartı bayat blok riskini azaltır, kaldırmaz.
-- Betik başlangıç hedefinin ölçülen hashrate'e karşılık geldiğini bilemez (girdide hashrate yoktur). Bugünkü yer tutucu değerlerle (başlangıç = taban = 0x1d00ffff) kazılmış bir genesis taban kuralına uyar ve betikten geçer. Bunu yakalayan, kazım aracının ölçüm raporuyla öz-tutarlılık denetimidir (§4.1).
+- Betik başlangıç hedefinin ölçülen hashrate'e karşılık geldiğini bilemez (girdide hashrate yoktur). Bugünkü yer tutucu değerlerle (başlangıç = taban = 0x1d00ffff) kazılmış bir genesis taban kuralına uyar ve betikten geçer. Go tarafında onu `mainnetTargetsChosen` işareti durdurur (§4.2): hedefler seçilip işaret true yapılmadan dolu lansman dosyası reddedilir. Seçilen hedeflerin ölçülen hashrate'e karşılık geldiğini denetleyecek olan ise kazım aracının ölçüm raporuyla öz-tutarlılık denetimidir (§4.1).
 - Regtest ve testnette taban için başlangıç hedefiyle sıralama dışında kural yoktur; değerini ağın parametresine Go testi bağlar.
 
 ### 4.4 Prova
@@ -175,7 +184,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 
 1. **ML-DSA-65 bilinen-yanıt denetimi:** sabit vektör testte ve düğüm açılışında (kriptografi; lansman araçlarından bağımsız ve en acil olanı). **Kapandı (feat/mldsa-kat).**
 2. Bağımsız vektör betiği ve CI adımı. (Uzlaşma kodu değişmez.) **Kapandı (feat/genesis-vector).**
-3. Gömülü mainnet genesis dosyası ve lansman şartı testleri (`core/params.go`).
+3. Gömülü mainnet genesis dosyası ve lansman şartı testleri (`core/params.go`). **Kapandı (feat/mainnet-launch-file).**
 4. Genesis kazım aracı, ön-uçuş kipi ve lansman kaydı.
 5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası.
 6. README ve LICENSE (lisans kararından sonra).

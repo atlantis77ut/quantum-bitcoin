@@ -29,7 +29,7 @@ func main() {
 	port := flag.String("port", "", "P2P dinleme adresi (boşsa ağın varsayılan portu: mainnet :8001, testnet :18001, regtest :28001)")
 	apiPort := flag.String("api", ":9001", "Borsa API portu")
 	dbPath := flag.String("db", "", "LevelDB klasör yolu (boşsa qbtc_<ağ>_db)")
-	netName := flag.String("network", "testnet", "Ağ: testnet, regtest (mainnet genesis'i lansmanda tanımlanacak)")
+	netName := flag.String("network", "testnet", networkHelp(core.MainnetParams.GenesisHash != ""))
 	peerAddr := flag.String("peer", "", "Bağlanılacak diğer düğümlerin adresleri (virgülle ayrılmış; boşsa ağın gömülü başlangıç listesi)")
 	discover := flag.Bool("discover", true, "Eş adreslerini güvenilen eşlerden öğrenir ve getaddr isteklerini yanıtlar (false: ikisi de kapalı, borsa profili)")
 	tlsCert := flag.String("tls-cert", "", "API için TLS sertifika dosyası (boşsa HTTP)")
@@ -348,4 +348,14 @@ func backendClose(b gpu.Backend) {
 	if b != nil {
 		b.Close()
 	}
+}
+
+// networkHelp -network bayrağının yardım metnidir. Mainnet'in seçilebilir olup olmadığı gömülü
+// lansman dosyasından gelir (core/mainnet.json): lansman commit'i bu metne dokunmaz. Varsayılan ağ
+// lansmandan sonra da testnet kalır; mainnet açıkça seçilir.
+func networkHelp(mainnetLaunched bool) string {
+	if mainnetLaunched {
+		return "Ağ: mainnet, testnet, regtest"
+	}
+	return "Ağ: testnet, regtest (mainnet genesis'i lansmanda tanımlanacak)"
 }

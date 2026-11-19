@@ -77,6 +77,15 @@ jobs:
           # karşılaştırır; burada betik onları baştan hesaplar. İkisi birlikte: Go = dosya = betik.
           python3 -I scripts/genesis_vektor.py denetle core/testdata/*_vector.json
           python3 -I scripts/genesis_vektor_test.py
+          # Lansman commit'i yalnızca core/mainnet.json ile core/testdata/mainnet_vector.json
+          # dosyalarını getirir. Lansman dosyası doluysa vektör var olmalı ve betiğin o dosyadan
+          # ürettiğiyle aynı olmalıdır (uret var olan dosyanın üzerine yazmaz, karşılaştırır).
+          if [ "$(tr -d ' \t\r\n' < core/mainnet.json)" != "{}" ]; then
+            test -f core/testdata/mainnet_vector.json
+            python3 -I scripts/genesis_vektor.py uret core/mainnet.json -o core/testdata/mainnet_vector.json
+          else
+            test ! -e core/testdata/mainnet_vector.json
+          fi
 
       - name: Açılış denetimi uçtan uca (ML-DSA-65'i etkin olmayan liboqs ile düğüm açılmaz)
         run: |
