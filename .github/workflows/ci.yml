@@ -71,6 +71,13 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
 
+      - name: Genesis vektörleri (Go kodunu çağırmayan Python hesabı; betiğin kendi sınamaları)
+        run: |
+          # Yukarıdaki Go testi (TestGenesisVectorFiles) aynı dosyaları Go kodunun hesabıyla
+          # karşılaştırır; burada betik onları baştan hesaplar. İkisi birlikte: Go = dosya = betik.
+          python3 -I scripts/genesis_vektor.py denetle core/testdata/*_vector.json
+          python3 -I scripts/genesis_vektor_test.py
+
       - name: Açılış denetimi uçtan uca (ML-DSA-65'i etkin olmayan liboqs ile düğüm açılmaz)
         run: |
           export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
