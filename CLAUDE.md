@@ -43,7 +43,24 @@ Not: şema sürümü değiştiğinde (şu an "10") eski veri dizinleri açılmaz
 <!-- model-routing:start -->
 ## Çalışma düzeni: model ve alt ajan yönlendirmesi
 
-Ana oturum Sonnet'tir; Opus danışmandır (`advisorModel`). Ana bağlamı sade tut: ham arama sonuçları, uzun test çıktıları ve büyük dosyalar ana bağlama girmez.
+Ana oturumun modeli ve effort'u göreve göre aşağıdaki tablodan seçilir; Opus danışmandır (`advisorModel`). Ana bağlamı sade tut: ham arama sonuçları, uzun test çıktıları ve büyük dosyalar ana bağlama girmez.
+
+**Model ve effort seçimi (her yeni işin başında, ilk araç çağrısından önce):**
+
+| Kademe | İş türü | Model / effort |
+|---|---|---|
+| K3 | Uzlaşma kuralı tasarımı/değişikliği, kriptografi/imza, para/bakiye/ödül, genesis/lansman kararı, `devils-advocate` gerektiren karar, iki denemede çözülemeyen hata | Fable 5.2 / max |
+| K2 | `core/` veya `network/` içinde özellik ya da hata düzeltmesi (test + `guvenlik-denetimi` gerektiren), çok dosyalı tasarım | Opus 5.5 / high |
+| K1 | Uzlaşma dışı kod: API, CLI, CI, refactor, test ekleme | Sonnet 5.5 / medium |
+| K0 | Soru-cevap, doküman, commit/PR, tek dosyalık küçük düzenleme, arama | Sonnet 5.5 / low |
+
+1. İşin kademesini belirle (şüphede üst kademe). Oturumun modelini ve effort'unu `get_session` ("self") ile oku.
+2. Oturum kendi modelini/effort'unu değiştiremez; geçişi kullanıcı model menüsünden yapar. Bu yüzden:
+   - Oturum gerekenin **altındaysa** (K3/K2 işinde daha zayıf model ya da daha düşük effort): işe başlama, tek satırla "Bu iş K<n>: <model> / <effort> seç" yaz ve dur.
+   - **Üstündeyse**: işe devam et, ilk mesajda tek satırla daha ucuz ayarı öner.
+   - Eşitse bir şey yazma.
+3. Model/effort geçişini iş ortasında isteme: geçiş prompt önbelleğini (araç, system ve mesaj öneki) geçersiz kılar. Yalnızca iş başında ya da iki iş arasında.
+4. Alt ajanlar ve başlatılan oturumlar için bu tablo açık talimattır: `Agent` çağrısında `model`/`effort`, `start_session`'da model ve effort tablodaki kademeye göre verilir. Ajan dosyasında sabit model varsa (`kod-arama`, `test-kosucu` Haiku; `guvenlik-denetimi` Opus) o kalır, effort'u tablo belirler.
 
 **Opus'a danış (advisor):**
 - Çok adımlı bir işe başlamadan önce planı danış ve plan onaylanmadan uygulamaya geçme. Planı doğru kurmak en değerli danışmadır; yanlış plan sonraki her adımı boşa çıkarır.

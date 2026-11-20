@@ -11,7 +11,8 @@ import (
 )
 
 // Params bir ağın uzlaşma kimliğidir: ad, başlangıç hedefi ve genesis bloğu.
-// Genesis değerleri sabittir ve GenesisHash testlerde bağımsız (Python) vektörlerle sabitlenir.
+// Genesis değerleri sabittir ve GenesisHash testlerde bağımsız (Python) vektörlerle sabitlenir
+// (scripts/genesis_vektor.py, testdata/<ağ>_vector.json).
 type Params struct {
 	Name             string
 	Bits             uint32 // başlangıç hedefi: 1. ve 2. blok bunu taşır, ASERT çapasıdır
@@ -167,18 +168,28 @@ func (p *Params) powLimitTarget() *big.Int {
 // ASERT kırpılınca açığı silmez, biriktirir.
 const mainnetMaxPowLimitBits = 0x1d00ffff
 
+// mainnetTargetsChosen MainnetParams'taki başlangıç hedefi ile tabanın ölçülen hashrate'ten seçilip
+// yazıldığını söyler; lansmandan günler önceki hedef değişikliğiyle birlikte true yapılır
+// (docs/LANSMAN.md §3.4). false iken değerler yer tutucudur ve dolu bir lansman dosyası reddedilir
+// (launch.go). Yer tutucu değerler taban kuralını tuttuğundan, bu işaret olmasa hedefleri
+// seçilmemiş bir lansmanı yalnızca veri getiren lansman commit'inde hiçbir denetim yakalamazdı.
+// TestMainnetLaunchFile hedefler değişip işaret false kalırsa kırmızıya döner.
+const mainnetTargetsChosen = false
+
 // sigTag imza alanının sürüm etiketidir. v5'te açık anahtar imzalanan gövdeden çıktı ve gövdeye
 // taahhüt yuvası eklendi (transaction.go).
 const sigTag = "QBTC-SIG-v5"
 
 var (
-	// MainnetParams: genesis kasıtlı olarak tanımsızdır. Genesis bugünden sabitlenirse onu bilen
-	// herkes lansmana kadar gizlice zincir kazıp "premine yok" vaadini delebilir. Mainnet genesis'i
-	// lansman anında öngörülemez bir mesajla (ör. o anki bir Bitcoin blok özeti) üretilecektir.
-	// Başlangıç hedefi ve taban da genesis'le birlikte lansmanda seçilir (BitsForHashrate);
-	// buradaki değerler yer tutucudur.
-	MainnetParams = withEmission(&Params{Name: "mainnet", Bits: 0x1d00ffff, PowLimitBits: 0x1d00ffff,
-		TargetSpacing: 60})
+	// MainnetParams: genesis bu kaynakta kasıtlı olarak tanımsızdır. Genesis bugünden sabitlenirse
+	// onu bilen herkes lansmana kadar gizlice zincir kazıp "premine yok" vaadini delebilir. Mainnet
+	// genesis'i lansman anında öngörülemez bir mesajla (bir onay almış bir Bitcoin bloğunun özeti)
+	// üretilir ve gömülü lansman dosyasıyla gelir (mainnet.json, launch.go): lansman commit'i bu
+	// kaynağa dokunmaz. Dosya boşken ağ genesis'sizdir ve başlatılamaz. Başlangıç hedefi ve taban
+	// lansmandan günler önce ölçülen hashrate'ten seçilip buraya yazılır (LaunchTargets); bugünkü
+	// değerler yer tutucudur.
+	MainnetParams = mustLaunch(withEmission(&Params{Name: "mainnet", Bits: 0x1d00ffff, PowLimitBits: 0x1d00ffff,
+		TargetSpacing: 60}), mainnetLaunchJSON, mainnetLaunchRules)
 
 	// TestnetParams: herkese açık test ağı (hedef eski zorluk 4'e eşdeğer). Taban başlangıçtan
 	// 2^8 kat kolaydır: kırpma ve başlangıcın altına kolaylaşma yolu testnette sınanır.
