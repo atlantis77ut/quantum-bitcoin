@@ -120,8 +120,10 @@ class CompactTest(unittest.TestCase):
         # Bitcoin tabanı 976600. bloğun hedefinin tam 16 katıdır.
         self.assertEqual(mainnet.bitcoin_max_target, 16 * gv.decode_bits(0x17021673, "sınama"))
         self.assertEqual(gv.target_to_compact(mainnet.bitcoin_max_target), gv.BITCOIN_MAX_BITS)
+        # T_g, mesajdaki Bitcoin bloğunun zamanından en çok bir saat sonra olabilir.
+        self.assertEqual((mainnet.max_genesis_lag, gv.MAX_GENESIS_LAG), (3600, 3600))
         for network in ("testnet", "regtest"):
-            self.assertEqual(gv.NETWORKS[network], gv.Rules(gv.POW_LIMIT, None, None))
+            self.assertEqual(gv.NETWORKS[network], gv.Rules(gv.POW_LIMIT, None, None, None))
         self.assertEqual(sorted(gv.NETWORKS), ["mainnet", "regtest", "testnet"])
 
 
@@ -359,6 +361,21 @@ class MainnetRulesTest(unittest.TestCase):
                 BTC_976600_TIME - 1, BTC_976600_TIME)):
             gv.build_vector(mainnet_input(timestamp=BTC_976600_TIME - 1), EASY_MAINNET)
 
+    def test_genesis_time_not_long_after_bitcoin_block(self):
+        # Bayat bir Bitcoin bloğu geçmez: T_g - t_b en çok MAX_GENESIS_LAG saniyedir. Sınırın kendisi
+        # kabul edilir, bir saniye fazlası edilmez; reddeden yalnızca bu sınırdır (gevşetilince geçer).
+        limit = BTC_976600_TIME + gv.MAX_GENESIS_LAG
+        mined(mainnet_input(timestamp=limit), EASY_MAINNET)
+        with self.assertRaisesRegex(gv.VectorError, r"^timestamp: T_g \(%d\) .* 3601 sn sonra; en çok 3600 sn .*bayat"
+                                    % (limit + 1)):
+            gv.build_vector(mainnet_input(timestamp=limit + 1), EASY_MAINNET)
+        patient = {"mainnet": EASY_MAINNET["mainnet"]._replace(max_genesis_lag=gv.MAX_GENESIS_LAG + 1)}
+        _, vector = mined(mainnet_input(timestamp=limit + 1), patient)
+        self.assertEqual(vector["timestamp"] - vector["bitcoin_time"], gv.MAX_GENESIS_LAG + 1)
+        # Sınır gerçek mainnet kurallarında da vardır: hata, özetin hedefi karşılamamasından önce gelir.
+        with self.assertRaisesRegex(gv.VectorError, "^timestamp: .*bayat"):
+            gv.build_vector(mainnet_input(timestamp=limit + 1, bits="1d00ffff", pow_limit_bits="1d00ffff"))
+
     def test_message_must_name_the_block(self):
         for name, message in (
             ("onaylayan bloğun özeti", gv.MAINNET_MESSAGE_PREFIX + BTC_976601_HASH),
@@ -403,7 +420,8 @@ class MainnetRulesTest(unittest.TestCase):
             gv.build_vector(missing, EASY_MAINNET)
 
     def test_low_difficulty_headers_rejected(self):
-        low = mainnet_input(message=gv.MAINNET_MESSAGE_PREFIX + BTC_0_HASH, timestamp=BTC_976600_TIME,
+        # T_g = t_b: zorluk tabanı dışında her şart tutar (0. bloğun zamanı 1231006505).
+        low = mainnet_input(message=gv.MAINNET_MESSAGE_PREFIX + BTC_0_HASH, timestamp=1231006505,
                             bitcoin_headers=[BTC_0, BTC_1])
         with self.assertRaisesRegex(gv.VectorError,
                                     "^mesajdaki Bitcoin başlığı: hedef 1d00ffff gerçek Bitcoin zorluğu"):

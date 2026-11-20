@@ -24,15 +24,17 @@ const btc976600Hash = "00000000000000000001fbea30dad96a9449de2ac465309922f20cfe2
 const btc976600Prev = "000000000000000000015c517743911a76b2df8b354bf877b6c249c623695713"
 const btc976601Hash = "00000000000000000001f07afd7e1e27a7d64535f3d62d4a98bf6156a7ad453d"
 const btc976600Time = 1795102857
+const btc976601Time = 1795103200
+const btc0Time = 1231006505
 const btc0 = "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c"
 const btc1 = "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299"
 const btc0Hash = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
 
 // easyLaunchRules gerçek kurallardır; yalnızca tavan regtest hedefine çekilmiş ve hedefler seçilmiş
-// sayılmıştır (gerçek tavanda nonce aramak testte yapılamaz). Taban kuralı ve Bitcoin zorluk tabanı
-// gerçek değerlerindedir.
+// sayılmıştır (gerçek tavanda nonce aramak testte yapılamaz). Taban kuralı, Bitcoin zorluk tabanı ve
+// T_g − t_b sınırı gerçek değerlerindedir.
 var easyLaunchRules = launchRules{targetsChosen: true, maxPowLimitBits: 0x200fffff, floorShift: mainnetFloorShift,
-	bitcoinMaxBits: launchBitcoinMaxBits}
+	bitcoinMaxBits: launchBitcoinMaxBits, maxGenesisLag: launchMaxGenesisLag}
 
 // easyMainnet genesis'siz, kolay hedefli bir "mainnet" kopyasıdır. Validate bu kopyayı reddeder
 // (tabanı gerçek tavandan kolaydır): böyle bir ağla düğüm başlatılamaz.
@@ -297,6 +299,8 @@ func TestLaunchRejected(t *testing.T) {
 		t.Fatalf("geçerli örnek beklenen biçimde değil: nonce %d, özet %s", valid.Nonce, valid.Hash)
 	}
 	prefix, at := mainnetGenesisMessagePrefix, valid.Timestamp
+	// Zorluk tabanının dışında kalan, bunun dışında her şartı tutan örnek: 0 ve 1. bloklar, T_g = t_b.
+	low := remined(btc0Time, prefix+btc0Hash, btc0, btc1)
 	cases := []struct {
 		name string
 		lf   *launchFile
@@ -309,6 +313,8 @@ func TestLaunchRejected(t *testing.T) {
 		{"sıfır zaman", remined(0, valid.Message, btc976600, btc976601), "zaman damgası 0"},
 		{"negatif zaman", remined(-1, valid.Message, btc976600, btc976601), "zaman damgası -1"},
 		{"T_g t_b'den küçük", remined(btc976600Time-1, valid.Message, btc976600, btc976601), "t_b = "},
+		{"T_g t_b'den bir saatten fazla sonra (bayat blok)",
+			remined(btc976600Time+launchMaxGenesisLag+1, valid.Message, btc976600, btc976601), "bayat"},
 		{"başlık yok", edited(func(lf *launchFile) { lf.BitcoinHeaders = nil }), "tam iki Bitcoin başlığı"},
 		{"tek başlık", edited(func(lf *launchFile) { lf.BitcoinHeaders = []string{btc976600} }), "tam iki Bitcoin başlığı"},
 		{"üç başlık", edited(func(lf *launchFile) { lf.BitcoinHeaders = append(lf.BitcoinHeaders, btc976601) }),
@@ -323,7 +329,7 @@ func TestLaunchRejected(t *testing.T) {
 			"mesajdaki Bitcoin başlığı: 160 küçük harf"},
 		{"kısa başlık", edited(func(lf *launchFile) { lf.BitcoinHeaders[1] = btc976601[:158] }),
 			"onaylayan Bitcoin başlığı: 160 küçük harf"},
-		{"zorluk tabanının dışındaki başlıklar", remined(at, prefix+btc0Hash, btc0, btc1), "gerçek Bitcoin zorluğu"},
+		{"zorluk tabanının dışındaki başlıklar", low, "gerçek Bitcoin zorluğu"},
 		{"mesajda onaylayan bloğun özeti", remined(at, prefix+btc976601Hash, btc976600, btc976601), `mesaj "`},
 		{"mesajda büyük harfli özet", remined(at, prefix+strings.ToUpper(btc976600Hash), btc976600, btc976601), `mesaj "`},
 		{"mesajın sonunda fazladan karakter", remined(at, valid.Message+" ", btc976600, btc976601), `mesaj "`},
@@ -349,8 +355,27 @@ func TestLaunchRejected(t *testing.T) {
 	// dosya kabul edilir.
 	loose := easyLaunchRules
 	loose.bitcoinMaxBits = 0x1d00ffff
-	if err := applyLaunch(easyMainnet(), remined(at, prefix+btc0Hash, btc0, btc1), loose); err != nil {
+	if err := applyLaunch(easyMainnet(), low, loose); err != nil {
 		t.Errorf("Bitcoin zorluk tabanı gevşetilince zorluk 1 başlıklı dosya reddedildi: %v", err)
+	}
+	// T_g sınırlarının iki ucu da kabul edilir: T_g = t_b ve T_g = t_b + launchMaxGenesisLag. Sınır
+	// gevşetilince bayat blok örneği de geçer: onu reddeden yalnızca bu sınırdır.
+	for _, ts := range []int64{btc976600Time, btc976600Time + launchMaxGenesisLag} {
+		if err := applyLaunch(easyMainnet(), remined(ts, valid.Message, btc976600, btc976601), easyLaunchRules); err != nil {
+			t.Errorf("T_g = t_b + %d reddedildi: %v", ts-btc976600Time, err)
+		}
+	}
+	// Sınırın değeri bağımsız betikteki MAX_GENESIS_LAG ile aynıdır; betiğin sınaması da aynı sayıyı
+	// sabitler (scripts/genesis_vektor_test.py, test_limits). Biri değişirse öbürü de değişmelidir.
+	if mainnetLaunchRules.maxGenesisLag != 3600 || easyLaunchRules.maxGenesisLag != 3600 {
+		t.Fatalf("T_g − t_b sınırı %d sn (kolay kurallarda %d), betikteki 3600 değil", mainnetLaunchRules.maxGenesisLag,
+			easyLaunchRules.maxGenesisLag)
+	}
+	patient := easyLaunchRules
+	patient.maxGenesisLag = launchMaxGenesisLag + 1
+	stale := remined(btc976600Time+launchMaxGenesisLag+1, valid.Message, btc976600, btc976601)
+	if err := applyLaunch(easyMainnet(), stale, patient); err != nil {
+		t.Errorf("T_g sınırı gevşetilince bayat blok örneği reddedildi: %v", err)
 	}
 
 	// Dosya geçerli olsa da ağın parametreleriyle tutmuyorsa reddedilir.

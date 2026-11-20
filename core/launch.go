@@ -43,6 +43,17 @@ const mainnetFloorShift = 16
 // BITCOIN_MAX_BITS ile birlikte.
 const launchBitcoinMaxBits = 0x17216730
 
+// launchMaxGenesisLag T_g'nin mesajdaki Bitcoin bloğunun zamanından (t_b) en çok kaç saniye sonra
+// olabileceğidir. Bu bir ön-taahhüttür, kanıt değildir: lansmandan önce koda yazılır ve bayat bir
+// Bitcoin bloğuyla (ör. günler önceki bir blokla ve ileri bir T_g ile) kurulmuş lansman dosyasını
+// her düğüm reddeder. T_g ile t_b zaten dosyadadır, farkı herkes hesaplayabilir; kural büyük farkı
+// yasaklar. Gizli kazım penceresini tek başına sınırlamaz: gerçek ölçü yayın anı ile bloğun ağda
+// ilk görüldüğü an arasındaki süredir ve onu yalnızca tanıklar verir (t_b madenci beyanıdır,
+// gerçek zamandan sapabilir). Bir onay almış bloğun yaşı ortalama ~20 dakikadır; bir saati aşarsa
+// sıradaki Bitcoin bloğu beklenir. Kazım aracı T_g'yi yerel saatten aldığı için aynı kuralı saate
+// de uygular (launchmine.go). Bağımsız betikteki karşılığı MAX_GENESIS_LAG'dir.
+const launchMaxGenesisLag = 60 * 60
+
 // bitcoinHeaderSize Bitcoin blok başlığının bayt uzunluğudur.
 const bitcoinHeaderSize = 80
 
@@ -53,6 +64,7 @@ type launchRules struct {
 	maxPowLimitBits uint32 // taban bundan kolay olamaz
 	floorShift      uint   // taban = min(başlangıç hedefi << floorShift, tavan)
 	bitcoinMaxBits  uint32 // Bitcoin başlıklarının taşıyabileceği en kolay hedef
+	maxGenesisLag   int64  // T_g, t_b'den en çok bu kadar saniye sonra olabilir
 }
 
 var mainnetLaunchRules = launchRules{
@@ -60,6 +72,7 @@ var mainnetLaunchRules = launchRules{
 	maxPowLimitBits: mainnetMaxPowLimitBits,
 	floorShift:      mainnetFloorShift,
 	bitcoinMaxBits:  launchBitcoinMaxBits,
+	maxGenesisLag:   launchMaxGenesisLag,
 }
 
 // launchFile lansman dosyasının içeriğidir. Alanlar bağımsız betiğin (scripts/genesis_vektor.py)
@@ -176,6 +189,58 @@ func parseBitcoinHeader(s string, maxTarget *big.Int) (bitcoinHeader, error) {
 	return h, nil
 }
 
+// launchAnchor genesis'in bağlandığı, doğrulanmış iki Bitcoin başlığıdır: block mesajda özeti geçen
+// (bir onay almış) blok, confirmation onu onaylayan bloktur.
+type launchAnchor struct {
+	block        bitcoinHeader
+	confirmation bitcoinHeader
+}
+
+// message bu bloğa bağlanan genesis'in mesajıdır.
+func (a launchAnchor) message() string {
+	return mainnetGenesisMessagePrefix + a.block.hash
+}
+
+// parseAnchor iki Bitcoin başlığını doğrular: tam iki başlık vardır, ikisi de kendi iş ispatını
+// taşır, hedefleri gerçek Bitcoin zorluğu ölçeğindedir ve ikincisi ilkine bağlanır. Lansman dosyası
+// yükleyicisi (applyLaunch) ile genesis kazım aracı (launchmine.go) aynı denetimi kullanır.
+func (r launchRules) parseAnchor(headers []string) (launchAnchor, error) {
+	if len(headers) != 2 {
+		return launchAnchor{}, fmt.Errorf("tam iki Bitcoin başlığı olmalı (mesajdaki blok ve onu onaylayan blok), %d var",
+			len(headers))
+	}
+	bitcoinMax, ok := compactToBig(r.bitcoinMaxBits)
+	if !ok {
+		return launchAnchor{}, fmt.Errorf("Bitcoin zorluk tabanı %08x çözülemedi", r.bitcoinMaxBits)
+	}
+	block, err := parseBitcoinHeader(headers[0], bitcoinMax)
+	if err != nil {
+		return launchAnchor{}, fmt.Errorf("mesajdaki Bitcoin başlığı: %v", err)
+	}
+	confirmation, err := parseBitcoinHeader(headers[1], bitcoinMax)
+	if err != nil {
+		return launchAnchor{}, fmt.Errorf("onaylayan Bitcoin başlığı: %v", err)
+	}
+	if confirmation.prev != block.hash {
+		return launchAnchor{}, errors.New("onaylayan Bitcoin başlığı mesajdaki bloğa bağlanmıyor")
+	}
+	return launchAnchor{block: block, confirmation: confirmation}, nil
+}
+
+// checkGenesisTime T_g'nin mesajdaki Bitcoin bloğunun zamanına (t_b) göre sınırlarını denetler: T_g,
+// t_b'den küçük olamaz (madde 6b) ve t_b'den en çok maxGenesisLag saniye sonra olabilir. Kazım aracı
+// aynı denetimi yerel saate, yani kazacağı genesis'in T_g'sine uygular.
+func (r launchRules) checkGenesisTime(timestamp int64, a launchAnchor) error {
+	if timestamp < a.block.time {
+		return fmt.Errorf("T_g (%d) mesajdaki Bitcoin bloğunun zamanından (t_b = %d) küçük", timestamp, a.block.time)
+	}
+	if lag := timestamp - a.block.time; lag > r.maxGenesisLag {
+		return fmt.Errorf("T_g (%d) mesajdaki Bitcoin bloğunun zamanından %d sn sonra; en çok %d sn sonra olabilir (blok bayat ya da T_g'yi veren saat ileride)",
+			timestamp, lag, r.maxGenesisLag)
+	}
+	return nil
+}
+
 // checkTargets p'nin başlangıç hedefi ile tabanının lansman kuralını tuttuğunu denetler: başlangıç
 // hedefi tabandan kolay değildir ve taban tam olarak min(başlangıç hedefi << floorShift, tavan)'dır
 // (LaunchTargets'in ürettiği değer). Kanonik compact bir hedefin 2^16 katı da tam olarak kodlanır.
@@ -215,7 +280,8 @@ func (r launchRules) checkTargets(p *Params) error {
 // dosyadaki hedefler p.Bits ile p.PowLimitBits'tir; hedefler taban kuralını tutar (checkTargets);
 // iki Bitcoin başlığı kendi iş ispatını taşır, hedefleri gerçek Bitcoin zorluğu ölçeğindedir ve
 // ikincisi ilkine bağlanır; mesaj tam olarak önek ile ilk başlığın özetidir; T_g, o bloğun
-// zamanından (t_b) küçük değildir; bu alanlardan kurulan genesis'in özeti dosyadaki özettir ve
+// zamanından (t_b) küçük değildir ve ondan en çok launchMaxGenesisLag saniye sonradır (bayat blok
+// geçmez); bu alanlardan kurulan genesis'in özeti dosyadaki özettir ve
 // başlangıç hedefini karşılar. "Yayın anı − T_g" şartı veriden denetlenemez. Yükleyici saate
 // bakmaz: paket başlatılırken çalışır ve her makinede aynı sonucu vermelidir; gelecekteki bir T_g'yi
 // TestMainnetLaunchFile ve bağımsız betiğin "uret" komutu yakalar.
@@ -239,31 +305,15 @@ func applyLaunch(p *Params, lf *launchFile, rules launchRules) error {
 	if lf.Timestamp < 1 {
 		return fmt.Errorf("%w: zaman damgası %d", ErrBadLaunchFile, lf.Timestamp)
 	}
-	if len(lf.BitcoinHeaders) != 2 {
-		return fmt.Errorf("%w: tam iki Bitcoin başlığı olmalı (mesajdaki blok ve onu onaylayan blok), %d var",
-			ErrBadLaunchFile, len(lf.BitcoinHeaders))
-	}
-	bitcoinMax, ok := compactToBig(rules.bitcoinMaxBits)
-	if !ok {
-		return fmt.Errorf("%w: Bitcoin zorluk tabanı %08x çözülemedi", ErrBadLaunchFile, rules.bitcoinMaxBits)
-	}
-	block, err := parseBitcoinHeader(lf.BitcoinHeaders[0], bitcoinMax)
+	anchor, err := rules.parseAnchor(lf.BitcoinHeaders)
 	if err != nil {
-		return fmt.Errorf("%w: mesajdaki Bitcoin başlığı: %v", ErrBadLaunchFile, err)
+		return fmt.Errorf("%w: %v", ErrBadLaunchFile, err)
 	}
-	confirmation, err := parseBitcoinHeader(lf.BitcoinHeaders[1], bitcoinMax)
-	if err != nil {
-		return fmt.Errorf("%w: onaylayan Bitcoin başlığı: %v", ErrBadLaunchFile, err)
-	}
-	if confirmation.prev != block.hash {
-		return fmt.Errorf("%w: onaylayan Bitcoin başlığı mesajdaki bloğa bağlanmıyor", ErrBadLaunchFile)
-	}
-	if want := mainnetGenesisMessagePrefix + block.hash; lf.Message != want {
+	if want := anchor.message(); lf.Message != want {
 		return fmt.Errorf("%w: mesaj %q, beklenen %q", ErrBadLaunchFile, lf.Message, want)
 	}
-	if lf.Timestamp < block.time {
-		return fmt.Errorf("%w: T_g (%d) mesajdaki Bitcoin bloğunun zamanından (t_b = %d) küçük", ErrBadLaunchFile,
-			lf.Timestamp, block.time)
+	if err := rules.checkGenesisTime(lf.Timestamp, anchor); err != nil {
+		return fmt.Errorf("%w: %v", ErrBadLaunchFile, err)
 	}
 	q := *p
 	q.GenesisTimestamp, q.GenesisMessage, q.GenesisNonce, q.GenesisHash = lf.Timestamp, lf.Message, lf.Nonce, lf.Hash

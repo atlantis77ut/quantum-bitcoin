@@ -54,6 +54,13 @@ func main() {
 	propMbit := flag.Float64("bench-prop-mbit", 20, "-bench-propagation her düğümün yükleme hızı (Mbit/sn)")
 	propLatency := flag.Duration("bench-prop-latency", 50*time.Millisecond, "-bench-propagation bağlantı başına tek yön gecikme")
 	propTimeout := flag.Duration("bench-prop-timeout", 2*time.Minute, "-bench-propagation bir ölçümde bloğun bütün düğümlere ulaşması için beklenen en uzun süre")
+	mineGenesis := flag.Bool("mine-genesis", false, "Mainnet genesis'ini GPU ile kazar, lansman dosyasını ve lansman kaydını yazar ve çıkar (docs/LANSMAN.md §4.1; -network mainnet ve -tags opencl ister)")
+	launchPreflight := flag.Bool("launch-preflight", false, "-mine-genesis denetimlerini genesis kazmadan çalıştırır, kısa bir hashrate ölçümü yapar ve çıkar (lansmandan saatler önce ve hemen önce)")
+	launchBlock := flag.String("launch-block", "", "-mine-genesis: genesis mesajına girecek, bir onay almış Bitcoin bloğunun 80 baytlık başlığı (160 küçük harf hex)")
+	launchConfirmation := flag.String("launch-confirmation", "", "-mine-genesis: o bloğu onaylayan Bitcoin bloğunun 80 baytlık başlığı (160 küçük harf hex)")
+	launchReport := flag.String("launch-report", "", "-mine-genesis: yayımlanan ölçüm raporu (scripts/gpu-olcum.sh çıktısı; docs/GPU-OLCUM.md)")
+	launchOut := flag.String("launch-out", "core/mainnet.json", "-mine-genesis: lansman dosyası; yalnızca boş lansman dosyasının ({}) üzerine yazılır")
+	launchRecordPath := flag.String("launch-record", "", "-mine-genesis: lansman kaydının yazılacağı yeni dosya (boşsa qbtc-genesis-<UTC zaman>.json); var olan dosyanın üzerine yazılmaz")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -76,6 +83,16 @@ func main() {
 		// Ölçüm kendi geçici regtest zincirlerini kurar; -network ve -db kullanılmaz.
 		os.Exit(runPropBench(network.PropConfig{Txs: *propTxs, Hops: *propHops, Topology: *propTopo, Mbit: *propMbit,
 			Latency: *propLatency, Timeout: *propTimeout}, *benchRuns, *benchOut))
+	}
+	if *mineGenesis || *launchPreflight {
+		// Genesis kazım aracı ve ön-uçuşu (genesismine.go): zincir açılmaz, -db kullanılmaz.
+		if *mineGenesis && *launchPreflight {
+			slog.Error("-mine-genesis ve -launch-preflight birlikte verilemez: ön-uçuş genesis kazmaz")
+			os.Exit(2)
+		}
+		os.Exit(runLaunchTool(launchConfig{Preflight: *launchPreflight, Network: *netName, Block: *launchBlock,
+			Confirmation: *launchConfirmation, Report: *launchReport, Out: *launchOut, Record: *launchRecordPath,
+			Device: *gpuDevice, Batch: *gpuBatch}))
 	}
 
 	// 2. Blockchain

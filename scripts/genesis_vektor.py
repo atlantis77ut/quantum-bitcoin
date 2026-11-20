@@ -30,7 +30,8 @@ Denetlenen şartlar: iki hedefin kodlaması kanoniktir; başlangıç hedefi taba
 kolay değildir; genesis özeti hedefi karşılar. Mainnet'te ayrıca: taban tam olarak
 min(başlangıç hedefi · 2^16, 0x1d00ffff)'tir; iki Bitcoin başlığı da kendi iş ispatını taşır ve
 hedefleri gerçek Bitcoin zorluğu ölçeğindedir (BITCOIN_MAX_BITS); ikinci başlık ilkine bağlanır;
-mesaj tam olarak "Q-BTC mainnet genesis | BTC <ilk başlığın özeti>" biçimindedir; T_g >= t_b.
+mesaj tam olarak "Q-BTC mainnet genesis | BTC <ilk başlığın özeti>" biçimindedir; T_g >= t_b ve
+T_g - t_b <= 3600 sn (MAX_GENESIS_LAG: bayat bir Bitcoin bloğu geçmez).
 Başlangıç hedefinin ölçülen hashrate'e karşılık geldiğini betik denetleyemez.
 
 Çıkış kodu: 0 tamam; 1 fark ya da geçersiz girdi; 2 kullanım hatası.
@@ -73,6 +74,11 @@ MAINNET_FLOOR_SHIFT = 16
 # yaklaşık 1,35e14) hedefinin 16 katı. Pay geniştir: Bitcoin zorluğu iki haftada bir ayarlanır ve
 # aşağı yönlü ayarlamalar gerçek başlıkları reddettirmemelidir. Tam provada yenilenir.
 BITCOIN_MAX_BITS = 0x17216730
+# T_g, mesajdaki Bitcoin bloğunun zamanından (t_b) en çok bu kadar saniye sonra olabilir
+# (core/launch.go launchMaxGenesisLag). Bu bir ön-taahhüttür: bayat bir Bitcoin bloğuyla kurulmuş
+# genesis reddedilir. Gizli kazım penceresini tek başına kanıtlamaz (t_b madenci beyanıdır; gerçek
+# ölçü yayın anı ile bloğun ağda ilk görüldüğü an arasındaki süredir).
+MAX_GENESIS_LAG = 3600
 
 # Bilinen-yanıt işlemi (core/params_test.go katTx): imzası geçerli olmak zorunda değildir, yalnızca
 # kodlamayı sabitler. kat_txid ağdan bağımsızdır; kat_signing_hash ağın imza alanına bağlıdır.
@@ -90,7 +96,9 @@ MAX_FILE_SIZE = 1 << 16
 # max_target: ağın tabanı bundan kolay olamaz. floor_shift: None değilse taban tam olarak
 # min(başlangıç hedefi << floor_shift, max_target) olmalıdır. bitcoin_max_target: None değilse mesaj
 # bir Bitcoin bloğuna bağlanır ve o bloğun başlıkları en çok bu kadar kolay bir hedef taşıyabilir.
-Rules = collections.namedtuple("Rules", "max_target floor_shift bitcoin_max_target")
+# max_genesis_lag: mesaj bir Bitcoin bloğuna bağlanıyorsa T_g o bloğun zamanından en çok bu kadar
+# saniye sonra olabilir.
+Rules = collections.namedtuple("Rules", "max_target floor_shift bitcoin_max_target max_genesis_lag")
 BitcoinHeader = collections.namedtuple("BitcoinHeader", "hash prev time")
 
 
@@ -139,9 +147,10 @@ def decode_bits(bits, label):
 
 
 NETWORKS = {
-    "mainnet": Rules(compact_to_target(MAINNET_MAX_BITS), MAINNET_FLOOR_SHIFT, compact_to_target(BITCOIN_MAX_BITS)),
-    "testnet": Rules(POW_LIMIT, None, None),
-    "regtest": Rules(POW_LIMIT, None, None),
+    "mainnet": Rules(compact_to_target(MAINNET_MAX_BITS), MAINNET_FLOOR_SHIFT, compact_to_target(BITCOIN_MAX_BITS),
+                     MAX_GENESIS_LAG),
+    "testnet": Rules(POW_LIMIT, None, None, None),
+    "regtest": Rules(POW_LIMIT, None, None, None),
 }
 
 
@@ -274,6 +283,10 @@ def build_vector(doc, networks=NETWORKS):
         if timestamp < block.time:
             raise VectorError("timestamp: T_g (%d) mesajdaki Bitcoin bloğunun zamanından (t_b = %d) küçük"
                               % (timestamp, block.time))
+        if timestamp - block.time > rules.max_genesis_lag:
+            raise VectorError("timestamp: T_g (%d) mesajdaki Bitcoin bloğunun zamanından %d sn sonra; en çok %d sn "
+                              "sonra olabilir (blok bayat ya da T_g'yi veren saat ileride)"
+                              % (timestamp, timestamp - block.time, rules.max_genesis_lag))
         vector["bitcoin_headers"] = list(headers)
         anchor = {"bitcoin_hash": block.hash, "bitcoin_time": block.time,
                   "bitcoin_confirmation_hash": confirmation.hash}

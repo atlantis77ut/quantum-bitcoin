@@ -148,3 +148,35 @@ jobs:
         run: |
           bash scripts/gpu-olcum.sh
           python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["gpu_hashrate_mi"] is False and r["gpu"]["non_gpu_allowed"] is True, r; print(json.dumps(r, ensure_ascii=False, indent=2))' /tmp/qbtc-olcum.json
+
+      - name: Genesis kazım aracı bugün kazmaz (hedefler seçilmeden, bayat Bitcoin bloğuyla ya da lansmandan sonra)
+        run: |
+          export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
+          go build -tags opencl -o /tmp/qbtc-launch .
+          # 976600 ve 976601. Bitcoin blokları (core/launch_test.go'daki başlıklar): gerçek ve birbirine
+          # bağlı, ama artık bayat. Araç hangi durumda olursa olsun bir lansman denetiminde durmalı
+          # (çıkış kodu 2): hedefler seçilmedi, blok bayat ya da genesis zaten tanımlı.
+          BLOK=00800e2013576923c649c2b677f84b358bdfb2761a914377515c01000000000000000000b39d9a5eab3b9edae48949c0e6b48d3a00f04e89972146d055219f711c47cde78918ff6a73160217df4de7ca
+          ONAY=0040002086eb092bfe0cf222993065c42ade49946ad9da30eafb0100000000000000000080590567edbccfab0ecc4939f86f5ff690425e8349d61ddf418abcb5a138d03de019ff6a7316021786be3bf6
+          for kip in -launch-preflight -mine-genesis; do
+            rc=0
+            /tmp/qbtc-launch -network mainnet "$kip" -launch-block "$BLOK" -launch-confirmation "$ONAY" \
+              -launch-report /tmp/qbtc-olcum.json -launch-record /tmp/qbtc-genesis-kaydi.json > /tmp/launch.log 2>&1 || rc=$?
+            cat /tmp/launch.log
+            test "$rc" -eq 2
+            grep -E 'yer tutucu|bayat|zaten' /tmp/launch.log
+            test ! -e /tmp/qbtc-genesis-kaydi.json
+          done
+          # Araç yalnızca mainnet içindir (varsayılan ağ testnet'tir) ve iki kip birlikte verilemez.
+          rc=0
+          /tmp/qbtc-launch -mine-genesis -launch-block "$BLOK" -launch-confirmation "$ONAY" > /tmp/launch.log 2>&1 || rc=$?
+          cat /tmp/launch.log
+          test "$rc" -eq 2
+          grep -F -e '-network mainnet' /tmp/launch.log
+          rc=0
+          /tmp/qbtc-launch -network mainnet -mine-genesis -launch-preflight > /tmp/launch.log 2>&1 || rc=$?
+          cat /tmp/launch.log
+          test "$rc" -eq 2
+          grep -F 'birlikte verilemez' /tmp/launch.log
+          # Hiçbir çalıştırma lansman dosyasına dokunmadı.
+          git diff --exit-code -- core/mainnet.json

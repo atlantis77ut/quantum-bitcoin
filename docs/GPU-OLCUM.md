@@ -67,3 +67,9 @@ Betik `qbtc-olcum-<UTC zaman>.json` dosyasını yazar. Bu dosyayı gönderin. Ra
 - Ortanca yayımlanır, tek ölçüm değil. GPU ölçümleri arasındaki yayılım %10'u aşarsa betik uyarır; makineyi boşaltıp yeniden ölçün.
 - Lansmanda başlatıcı genesis'i ve 1.–2. bloğu aynı donanım ve aynı kazıcıyla kazar. Açıklanan hashrate bu rapordaki `reproduce` komutuyla yeniden üretilebilmelidir.
 - Bu ölçüm madde 6a'yı tek başına kapatmaz. Başlangıç hedefi ve taban kullanıcı kararıyla `MainnetParams`'a ve bağımsız test vektörüne girer.
+- Rapor lansmanda genesis kazım aracına `-launch-report` ile verilir ([LANSMAN.md](LANSMAN.md) §4.1). Araç şu durumlarda genesis kazmaz:
+  - rapor temiz bir commit'ten ya da gerçek bir GPU'dan değilse;
+  - çekirdek özeti çalışan ikilininkinden farklıysa;
+  - mainnet hedefleri rapordaki ortancadan hesaplananlar değilse;
+  - açılan aygıtın modeli ya da sürücü sürümü rapordakinden farklıysa. Bu yüzden ölçümden sonra lansmana kadar sürücü güncellenmez.
+  - Araç genesis'i rapordaki tur boyuyla (`round_size`) kazar.
