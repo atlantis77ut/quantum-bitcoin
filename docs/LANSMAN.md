@@ -128,7 +128,7 @@ Kullanım (depo kökünden, `-tags opencl` ile derlenmiş ikiliyle):
 3. **Yerel saat.** Denetim başta ve her T_g tazelemesinde yapılır. İki ayrı grup vardır:
    - T_g'nin veri kuralları (T_g yerel saat olduğu için saate uygulanır; yükleyicinin de şartlarıdır):
      - T_g ≥ t_b (madde 6b).
-     - T_g − t_b ≤ 3600 sn. Bu yeni bir lansman şartıdır ve kullanıcı kararı bekler (aşağıda "Sınırların gerekçesi", §7).
+     - T_g − t_b ≤ 3600 sn. Bu yeni bir lansman şartıdır (kullanıcı kararı, 2026-11-20; aşağıda "Sınırların gerekçesi", §7 madde 5).
    - Aracın kendi saat denetimleri (yalnızca araçta; onaylayan bloğun zamanına, t_c'ye göre):
      - t_c yerel saatten en çok 300 sn (FTL) ileride olabilir: saat geride ya da başlığın damgası ileride.
      - t_c yerel saatten en çok 1800 sn geride olabilir: başlıklar eski, saat ileride ya da Bitcoin'de uzun süredir blok yok.
@@ -169,12 +169,12 @@ Araç bulduğu her genesis için ayrı bir kayıt bırakır. Atılan denemenin (
 
 **Sınırların gerekçesi.** `devils-advocate` (2026-11-20) bu sınırları sınadı; aşağıdaki ayrım onun sonucudur.
 
-- **T_g − t_b ≤ 3600 sn: bayat blok ön-taahhüdü (veri kuralı; yükleyici, betik ve araç). Kullanıcı kararı bekler (§7).**
+- **T_g − t_b ≤ 3600 sn: bayat blok ön-taahhüdü (veri kuralı; yükleyici, betik ve araç). Kullanıcı kararı (2026-11-20, §7 madde 5).**
   - Ne yapar: lansmandan önce koda yazılır ve bayat bir Bitcoin bloğuyla (ör. günler önceki bir blokla ve ileri bir T_g ile) kurulmuş lansman dosyasını her düğüm reddeder. Sınır olmasa böyle bir dosya geçerdi.
   - Ne yapmaz: gizli kazım penceresini kanıtlamaz. T_g ile t_b zaten dosyadadır; kural yalnızca büyük farkı yasaklar. t_b madenci beyanıdır: Bitcoin kuralları damgayı gerçek zamandan kabaca bir saat geriye ve iki saat ileriye kadar serbest bırakır (bugünkü sapma ~±1–2 dk). Gerçek pencere yayın anı ile bloğun ağda ilk görüldüğü an arasındaki süredir ve onu yalnızca tanıklar verir. Bu yüzden lansman kaydına bloğun iki bağımsız gezgindeki ilk görülme zamanı da yazılır (§5 madde 5).
   - Operasyonel değeri: ön-uçuş saatler önce, o anın başlıklarıyla koşulur. Lansman günü yanlışlıkla o eski başlıklar verilirse T_g ≥ t_b tutar; bu sınır durdurur.
   - Bedeli: bir onay almış bloğun yaşı ortalama ~20 dakikadır. Bir saati aşma olasılığı rastgele bir anda ~%2, yeni gelen uç bloğun ebeveyni alınırsa ~%0,3'tür; o durumda sıradaki Bitcoin bloğu beklenir.
-  - Açık seçenekler: şartın yükleyicide de olması ya da yalnızca araç ve betikte kalması; değerin 1 ya da 2 saat olması. İki değer veri tarafında denktir (fazladan bir saatin rampa ödülü en çok ~1,4 QBTC'dir). Lansman günü riski yoktur: araç, yükleyici ve betik aynı karşılaştırmayı yapar; biri kayarsa sıkı olan taraf yayından önce durur.
+  - Seçilmeyen seçenekler: şartın yalnızca araç ve betikte kalması (öz-koruma kalırdı, Go ile Python arasında bir fark doğardı); değerin 2 saat olması (veri tarafında 1 saatle denktir: fazladan bir saatin rampa ödülü en çok ~1,4 QBTC'dir). Lansman günü riski yoktur: araç, yükleyici ve betik aynı karşılaştırmayı yapar; biri kayarsa sıkı olan taraf yayından önce durur.
 - **Aracın saat denetimleri (yalnızca araç; veri kuralından bağımsız sabitler).** Onaylayan bloğun zamanına (t_c) göredir, çünkü araç en yeni iki başlıkla çalıştırılır ve uç bloğun yaşı küçüktür.
   - İleri giden saat: t_c yerel saatten 1800 sn'den fazla gerideyse araç durur. Saat dilimi kaynaklı en küçük kayma bir saattir ve her zaman yakalanır; yeni bir uç blokla (~2 dk yaşında) yarım saatin üstündeki her kayma yakalanır. Eski başlıklar da buraya takılır.
   - Geri kalan saat: t_c yerel saatten 300 sn'den fazla ilerideyse araç durur (yeni bir uç blokla ~7 dakikanın üstündeki her kayma), ya da T_g ≥ t_b kuralına takılır. Pay 300 sn'dir, çünkü madenci damgaları gerçek zamandan birkaç dakika sapabilir; düğümün kendi FTL'i ile aynı değerdir.
@@ -200,7 +200,6 @@ Araç bulduğu her genesis için ayrı bir kayıt bırakır. Atılan denemenin (
 **Kalanlar:**
 - Araç gerçek GPU'da ve gerçek hedefle hiç çalışmadı; ilk çalıştırma tam provadadır (§4.4). `genesismine.go`'daki akış CI'da yalnızca sahte plan ve sahte aygıtla sınanır.
 - Bugün iki kip de "hedefler seçilmedi" diye durur. Hedef PR'ından (§3.4) sonra CI adımındaki örnek "blok bayat" diye durur; adım üç durumu da kabul eder.
-- T_g − t_b ≤ 3600 sn şartının yükleyicide kalıp kalmayacağı ve değeri kullanıcı kararı bekler (§7).
 - Saat eşitlemesi (NTP) denetimi, ikinci makinenin hazır olduğu, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki bloğun ilk görülme zamanı, atılan denemelerin toplanması ve kaydın imzalanması araçta yoktur; lansman betiğinin işidir (§5 madde 5).
 - Araç başlıkların en çok iş taşıyan Bitcoin zincirinde olduğunu bilemez. Başlıkların iki bağımsız kaynaktan alınması çalıştırma kılavuzuna yazılır.
 - Ön-uçuş ölçümü kısadır (15 sn); ±%10 payı ısınmış bir aygıt içindir.
@@ -259,7 +258,7 @@ Depodaki bağ:
 Sınırlar:
 - Mainnet şartları, genesis hedefi gevşetilmiş bir kural kümesiyle sınanır: gerçek hedefte nonce aramak sınamada yapılamaz ve depoya mainnet görünümlü geçerli bir genesis konmaz. Gerçek hedefle deneme tam provadadır (§4.4). Komut satırı kuralları gevşetemez.
 - Betikteki Bitcoin zorluk tabanı (`BITCOIN_MAX_BITS`) 976600. bloğun (2026-11-19) zorluğunun 1/16'sıdır ve tam provada yenilenir. Go tarafındaki karşılığı `core/launch.go`'daki `launchBitcoinMaxBits`'tir; lansman dosyası yükleyicisi ve kazım aracı (§4.1) aynı sabiti kullanır. İki sabit provada birlikte yenilenir ve denenir; ön-uçuş kipi güncel başlıkların tabandan geçtiğini lansman günü de gösterir.
-- T_g − t_b en çok 3600 sn'dir (`MAX_GENESIS_LAG`; Go tarafında `launchMaxGenesisLag`): bayat bir Bitcoin bloğu betikten ve yükleyiciden geçmez. Sınır kazım aracı PR'ında kondu ve kullanıcı kararı bekler (§7); araç onu yerel saate de uygular. Bu bir ön-taahhüttür, gizli kazım penceresinin kanıtı değildir (§4.1). Sınırın içindeki fark yine yazdırılır.
+- T_g − t_b en çok 3600 sn'dir (`MAX_GENESIS_LAG`; Go tarafında `launchMaxGenesisLag`): bayat bir Bitcoin bloğu betikten ve yükleyiciden geçmez. Sınır kazım aracı PR'ında kondu ve kullanıcı kararıyla kesinleşti (2026-11-20, §7 madde 5); araç onu yerel saate de uygular. Bu bir ön-taahhüttür, gizli kazım penceresinin kanıtı değildir (§4.1). Sınırın içindeki fark yine yazdırılır.
 - Betik başlıkların en çok iş taşıyan Bitcoin zincirinde olduğunu bilemez. Özet herkesçe gezgin sitelerinden denetlenir; bir onay şartı bayat blok riskini azaltır, kaldırmaz.
 - Betik başlangıç hedefinin ölçülen hashrate'e karşılık geldiğini bilemez (girdide hashrate yoktur). Bugünkü yer tutucu değerlerle (başlangıç = taban = 0x1d00ffff) kazılmış bir genesis taban kuralına uyar ve betikten geçer. Go tarafında onu `mainnetTargetsChosen` işareti durdurur (§4.2): hedefler seçilip işaret true yapılmadan dolu lansman dosyası reddedilir. Seçilen hedeflerin ölçülen hashrate'e karşılık geldiğini denetleyen ise kazım aracının ölçüm raporuyla öz-tutarlılık denetimidir (§4.1); bu denetim yalnızca aracı çalıştıran başlatıcıyı korur, veriden okunamaz.
 - Regtest ve testnette taban için başlangıç hedefiyle sıralama dışında kural yoktur; değerini ağın parametresine Go testi bağlar.
@@ -297,7 +296,7 @@ Yanıtlar §7'dedir. İlk taslağın önerilerinden ikisi `devils-advocate` sonr
 3. **"Birkaç dakika" eşiği ve iptal kuralı:** yayın anı − T_g için sayısal eşik (öneri: 10 dk; aşılırsa deneme atılır, yeni Bitcoin bloğuyla baştan başlanır, atılan denemeler kayda yazılır).
 4. **Lisans:** MIT, Apache-2.0 ya da GPL-3.0? Öneri: MIT (Bitcoin Core ile aynı; bağımlılıklar liboqs, liboqs-go, goleveldb izin verici lisanslıdır; kesin uyum denetimi lisans PR'ında yapılır). Apache-2.0'ın farkı açık patent lisansıdır; kurumsal entegratörler bunu sorabilir. Bu hukuki bir seçimdir, karar başlatıcınındır.
 
-Soru sorulmadan uygulanacak tasarım seçimleri (itiraz gelirse PR'da değişir): lansman commit'inin veri dosyası olması (§4.2), mesajda yükseklik olmaması, T_g'nin tazelenmesi, ölçüm raporuyla öz-tutarlılık denetimi. Araç PR'ında aynı yolla belirlenenler aracın kendi saat denetimleridir (§4.1). T_g − t_b ≤ 3600 sn şartı bu sınıfa girmez: madde 6(b)'yi daraltan bir lansman kararıdır ve kullanıcıya sorulur (§7).
+Soru sorulmadan uygulanacak tasarım seçimleri (itiraz gelirse PR'da değişir): lansman commit'inin veri dosyası olması (§4.2), mesajda yükseklik olmaması, T_g'nin tazelenmesi, ölçüm raporuyla öz-tutarlılık denetimi. Araç PR'ında aynı yolla belirlenenler aracın kendi saat denetimleridir (§4.1). T_g − t_b ≤ 3600 sn şartı bu sınıfa girmez: madde 6(b)'yi daraltan bir lansman kararıdır; kullanıcıya soruldu (§7 madde 5).
 
 ## 7. Kararlar (kullanıcı, 2026-11-18)
 
@@ -305,7 +304,6 @@ Soru sorulmadan uygulanacak tasarım seçimleri (itiraz gelirse PR'da değişir)
 2. **Genesis mesajına bir onay almış Bitcoin bloğunun özeti girer.** Araç iki başlık alır ve ikisinin de iş ispatını doğrular.
 3. **Eşik: yayın anı − T_g ≤ 10 dakika.** Aşılırsa ya da bir denetim düşerse deneme atılır, yeni bir Bitcoin bloğuyla baştan başlanır; atılan her deneme lansman kaydına yazılır.
 4. **Lisans MIT.**
+5. **T_g − t_b ≤ 3600 sn (2026-11-20, `devils-advocate` sonrası).** Genesis'in zaman damgası, mesajdaki Bitcoin bloğunun zamanından en çok bir saat sonra olabilir; şart lansman dosyası yükleyicisinde, bağımsız betikte ve kazım aracındadır. Bir ön-taahhüttür: bayat bir Bitcoin bloğuyla kurulmuş lansman dosyasını her düğüm reddeder. Gizli kazım penceresinin kanıtı olarak sunulmaz (§4.1 "Sınırların gerekçesi"). Seçilmeyenler: şartın yalnızca araç ve betikte kalması; 2 saat.
 
-Açık kalanlar:
-- Lansman commit'inin `guvenlik-denetimi` istisnası ve yerine konacak mekanik koruma (§4.2), çalıştırma kılavuzu PR'ında sorulur.
-- **T_g − t_b ≤ 3600 sn şartı (karar bekliyor, 2026-11-20; `devils-advocate` sonrası, §4.1 "Sınırların gerekçesi").** Kazım aracı PR'ı şartı yükleyiciye, betiğe ve araca koydu. Sorulan: şart madde 6(b)'ye eklensin mi; yükleyicide de mi olsun, yalnızca araç ve betikte mi; değeri 1 saat mi, 2 saat mi? `devils-advocate` hükmü: teknik bir zararı ve lansman günü riski yoktur; değeri bir ön-taahhüt olmasıdır, gizli kazım penceresinin kanıtı olarak sunulmamalıdır.
+Açık kalan: lansman commit'inin `guvenlik-denetimi` istisnası ve yerine konacak mekanik koruma (§4.2), çalıştırma kılavuzu PR'ında sorulur.
