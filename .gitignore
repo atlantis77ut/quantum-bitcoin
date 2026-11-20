@@ -11,3 +11,12 @@ quantum-bitcoin
 *.dll
 *.so
 *.dylib
+/qbtc
+
+# Ölçüm raporları ve genesis kazım aracının çıktıları (docs/GPU-OLCUM.md, docs/LANSMAN.md §4.1).
+# İzlenmeyen dosya da "kirli ağaç" sayılır (go build, vcs.modified): bunlar dışlanmazsa aynı ağaçtaki
+# sonraki derleme kirli görünür ve genesis kazım aracı o ikiliyle çalışmaz. Lansman kaydı lansman
+# commit'ine girmez; commit yalnızca core/mainnet.json ile core/testdata/mainnet_vector.json'dur.
+qbtc-olcum-*.json
+qbtc-genesis-*.json
+core/mainnet.json.yeni

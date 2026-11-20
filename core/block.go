@@ -46,6 +46,14 @@ func NewGenesisBlock(p *Params) (*Block, error) {
 	if p == nil || p.GenesisHash == "" {
 		return nil, ErrNoGenesis
 	}
+	return genesisCandidate(p), nil
+}
+
+// genesisCandidate p'nin genesis alanlarından (zaman damgası, mesaj, nonce) ve başlangıç hedefinden
+// bloğu kurar; p.GenesisHash'e bakmaz. NewGenesisBlock'un ürettiği blok budur. Genesis kazım aracı
+// (launchmine.go) özeti henüz bilinmeyen adayın başlığını da bununla kurar: aranan başlık ile
+// düğümün sonradan kuracağı genesis aynı koddan çıkar.
+func genesisCandidate(p *Params) *Block {
 	coinbase := Transaction{
 		Sender:     CoinbaseSender,
 		Receiver:   p.GenesisReceiver(),
@@ -65,5 +73,5 @@ func NewGenesisBlock(p *Params) (*Block, error) {
 	}
 	block.MerkleRoot = block.ComputeMerkleRoot()
 	block.Hash = block.CalculateHash()
-	return block, nil
+	return block
 }
