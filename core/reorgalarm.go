@@ -56,7 +56,7 @@ func (bc *Blockchain) loadReorgAlarm() error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("reorg alarmı okunamadı: %w", err)
+		return localIOErr("reorg alarmı okunamadı", err)
 	}
 	var rec DeepReorgRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
@@ -79,7 +79,7 @@ func (bc *Blockchain) ClearDeepReorgAlarm() (*DeepReorgRecord, error) {
 		return nil, nil
 	}
 	if err := bc.db.Delete([]byte(keyReorgAlarm), &opt.WriteOptions{Sync: true}); err != nil {
-		return nil, fmt.Errorf("reorg alarmı silinemedi: %w", err)
+		return nil, localIOErr("reorg alarmı silinemedi", err)
 	}
 	bc.deepReorg = nil
 	bc.log.Warn("derin reorg alarmı operatörce temizlendi", "derinlik", rec.Depth, "catal", rec.ForkHeight,

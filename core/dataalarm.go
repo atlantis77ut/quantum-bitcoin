@@ -113,7 +113,7 @@ func (bc *Blockchain) loadDataAlarm() error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("eksik veri alarmı okunamadı: %w", err)
+		return localIOErr("eksik veri alarmı okunamadı", err)
 	}
 	var rec MissingDataRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
@@ -142,7 +142,7 @@ func (bc *Blockchain) ClearMissingDataAlarm() (*MissingDataRecord, error) {
 		return nil, nil
 	}
 	if err := bc.db.Delete([]byte(keyDataAlarm), &opt.WriteOptions{Sync: true}); err != nil {
-		return nil, fmt.Errorf("eksik veri alarmı silinemedi: %w", err)
+		return nil, localIOErr("eksik veri alarmı silinemedi", err)
 	}
 	bc.dataAlarm = nil
 	bc.log.Warn("eksik veri alarmı operatörce temizlendi", "blok", rec.Hash, "tur", rec.Kind,

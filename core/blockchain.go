@@ -183,15 +183,20 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 	}
 	bc.db = db
 
-	data, err := db.Get([]byte(keyLastHash), nil)
+	data, found, err := readMeta(db.Get, p)
 	switch {
-	case errors.Is(err, leveldb.ErrNotFound):
+	case err != nil:
+		db.Close()
+		return nil, err
+	case !found:
 		// "lh" yoksa dizin tamamen boş olmalı: yarım ya da yabancı bir dizinde kalan
 		// bakiye/nonce kayıtları yeni zincirin durumuna karışmasın.
-		it := db.NewIterator(nil, nil)
-		nonEmpty := it.First()
-		it.Release()
-		if nonEmpty {
+		empty, err := dbEmpty(db)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		if !empty {
 			db.Close()
 			return nil, fmt.Errorf("%w: son blok kaydı yok ama dizin boş değil", ErrSchemaMismatch)
 		}
@@ -200,23 +205,7 @@ func NewBlockchain(dbPath string, p *Params) (*Blockchain, error) {
 			db.Close()
 			return nil, fmt.Errorf("genesis yazılamadı: %w", err)
 		}
-	case err != nil:
-		db.Close()
-		return nil, fmt.Errorf("son blok okunamadı: %w", err)
 	default:
-		schema, err := db.Get([]byte(keySchema), nil)
-		if err != nil || string(schema) != schemaVersion {
-			db.Close()
-			if err != nil && !errors.Is(err, leveldb.ErrNotFound) {
-				return nil, fmt.Errorf("şema sürümü okunamadı: %w", err)
-			}
-			return nil, fmt.Errorf("%w (diskte %q, beklenen %q)", ErrSchemaMismatch, schema, schemaVersion)
-		}
-		stored, err := db.Get([]byte(keyGenesis), nil)
-		if err != nil || string(stored) != p.GenesisHash {
-			db.Close()
-			return nil, fmt.Errorf("%w: diskte %q, %s genesis'i %s", ErrGenesisMismatch, stored, p.Name, p.GenesisHash)
-		}
 		if err := bc.loadIndex(); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("blok indeksi okunamadı: %w", err)
@@ -647,13 +636,56 @@ func (bc *Blockchain) writeGenesis(g *Block) error {
 	batch.Put([]byte(keySchema), []byte(schemaVersion))
 	batch.Put([]byte(keyGenesis), []byte(g.Hash))
 	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
-		return err
+		return localIOErr("genesis diske yazılamadı", err)
 	}
 	bc.addToIndex(e)
 	bc.main[0] = g.Hash
 	bc.tip = e
 	bc.lastHash = g.Hash
 	return nil
+}
+
+// readMeta açılışta son blok, şema sürümü ve genesis kayıtlarını get ile okur. "lh" yoksa
+// (yeni dizin) found false'tur. Okuma hatası ErrLocalIO'dur; eksik ya da tutmayan şema
+// ErrSchemaMismatch, eksik ya da tutmayan genesis ErrGenesisMismatch'tir. Okuma hatası
+// eskiden genesis tutmazlığı diye raporlanırdı: operatör sağlam dizini başka ağın dizini sanıp
+// silebilirdi.
+func readMeta(get func([]byte, *opt.ReadOptions) ([]byte, error), p *Params) (last []byte, found bool, err error) {
+	last, err = get([]byte(keyLastHash), nil)
+	if errors.Is(err, leveldb.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, localIOErr("son blok kaydı okunamadı", err)
+	}
+	schema, err := get([]byte(keySchema), nil)
+	if err != nil && !errors.Is(err, leveldb.ErrNotFound) {
+		return nil, false, localIOErr("şema sürümü okunamadı", err)
+	}
+	if err != nil || string(schema) != schemaVersion {
+		return nil, false, fmt.Errorf("%w (diskte %q, beklenen %q)", ErrSchemaMismatch, schema, schemaVersion)
+	}
+	stored, err := get([]byte(keyGenesis), nil)
+	if err != nil && !errors.Is(err, leveldb.ErrNotFound) {
+		return nil, false, localIOErr("genesis kaydı okunamadı", err)
+	}
+	if err != nil || string(stored) != p.GenesisHash {
+		return nil, false, fmt.Errorf("%w: diskte %q, %s genesis'i %s", ErrGenesisMismatch, stored, p.Name, p.GenesisHash)
+	}
+	return last, true, nil
+}
+
+// dbEmpty veritabanında hiç anahtar olmadığını söyler. Tarama hatası ErrLocalIO'dur: eskiden
+// okunamayan dizin boş sayılır ve üstüne genesis yazılırdı.
+func dbEmpty(db *leveldb.DB) (bool, error) {
+	it := db.NewIterator(nil, nil)
+	nonEmpty := it.First()
+	err := it.Error()
+	it.Release()
+	if err != nil {
+		return false, localIOErr("veritabanı taranamadı", err)
+	}
+	return !nonEmpty, nil
 }
 
 func (bc *Blockchain) getBlock(hash string) (*Block, error) {

@@ -180,7 +180,7 @@ func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHis
 	tipHeight, tipHash := bc.tip.Height, bc.tip.Hash
 	bc.mu.RUnlock()
 	if err != nil {
-		return AddrHistory{}, fmt.Errorf("adres geçmişi okunamadı: %w", err)
+		return AddrHistory{}, localIOErr("adres geçmişi okunamadı", err)
 	}
 	defer snap.Release()
 	if bc.afterHistorySnapshot != nil {
@@ -218,7 +218,7 @@ func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHis
 		if height != lastHeight {
 			m, err := snap.Get([]byte(heightKey(height)), nil)
 			if err != nil && !errors.Is(err, leveldb.ErrNotFound) {
-				return AddrHistory{}, fmt.Errorf("adres geçmişi okunamadı: %w", err)
+				return AddrHistory{}, localIOErr("adres geçmişi okunamadı", err)
 			}
 			lastHeight, lastMain = height, string(m) // yoksa boş: aşağıda tutarsız sayılır
 		}
@@ -231,7 +231,7 @@ func (bc *Blockchain) AddressHistory(address, before string, limit int) (AddrHis
 			Counterparty: v.Counterparty, Coinbase: v.Coinbase})
 	}
 	if err := it.Error(); err != nil {
-		return AddrHistory{}, fmt.Errorf("adres geçmişi okunamadı: %w", err)
+		return AddrHistory{}, localIOErr("adres geçmişi okunamadı", err)
 	}
 	return out, nil
 }
