@@ -171,7 +171,7 @@ func (bc *Blockchain) loadIndex() error {
 	}
 	it.Release()
 	if err := it.Error(); err != nil {
-		return err
+		return localIOErr("indeks kayıtları taranamadı", err)
 	}
 	it = bc.db.NewIterator(util.BytesPrefix([]byte(prefixHeight)), nil)
 	for it.Next() {
@@ -183,7 +183,10 @@ func (bc *Blockchain) loadIndex() error {
 		bc.main[h] = string(it.Value())
 	}
 	it.Release()
-	return it.Error()
+	if err := it.Error(); err != nil {
+		return localIOErr("yükseklik kayıtları taranamadı", err)
+	}
+	return nil
 }
 
 func (bc *Blockchain) isMain(e *indexEntry) bool { return bc.main[e.Height] == e.Hash }
@@ -678,7 +681,7 @@ func (bc *Blockchain) loadUndo(hash string) ([]undoItem, error) {
 		return nil, &missingDataError{hash: hash, kind: dataUndo, cause: ErrCorruptState}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: undo kaydı yok (%s): %v", ErrCorruptState, hash, err)
+		return nil, localIOErr("undo kaydı okunamadı ("+hash+")", err)
 	}
 	var undo []undoItem
 	if err := json.Unmarshal(data, &undo); err != nil {

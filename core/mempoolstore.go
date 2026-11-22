@@ -98,14 +98,14 @@ func (m *Mempool) writeSnapshot(vals [][]byte, meta []byte) error {
 	}
 	it.Release()
 	if err := it.Error(); err != nil {
-		return fmt.Errorf("eski havuz kaydı okunamadı: %w", err)
+		return localIOErr("eski havuz kaydı okunamadı", err)
 	}
 	for i, v := range vals {
 		batch.Put(mempoolTxKey(i), v)
 	}
 	batch.Put([]byte(keyMempoolMeta), meta)
 	if err := bc.db.Write(batch, &opt.WriteOptions{Sync: true}); err != nil {
-		return fmt.Errorf("havuz kaydedilemedi: %w", err)
+		return localIOErr("havuz kaydedilemedi", err)
 	}
 	return nil
 }
@@ -125,7 +125,7 @@ func (m *Mempool) Load() (restored, skipped int, err error) {
 	}
 	if err != nil {
 		bc.mu.RUnlock()
-		return 0, 0, fmt.Errorf("havuz kaydı okunamadı: %w", err)
+		return 0, 0, localIOErr("havuz kaydı okunamadı", err)
 	}
 	var vals [][]byte
 	it := bc.db.NewIterator(util.BytesPrefix([]byte(prefixMempoolTx)), nil)
@@ -140,7 +140,7 @@ func (m *Mempool) Load() (restored, skipped int, err error) {
 	iterErr := it.Error()
 	bc.mu.RUnlock()
 	if iterErr != nil {
-		return 0, 0, fmt.Errorf("havuz kaydı okunamadı: %w", iterErr)
+		return 0, 0, localIOErr("havuz kaydı taranamadı", iterErr)
 	}
 
 	defer func() {

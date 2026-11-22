@@ -126,7 +126,7 @@ func (r BlockReads) TxByID(id string) (*Block, int, int64, error) {
 			return nil, ErrUnknownTx
 		}
 		if err != nil {
-			return nil, fmt.Errorf("işlem indeksi okunamadı: %w", err)
+			return nil, localIOErr("işlem indeksi okunamadı", err)
 		}
 		if err := json.Unmarshal(data, &loc); err != nil || !IsHashHex(loc.Block) || loc.Pos < 0 {
 			return nil, fmt.Errorf("%w: işlem indeksi kaydı %s", ErrCorruptState, id)

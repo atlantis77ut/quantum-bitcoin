@@ -56,8 +56,11 @@ var ErrMiningPaused = errors.New("kazım duraklatıldı: düğüm bildiği daha 
 // ölçü, TargetSpacing'den türetilir (~2 saat).
 func (p *Params) miningPauseLead() int64 { return p.ReorgAlarmDepth }
 
-// ErrLocalIO blok saklama, zincire geçiş ve durum okumalarındaki bir LevelDB okuma ya da yazma hatasıdır
-// (disk dolu, G/Ç hatası, kapanmış veritabanı): eşin gönderdiği veriyle ilgisi yoktur.
+// ErrLocalIO bir LevelDB okuma ya da yazma hatasıdır (disk dolu, G/Ç hatası, kapanmış
+// veritabanı): eşin gönderdiği veriyle ilgisi yoktur. Blok saklama, zincire geçiş (gövde, undo,
+// indeks geri alma) ve durum okumalarında, açılışta (son blok, şema, genesis, boşluk denetimi,
+// indeks, alarmlar), alarm silmede, havuz kaydında, adres geçmişinde, işlem indeksinde ve gövde
+// önbelleğinin disk okumasında verilir. Çözülemeyen kayıt ErrCorruptState kalır.
 var ErrLocalIO = errors.New("yerel disk hatası")
 
 // localIOErr LevelDB hatasını ErrLocalIO ile sarar; asıl hata da errors.Is ile görünür kalır.
@@ -69,10 +72,9 @@ func localIOErr(op string, err error) error {
 // IsLocalDataErr hatanın yerel veri hatası olduğunu söyler: indeksteki bir bloğun kaydı diskte
 // yok, yerel durum bozuk, disk okunamıyor veya yazılamıyor (ErrLocalIO) ya da düğüm gerideyken
 // geçiş denemesi ertelendi (ErrRetryDeferred). Eşin kusuru
-// değildir; ağ katmanı eşi bunun için ertelemez. ErrLocalIO writeSync'te ve getBlock, getRaw,
-// readInt ile indeks geri alma kaydı okumasında verilir. Bu yardımcılar uzlaşma yolu dışında da
-// (API bakiye/nonce, havuz, eşe blok sunma, açılış) çağrılır; IsLocalDataErr'i yalnızca
-// ön-senkronizasyon kullanır.
+// değildir; ağ katmanı eşi bunun için ertelemez. ErrLocalIO'nun verildiği yerler onun
+// açıklamasındadır; çoğu uzlaşma yolu dışındadır (API, havuz, eşe blok sunma, açılış).
+// IsLocalDataErr'i yalnızca ön-senkronizasyon kullanır.
 func IsLocalDataErr(err error) bool {
 	return errors.Is(err, ErrBlockDataMissing) || errors.Is(err, ErrCorruptState) || errors.Is(err, ErrLocalIO) ||
 		errors.Is(err, ErrRetryDeferred)

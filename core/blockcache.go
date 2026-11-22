@@ -4,9 +4,12 @@ import (
 	"container/list"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"unsafe"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 // Blok gövdesi önbelleği (yalnızca API okumaları: MainBlockByHash, MainBlockByHeight,
@@ -201,8 +204,11 @@ func (bc *Blockchain) finishBlockRead(r blockRead) (*Block, error) {
 	}
 	hash := r.hash
 	data, err := bc.db.Get([]byte(hash), nil)
+	if errors.Is(err, leveldb.ErrNotFound) { // getBlock'taki sınıf; alarm yalnızca geçiş yolunda kurulur
+		return nil, &missingDataError{hash: hash, kind: dataBody, cause: err}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("blok okunamadı (%s): %w", hash, err)
+		return nil, localIOErr("blok okunamadı ("+hash+")", err)
 	}
 	var b Block
 	if err := json.Unmarshal(data, &b); err != nil {

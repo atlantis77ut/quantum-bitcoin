@@ -190,6 +190,12 @@ func main() {
 		slog.Error("bu ağ henüz başlatılamaz: genesis lansmanda tanımlanacak", "network", params.Name)
 		os.Exit(2)
 	}
+	if errors.Is(err, core.ErrLocalIO) {
+		// Okunamayan dizin başka ağın ya da eski şemanın dizini değildir: silmek veriyi kaybettirir.
+		slog.Error("zincir başlatılamadı: veri dizini okunamıyor; dizini silmeyin, diski, izinleri ve boş alanı denetleyin",
+			"db", *dbPath, "err", err)
+		os.Exit(1)
+	}
 	if err != nil {
 		slog.Error("zincir başlatılamadı", "err", err)
 		os.Exit(1)
