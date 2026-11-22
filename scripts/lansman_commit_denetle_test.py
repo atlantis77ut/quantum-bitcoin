@@ -318,6 +318,52 @@ class TagTest(GuardTestCase):
         with self.assertRaisesRegex(guard.GuardError, "parmak izi tanınmadı"):
             self.check_tag(key="anahtarim")
 
+    def gpg_key(self, name):
+        """Geçici bir GNUPGHOME'da parolasız OpenPGP anahtarı üretir; büyük harf parmak izini döner. gpg
+        yoksa sınama atlanır (CI'da düşer)."""
+        home = self.tmp / "gnupg"
+        home.mkdir(mode=0o700, exist_ok=True)
+        path = str(home)
+        if os.name == "nt" and path[1:3] == ":\\":  # Git Bash'in gpg'si MSYS biçimli yol ister (/c/Users/...)
+            path = "/" + path[0].lower() + path[2:].replace("\\", "/")
+        env = dict(os.environ, GNUPGHOME=path)
+        try:
+            subprocess.run(["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "", "--quick-gen-key",
+                            "%s <%s@example.invalid>" % (name, name), "ed25519", "sign", "never"], check=True, env=env,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            listing = subprocess.run(["gpg", "--batch", "--list-secret-keys", "--with-colons", "--fingerprint", name], check=True,
+                                     env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode("ascii", "replace")
+        except (OSError, subprocess.CalledProcessError) as e:
+            if os.environ.get("CI"):  # CI'da imza sınamaları sessizce atlanmaz
+                raise AssertionError("gpg kullanılamıyor: %s" % e)
+            self.skipTest("gpg kullanılamıyor: %s" % e)
+        self.addCleanup(subprocess.run, ["gpgconf", "--kill", "gpg-agent"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        fingerprints = [line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:")]
+        self.assertTrue(fingerprints)
+        return env, fingerprints[0].upper()
+
+    def test_openpgp_signature_is_verified_with_real_gpg(self):
+        env, fingerprint = self.gpg_key("baslatici")
+        other_env, other_fingerprint = self.gpg_key("baskasi")  # aynı anahtarlıkta ikinci geçerli anahtar
+        os.environ.update(GNUPGHOME=env["GNUPGHOME"])
+        self.addCleanup(os.environ.pop, "GNUPGHOME", None)
+        self.repo.git("config", "gpg.format", "openpgp")
+        self.repo.git("config", "user.signingkey", fingerprint)
+        self.repo.git("tag", "-s", "-m", SUBJECT, TAG, self.commit)
+        self.assertEqual(self.check_tag(key=fingerprint), {"tag": TAG, "signed_by": fingerprint})
+        # Boşluklu ve küçük harfli yazılan parmak izi de aynı anahtardır.
+        spaced = " ".join(fingerprint[i:i + 4] for i in range(0, 40, 4)).lower()
+        self.assertEqual(self.check_tag(key=spaced)["signed_by"], fingerprint)
+        # Anahtarlıktaki başka bir anahtarın parmak izi duyurulan anahtar değildir.
+        with self.assertRaisesRegex(guard.GuardError, "duyurulan anahtarla .* imzalanmamış"):
+            self.check_tag(key=other_fingerprint)
+        # Başka anahtarla atılan geçerli imza da duyurulan anahtarla eşleşmez.
+        self.repo.git("config", "user.signingkey", other_fingerprint)
+        self.repo.git("tag", "-s", "-m", SUBJECT, "baskasinin", self.commit)
+        self.assertEqual(self.check_tag("baskasinin", key=other_fingerprint)["signed_by"], other_fingerprint)
+        with self.assertRaisesRegex(guard.GuardError, "duyurulan anahtarla"):
+            self.check_tag("baskasinin", key=fingerprint)
+
     def test_fingerprint_parsing(self):
         gpg = ("[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG 1234567890ABCDEF Baslatici\n"
                "[GNUPG:] VALIDSIG AAAABBBBCCCCDDDDEEEEFFFF0000111122223333 2026-11-20 1795103800 0 4 0 22 10 00 "
