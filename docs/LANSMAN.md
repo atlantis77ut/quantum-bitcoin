@@ -274,6 +274,7 @@ Sınırlar:
   - İtme adımı özel bir deneme deposuna karşı denenir. Bugün `main` dalında koruma kuralı yoktur; sonradan eklenirse lansman itmesi yeniden denenmelidir.
   - Provadan önce betikteki ve araçtaki Bitcoin zorluk tabanı o günün zorluğuna göre yenilenir (§4.3); prova güncel başlıkların iki uygulamadan da geçtiğini gösterir.
 - Adım adım prova talimatı ve ölçülecek süreler (ikinci makinedeki tam test paketi dahil): [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) §5.
+- Provanın kayıt şablonu (adımlar, süreler, kasıtlı atma, kesinti provası, temizlik, sonuç): [PROVA-KAYDI.md](PROVA-KAYDI.md).
 - Ayrı bir "prova ağı" eklenmez.
 
 ### 4.5 Lansman betiği ve lansman commit'i istisnası
