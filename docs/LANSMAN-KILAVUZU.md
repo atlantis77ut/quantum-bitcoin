@@ -91,7 +91,7 @@ Sıra sabittir:
 8. Dal ve etiket tek adımda, zorlamadan itilir (`git push --atomic origin <commit>:refs/heads/main refs/tags/v-mainnet:refs/tags/v-mainnet`).
 9. Sonuç uzak depodan okunur: dal ve etiket bu commit'i göstermelidir. Yayın anı itme komutunun döndüğü andır.
 
-Bir adım düşerse betik durur ve hiçbir şey yayımlanmamış olur; imzalanmış ama itilmemiş etiket yerelde silinir. İtme komutu hata verip uzak depo yine de güncellenmişse betik bunu uzak depodan görür ve yayımlanmış sayar (yayın anı kesin değildir, kayda öyle yazılır). Uzak depo okunamazsa durum "belirsiz" kalır: bağlantı gelince `yayimla` yeniden çalıştırılır ve yalnızca sonucu okur. Durum itmeden hemen önce "itiliyor" olarak kaydedilir: süreç itme sırasında kesilirse (Ctrl-C, bağlantı, elektrik) yeniden çalıştırılan `yayimla` doğrulamayı ve imzayı yinelemez, yalnızca sonucu okur; bu durumdaki deneme `at` ile atılamaz.
+Bir adım düşerse betik durur ve hiçbir şey yayımlanmamış olur; imzalanmış ama itilmemiş etiket yerelde silinir. İtme komutu hata verip uzak depo yine de güncellenmişse betik bunu uzak depodan görür ve yayımlanmış sayar (yayın anı kesin değildir, kayda öyle yazılır). Uzak depo okunamazsa durum "belirsiz" kalır: bağlantı gelince `yayimla` yeniden çalıştırılır ve yalnızca sonucu okur. Aynı durum dizinine aynı anda tek komut çalışır (işletim sistemi kilidi; ikinci komut hemen düşer). Durum itmeden hemen önce "itiliyor" olarak kaydedilir: süreç itme sırasında kesilirse (Ctrl-C, bağlantı, elektrik) yeniden çalıştırılan `yayimla` doğrulamayı ve imzayı yinelemez, yalnızca sonucu okur; bu durumdaki deneme `at` ile atılamaz.
 
 ### 3.5 Atma
 
