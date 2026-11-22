@@ -1,6 +1,6 @@
 # Lansman çalıştırma kılavuzu
 
-**Durum:** taslak (feat/launch-script). Lansman commit'i istisnası ve "sonradan ENGELLEYİCİ çıkarsa" kuralı kullanıcı onayı bekliyor ([LANSMAN.md](LANSMAN.md) §4.5, §7). Bu kılavuz uzlaşma kuralı getirmez; tasarım ve gerekçeler [LANSMAN.md](LANSMAN.md)'dedir.
+**Durum:** hazır (feat/launch-script); gerçek donanımla ilk çalıştırma tam provadadır. Lansman commit'i istisnası ve "sonradan ENGELLEYİCİ çıkarsa" kuralı onaylandı (kullanıcı kararı 2026-11-22; [LANSMAN.md](LANSMAN.md) §4.5, §7 madde 6). Bu kılavuz uzlaşma kuralı getirmez; tasarım ve gerekçeler [LANSMAN.md](LANSMAN.md)'dedir.
 
 Bu kılavuz lansman günü ve provada hangi komutun hangi makinede, hangi sırayla çalıştırılacağını anlatır. Komutlar `scripts/lansman.py`'nin komutlarıdır; betik eşikleri kendisi denetler ve gevşetilmelerine izin vermez.
 
@@ -143,4 +143,4 @@ Lansman commit'i yayın anı − T_g eşiği yüzünden `guvenlik-denetimi`'nden
 2. Lansman commit'i `guvenlik-denetimi`'nden geçirilir.
 3. Lansmandan sonraki ilk PR mainnet özetini elle yazılmış bir sabit olarak ekler ve iki veri dosyasının değişmesini reddeden bir CI denetimi koyar ([LANSMAN.md](LANSMAN.md) §4.2).
 
-**Sonradan CI ya da denetim ENGELLEYİCİ bir bulgu çıkarırsa** (kullanıcı onayı bekliyor, [LANSMAN.md](LANSMAN.md) §7): genesis korunur ve bir düzeltme sürümü yayımlanır; yeniden lansman yapılmaz. Gerekçe: yayımlanmış genesis geri alınamaz ve yeniden lansman "adil lansman" iddiasıyla bağdaşmaz; lansman commit'i yalnızca veridir ve koruma bu verinin bağımsız betikle, iki makinede ve bütün testlerle doğrulandığını göstermiştir, yani bulgu büyük olasılıkla genesis'te değil koddadır. Tek istisna genesis'in kendisinin geçersiz olduğunun (yükleyicinin, betiğin ya da Go testinin onu reddettiğinin) sonradan anlaşılmasıdır; o durumda zincir yürümez ve yeniden lansman kaçınılmazdır, bu da duyurulur.
+**Sonradan CI ya da denetim ENGELLEYİCİ bir bulgu çıkarırsa** (kullanıcı kararı 2026-11-22, [LANSMAN.md](LANSMAN.md) §7 madde 6): genesis korunur ve bir düzeltme sürümü yayımlanır; yeniden lansman yapılmaz. Gerekçe: yayımlanmış genesis geri alınamaz ve yeniden lansman "adil lansman" iddiasıyla bağdaşmaz; lansman commit'i yalnızca veridir ve koruma bu verinin bağımsız betikle, iki makinede ve bütün testlerle doğrulandığını göstermiştir, yani bulgu büyük olasılıkla genesis'te değil koddadır. Tek istisna genesis'in kendisinin geçersiz olduğunun (yükleyicinin, betiğin ya da Go testinin onu reddettiğinin) sonradan anlaşılmasıdır; o durumda zincir yürümez ve yeniden lansman kaçınılmazdır, bu da duyurulur.

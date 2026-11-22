@@ -18,7 +18,7 @@ Terimler:
 | Mainnet parametreleri | `core/params.go` `MainnetParams`; `core/mainnet.json`, `core/launch.go` | Genesis gömülü lansman dosyasından gelir; dosya bugün boş, başlangıç hedefi ve taban yer tutucu. Düğüm genesis'siz mainnet'i reddeder (`TestNetworkWithoutGenesisRefused`, `TestMainnetLaunchFile`). |
 | Genesis vektörleri | `core/params_test.go` `genesisVectors`; `core/testdata/<ağ>_vector.json` | Testnet ve regtest için elle yazılmış sabitler ve bağımsız betiğin (§4.3) ürettiği dosyalar. |
 | Genesis kazım aracı ve ön-uçuşu | `core/launchmine.go`, `genesismine.go`; `-mine-genesis`, `-launch-preflight` | Hazır (§4.1). Bugün her iki kip de durur: mainnet hedefleri seçilmedi. Gerçek GPU'da ve gerçek hedefle hiç çalıştırılmadı. |
-| Lansman betiği ve lansman commit'i koruması | `scripts/lansman.py`, `scripts/lansman_commit_denetle.py`; [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) | Hazır (§4.5). Gerçek GPU, belirteç ve ikinci makineyle hiç çalıştırılmadı; istisna kullanıcı onayı bekliyor (§7). |
+| Lansman betiği ve lansman commit'i koruması | `scripts/lansman.py`, `scripts/lansman_commit_denetle.py`; [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) | Hazır (§4.5). Gerçek GPU, belirteç ve ikinci makineyle hiç çalıştırılmadı; istisna onaylandı (kullanıcı kararı 2026-11-22, §7 madde 6). |
 
 Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdaki eksikler kapanmadan lansman yapılamaz.
 
@@ -234,7 +234,7 @@ Testler:
 Korunanlar ve lansman sonrası:
 - Testnet ve regtest vektörleri bugünkü gibi elle yazılmış Go sabitleri olarak kalır. Üreteç betiğiyle veri dosyasını birlikte yeniden üreten bir PR onları sessizce değiştiremez.
 - Lansmandan sonraki ilk PR mainnet özetini aynı listeye elle yazılmış bir sabit olarak ekler ve iki veri dosyasının değişmesini reddeden bir CI denetimi koyar.
-- Lansman commit'i `guvenlik-denetimi`'nden geçecek zamanı bulamaz. Bu istisnanın yerine önceden denetlenmiş mekanik bir koruma konur (commit yalnızca bu iki dosyaya dokunur ve şemaya uyar; §4.5). İstisnanın onayı çalıştırma kılavuzu PR'ında sorulur (§7).
+- Lansman commit'i `guvenlik-denetimi`'nden geçecek zamanı bulamaz. Bu istisnanın yerine önceden denetlenmiş mekanik bir koruma konur (commit yalnızca bu iki dosyaya dokunur ve şemaya uyar; §4.5). İstisna onaylandı (§7 madde 6).
 
 Seçilmeyen seçenek: genesis'i çalışma anında bir dosyadan ya da bayraktan okumak. Katılımcıları yeniden derlemekten kurtarırdı, ama düğüme kalıcı bir "bana verilen genesis'e inan" yolu ekler ve sahte ağlara yönlendirmeyi kolaylaştırır.
 
@@ -278,12 +278,12 @@ Sınırlar:
 
 ### 4.5 Lansman betiği ve lansman commit'i istisnası
 
-**Uygulandı (feat/launch-script; `scripts/lansman.py`, `scripts/lansman_commit_denetle.py`; kılavuz [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md)). İstisnanın kendisi ve "sonradan ENGELLEYİCİ çıkarsa" kuralı kullanıcı onayı bekliyor (§7).** Betik ve koruma yalnızca Python standart kitaplığını ve git'i kullanır; uzlaşma kodu değişmez.
+**Uygulandı (feat/launch-script; `scripts/lansman.py`, `scripts/lansman_commit_denetle.py`; kılavuz [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md)). İstisna ve "sonradan ENGELLEYİCİ çıkarsa" kuralı onaylandı (kullanıcı kararı 2026-11-22, §7 madde 6).** Betik ve koruma yalnızca Python standart kitaplığını ve git'i kullanır; uzlaşma kodu değişmez.
 
 **İstisna.** Lansman commit'i yayın anı − T_g ≤ 10 dk eşiği yüzünden `guvenlik-denetimi`'nden ve PR'dan geçemez. `devils-advocate` (2026-11-20) üç seçeneği sınadı: (a) commit'i yine de denetimden geçirmek (eşiğe sığmaz), (b) istisnasız olağan PR (genesis'i günlerce açıkta bırakır, "adil lansman"la bağdaşmaz), (c) önceden denetlenmiş mekanik koruma, iki makine ve sonradan denetim. Seçilen (c)'dir, üç önkoşulla:
 1. İkinci makine adayın temiz klonunda **bütün testleri** çalıştırır (mainnet'in "tanımsız"dan "tanımlı"ya döndüğü ağaçta ilk tam koşu budur); süresi provada ölçülür ve eşiğe sığmazsa ikinci makine hızlandırılır, test paketi kısaltılmaz.
 2. **İmza sırası:** gerçek anahtarla imza ancak ikinci makine doğruladıktan sonra atılır. Aday imzasız ve etiketsiz aktarılır.
-3. **Sonradan ENGELLEYİCİ çıkarsa** ne yapılacağı önceden yazılır (kılavuz §6; kullanıcı kararı bekliyor): genesis korunur, düzeltme sürümü çıkar; yalnızca genesis'in kendisi geçersizse yeniden lansman yapılır.
+3. **Sonradan ENGELLEYİCİ çıkarsa** ne yapılacağı önceden yazılır (kılavuz §6; kullanıcı kararı 2026-11-22): genesis korunur, düzeltme sürümü çıkar; yalnızca genesis'in kendisi geçersizse yeniden lansman yapılır.
 
 **Koruma (`lansman_commit_denetle.py`)** lansman makinesinde `kaz` ve `yayimla`'da, ikinci makinede `dogrula`'da çalışır; saate bakmaz, her makinede aynı sonucu verir:
 - Depo sığ değildir; replace başvurusu ve grafts yoktur (geçmişi olduğundan farklı gösterebilecek durumlar).
@@ -331,7 +331,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 2. Bağımsız vektör betiği ve CI adımı. (Uzlaşma kodu değişmez.) **Kapandı (feat/genesis-vector).**
 3. Gömülü mainnet genesis dosyası ve lansman şartı testleri (`core/params.go`). **Kapandı (feat/mainnet-launch-file).**
 4. Genesis kazım aracı, ön-uçuş kipi ve lansman kaydı. **Kapandı (feat/genesis-mine-tool).**
-5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası. Araçta olmayanlar buradadır: saat eşitlemesi denetimi, ikinci makine, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki Bitcoin bloğunun iki bağımsız gezgindeki ilk görülme zamanının kayda yazılması (gizli kazım penceresinin gerçek ölçüsü budur; başlıktaki zaman madenci beyanıdır), atılan denemelerin toplanması ve kaydın imzalanması (§4.1 "Kalanlar"). **Kapandı (feat/launch-script; §4.5); istisnanın onayı §7'de.**
+5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası. Araçta olmayanlar buradadır: saat eşitlemesi denetimi, ikinci makine, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki Bitcoin bloğunun iki bağımsız gezgindeki ilk görülme zamanının kayda yazılması (gizli kazım penceresinin gerçek ölçüsü budur; başlıktaki zaman madenci beyanıdır), atılan denemelerin toplanması ve kaydın imzalanması (§4.1 "Kalanlar"). **Kapandı (feat/launch-script; §4.5); istisna onaylandı (§7 madde 6).**
 6. README ve LICENSE (lisans kararından sonra).
 
 Depo dışındaki işler (§2.2) bu sıradan bağımsızdır; GPU ölçümü 4. PR'dan önce yapılırsa araç gerçek donanımda da denenir.
@@ -347,7 +347,7 @@ Yanıtlar §7'dedir. İlk taslağın önerilerinden ikisi `devils-advocate` sonr
 
 Soru sorulmadan uygulanacak tasarım seçimleri (itiraz gelirse PR'da değişir): lansman commit'inin veri dosyası olması (§4.2), mesajda yükseklik olmaması, T_g'nin tazelenmesi, ölçüm raporuyla öz-tutarlılık denetimi. Araç PR'ında aynı yolla belirlenenler aracın kendi saat denetimleridir (§4.1). T_g − t_b ≤ 3600 sn şartı bu sınıfa girmez: madde 6(b)'yi daraltan bir lansman kararıdır; kullanıcıya soruldu (§7 madde 5).
 
-## 7. Kararlar (kullanıcı, 2026-11-18)
+## 7. Kararlar (kullanıcı, 2026-11-18; madde 5 2026-11-20, madde 6 2026-11-22)
 
 1. **Yayın sırası A.** Genesis ikinci makinede doğrulanır doğrulanmaz yayımlanır; 1. ve 2. blok yayından sonra herkese açık kazılır. Dondurulmuş "başlatıcı genesis'i ve 1.–2. bloğu yalnızca bu GPU kazıcısıyla ve aynı donanımla kazar" cümlesi şöyle okunur: başlatıcı genesis'i yalnızca açıklanan GPU kazıcısıyla kazar ve yayından sonra da (1.–2. blok dahil) yalnızca onunla kazar; bu blokları başlatıcının kazanacağı garanti edilmez.
 2. **Genesis mesajına bir onay almış Bitcoin bloğunun özeti girer.** Araç iki başlık alır ve ikisinin de iş ispatını doğrular.
@@ -355,4 +355,4 @@ Soru sorulmadan uygulanacak tasarım seçimleri (itiraz gelirse PR'da değişir)
 4. **Lisans MIT.**
 5. **T_g − t_b ≤ 3600 sn (2026-11-20, `devils-advocate` sonrası).** Genesis'in zaman damgası, mesajdaki Bitcoin bloğunun zamanından en çok bir saat sonra olabilir; şart lansman dosyası yükleyicisinde, bağımsız betikte ve kazım aracındadır. Bir ön-taahhüttür: bayat bir Bitcoin bloğuyla kurulmuş lansman dosyasını her düğüm reddeder. Gizli kazım penceresinin kanıtı olarak sunulmaz (§4.1 "Sınırların gerekçesi"). Seçilmeyenler: şartın yalnızca araç ve betikte kalması; 2 saat.
 
-Karar bekleyen (feat/launch-script PR'ında soruldu): lansman commit'inin `guvenlik-denetimi` istisnası, yerine konan mekanik koruma ve iki makine (§4.5), ve sonradan CI ya da denetim ENGELLEYİCİ çıkarsa genesis'in korunup düzeltme sürümü çıkarılması (kılavuz §6).
+6. **Lansman commit'i istisnası ve sonradan denetim (kullanıcı kararı 2026-11-22, `devils-advocate` sonrası).** Lansman commit'i PR'dan ve `guvenlik-denetimi`'nden geçmez; yerine önceden denetlenmiş mekanik koruma (`lansman_commit_denetle.py`), ikinci makinede adayın temiz klonunda bütün testler ve yayından sonra CI ile `guvenlik-denetimi` konur (§4.5). Gerçek anahtarla imza ancak ikinci makine doğruladıktan sonra atılır. Sonradan CI ya da denetim ENGELLEYİCİ çıkarırsa genesis korunur ve düzeltme sürümü çıkar; yeniden lansman yalnızca genesis'in kendisi geçersizse (yükleyici, betik ya da Go testi onu reddediyorsa) yapılır (kılavuz §6). Seçilmeyenler: commit'i yine de denetimden geçirmek (eşiğe sığmaz); istisnasız olağan PR (genesis'i günlerce açıkta bırakır); her ENGELLEYİCİ bulguda yeniden lansman.
