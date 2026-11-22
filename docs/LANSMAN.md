@@ -32,7 +32,7 @@ Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdak
 4. **Lansman commit'i elle kaynak düzenlemesi ister.** Bugünkü hâliyle `params.go`, `params_test.go` (yeni vektör ve mainnet'i reddetme testi) ve `main.go` yardım metni elle değiştirilmelidir. Süre baskısı altında derleme ya da test hatası çıkarmaya açıktır. **Kapandı (feat/mainnet-launch-file):** lansman commit'i yalnızca iki veri dosyasıdır (§4.2).
 5. **6(b)'deki "T_g ≥ t_b" şartını sabitleyen test yok.** **Kapandı (feat/mainnet-launch-file):** şartı lansman dosyası yükleyicisi ve bağımsız betik denetler; ikisinin testleri de bozulmuş hâlini reddeder (§4.2, §4.3).
 6. **Lansman adımlarını ve provayı anlatan çalıştırma kılavuzu yok.** **Kapandı (feat/launch-script):** [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) ve `scripts/lansman.py` (§4.5).
-7. **README ve LICENSE yok.** Lisansı olmayan kamuya açık depo hukuken açık kaynak sayılmaz. Bu yüzden 6(a)'daki "açık kaynak kazıcı yayımlanır" şartı lisans seçilmeden karşılanmış olmaz.
+7. **README ve LICENSE yok.** Lisansı olmayan kamuya açık depo hukuken açık kaynak sayılmaz. Bu yüzden 6(a)'daki "açık kaynak kazıcı yayımlanır" şartı lisans seçilmeden karşılanmış olmaz. **Kapandı (feat/readme-license):** `LICENSE` (MIT, telif sahibi "The Q-BTC developers"; kullanıcı kararı 2026-11-22) ve `README.md` (durum, özellikler, derleme, çalıştırma, testler, depo düzeni, güvenlik, lisans). Bağımlılık lisansları GitHub'dan okundu: liboqs ve liboqs-go MIT (liboqs'un üçüncü taraf alt dizinleri kendi lisanslarıyla), goleveldb BSD-2-Clause, snappy BSD-3-Clause; hepsi MIT ile uyumludur. Kalanlar: bu hukuki bir görüş değildir, kesin uyum denetimi başlatıcınındır; depoda kaynak dosya başlıklarında telif satırı yoktur (kök `LICENSE` yeter); özel güvenlik bildirim kanalı (GitHub "Private vulnerability reporting" şu an kapalıdır, başlatıcının ayarıdır) lansmandan önce açılıp README'ye yazılmalıdır.
 
 ### 2.2 Depo dışında, başlatıcıya bağlı
 
@@ -332,7 +332,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 3. Gömülü mainnet genesis dosyası ve lansman şartı testleri (`core/params.go`). **Kapandı (feat/mainnet-launch-file).**
 4. Genesis kazım aracı, ön-uçuş kipi ve lansman kaydı. **Kapandı (feat/genesis-mine-tool).**
 5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası. Araçta olmayanlar buradadır: saat eşitlemesi denetimi, ikinci makine, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki Bitcoin bloğunun iki bağımsız gezgindeki ilk görülme zamanının kayda yazılması (gizli kazım penceresinin gerçek ölçüsü budur; başlıktaki zaman madenci beyanıdır), atılan denemelerin toplanması ve kaydın imzalanması (§4.1 "Kalanlar"). **Kapandı (feat/launch-script; §4.5); istisna onaylandı (§7 madde 6).**
-6. README ve LICENSE (lisans kararından sonra).
+6. README ve LICENSE (lisans kararından sonra). **Kapandı (feat/readme-license).**
 
 Depo dışındaki işler (§2.2) bu sıradan bağımsızdır; GPU ölçümü 4. PR'dan önce yapılırsa araç gerçek donanımda da denenir.
 
