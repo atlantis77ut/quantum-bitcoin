@@ -189,3 +189,52 @@ jobs:
           grep -F 'birlikte verilemez' /tmp/launch.log
           # Hiçbir çalıştırma lansman dosyasına dokunmadı.
           git diff --exit-code -- core/mainnet.json
+
+  # Düğümün desteklediği liboqs aralığı: ML-DSA-65 bilinen-yanıt denetimi (crypto.SelfTest) ve imza
+  # testleri, 0.12.0'dan (ML-DSA'nın son FIPS 204 hâli) 0.15.0'a kadar her sürümle koşar. Ana iş 0.15.0
+  # ile bütün testleri koşar; burada yalnızca kriptografi paketi sınanır.
+  liboqs-surumleri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { surum: "0.12.0", commit: "f4b96220e4bd208895172acc4fedb5a191d9f5b1" }
+          - { surum: "0.13.0", commit: "21b3f8b0fadbb19e2c6a5df0f165c953ead164e1" }
+          - { surum: "0.14.0", commit: "94b421ebb82405c843dba4e9aa521a56ee5a333d" }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: liboqs önbelleği
+        id: oqs-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/liboqs-install
+          key: liboqs-${{ matrix.commit }}-${{ runner.os }}
+
+      - name: liboqs ${{ matrix.surum }} derle
+        if: steps.oqs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+          git clone --branch "${{ matrix.surum }}" --depth 1 https://github.com/open-quantum-safe/liboqs /tmp/liboqs
+          test "$(git -C /tmp/liboqs rev-parse HEAD)" = "${{ matrix.commit }}"
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build -GNinja \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install
+          ninja -C /tmp/liboqs/build install
+
+      - name: liboqs kur
+        run: |
+          sudo cp -r /tmp/liboqs-install/. /usr/local/
+          sudo ldconfig
+
+      - name: Kriptografi testleri (açılış denetimi dahil), liboqs ${{ matrix.surum }}
+        run: |
+          export PKG_CONFIG_PATH="$(go list -m -f '{{.Dir}}' github.com/open-quantum-safe/liboqs-go)/.config:/usr/local/lib/pkgconfig"
+          go mod download && go mod verify
+          go test -race -count=1 -v -run 'SelfTest|KnownAnswer|SignVerify' ./crypto/
