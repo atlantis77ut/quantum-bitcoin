@@ -125,7 +125,7 @@ Kayıt (`lansman-kaydi.json`) şunları içerir: genesis özeti, lansman ve taba
 
 ## 5. Prova
 
-Tam prova lansmandan önce en az bir kez, iki makinede yapılır:
+Tam prova lansmandan önce en az bir kez, iki makinede yapılır: Bulgular ve süreler [PROVA-KAYDI.md](PROVA-KAYDI.md) şablonuna yazılır (her prova için bir kopya):
 
 1. Her iki makinede deponun **ayrı bir klonu** (çalışma ağacı kopyası değil) ve ayrı durum dizinleri.
 2. Atılacak bir prova anahtarı; `allowedSignersFile` yalnızca prova anahtarını içerir. Etiket adları `prova-oncesi`, `v-prova`.
