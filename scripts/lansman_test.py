@@ -678,6 +678,41 @@ class PrerequisiteTest(WorldTestCase):
             launch.check_bitcoin_chain(BLOCK, CONFIRMATION)
 
 
+class LockTest(WorldTestCase):
+    def test_state_directory_is_locked_per_command(self):
+        launch = self.world.launch()
+        with launch.locked():
+            other = self.world.launch()
+            with self.assertRaisesRegex(lansman.LaunchError, "başka bir lansman komutu tarafından kullanılıyor"):
+                with other.locked():
+                    self.fail("ikinci kilit alınmamalıydı")
+            # Kilidi tutan süreç dışında bir komut satırı çalıştırması da reddedilir.
+            code, _, err = self.run_main("hazir")
+            self.assertEqual(code, 1)
+            self.assertIn("başka bir lansman komutu", err)
+        # Kilit bırakıldı: yeniden alınabilir; kilit dosyası kalır ama kilitsizdir.
+        with other.locked():
+            pass
+        with launch.locked():
+            pass
+
+    def run_main(self, command):
+        out, err = io.StringIO(), io.StringIO()
+        argv = [command, "--durum", str(self.world.launcher_state), "--taban", BASE_TAG, "--etiket", TAG,
+                "--anahtar", self.world.signing["fingerprint"]]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = lansman.main(argv, self.world.shells["lansman"], self.world.launcher, EASY)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_lock_is_released_when_a_command_fails(self):
+        (self.world.launcher / "kirli.txt").write_text("x")  # temiz ağaç denetimi düşer
+        code, _, err = self.run_main("hazir")
+        self.assertEqual(code, 1)
+        self.assertIn("çalışma ağacı temiz değil", err)
+        with self.world.launch().locked():  # hata sonrası kilit bırakılmıştır
+            pass
+
+
 class RecordInputTest(unittest.TestCase):
     def test_first_seen(self):
         self.assertEqual(lansman.parse_first_seen(["mempool.space=1795103300", "b = 1795103301"]),

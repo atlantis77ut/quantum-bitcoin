@@ -37,6 +37,7 @@ kitaplık ve git, lansman için ayrıca Go ile ssh kullanır.
 """
 
 import argparse
+import contextlib
 import datetime
 import hashlib
 import importlib.util
@@ -63,6 +64,7 @@ LAUNCH_TESTS = "Launch|Genesis|Mainnet|Network|Params"  # lansman makinesindeki 
 CANDIDATE_REF = "refs/lansman/aday"
 STATE_FILE = "durum.json"
 RECORD_FILE = "lansman-kaydi.json"
+LOCK_FILE = "durum.kilit"
 RECORD_SUFFIX = "-kayit"
 VERIFIED_MARK = "DOGRULANDI"
 # Bitcoin bloğunun en çok iş taşıyan zincirde olduğu iki bağımsız işletmecinin Esplora arayüzünden
@@ -198,6 +200,29 @@ class Launch:
                 raise LaunchError("taban etiketi lansman etiketiyle ya da kayıt etiketiyle aynı olamaz: %s" % self.base_tag)
             self._base = self.guard.check_base_tag(str(self.repo), self.base_tag, self.key)
         return self._base
+
+    @contextlib.contextmanager
+    def locked(self):
+        """Durum dizinini komutun sonuna kadar kilitler: iki terminalde aynı anda çalışan komutlar durum
+        dosyasını birbirinin üstüne yazamaz. Kilit işletim sistemi düzeyindedir (flock ya da LockFileEx):
+        süreç çökerse ya da öldürülürse kendiliğinden düşer, bayat kilit dosyası kalmaz."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        handle = open(str(self.state_dir / LOCK_FILE), "a+b")
+        try:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise LaunchError("durum dizini başka bir lansman komutu tarafından kullanılıyor: %s (aynı anda tek komut çalışır)"
+                                  % self.state_dir)
+            yield
+        finally:
+            handle.close()  # kapatmak kilidi bırakır
 
     def load_state(self):
         path = self.state_dir / STATE_FILE
@@ -808,22 +833,24 @@ def main(argv=None, shell=None, repo=None, networks=None):
     launch = Launch(shell or Shell(), repo or HERE.parent, getattr(args, "durum", None) or ".", getattr(args, "taban", None),
                     getattr(args, "etiket", None), getattr(args, "anahtar", None), networks)
     try:
-        if args.command == "basliklar":
+        if args.command == "basliklar":  # durum dizini kullanmaz
             launch.basliklar()
-        elif args.command == "hazir":
-            launch.hazir()
-        elif args.command == "on-ucus":
-            launch.on_ucus(args.blok, args.onay, args.rapor, second)
-        elif args.command == "kaz":
-            launch.kaz(args.blok, args.onay, args.rapor)
-        elif args.command == "dogrula":
-            launch.dogrula()
-        elif args.command == "yayimla":
-            launch.yayimla(second, args.uzak, args.dal)
-        elif args.command == "at":
-            launch.at(args.neden, args.uzak, args.dal)
-        else:
-            launch.kayit(parse_first_seen(args.ilk_gorulme), args.uzak)
+            return 0
+        with launch.locked():
+            if args.command == "hazir":
+                launch.hazir()
+            elif args.command == "on-ucus":
+                launch.on_ucus(args.blok, args.onay, args.rapor, second)
+            elif args.command == "kaz":
+                launch.kaz(args.blok, args.onay, args.rapor)
+            elif args.command == "dogrula":
+                launch.dogrula()
+            elif args.command == "yayimla":
+                launch.yayimla(second, args.uzak, args.dal)
+            elif args.command == "at":
+                launch.at(args.neden, args.uzak, args.dal)
+            else:
+                launch.kayit(parse_first_seen(args.ilk_gorulme), args.uzak)
     except (LaunchError, launch.guard.GuardError, OSError, ValueError, KeyError) as e:
         print("HATA: %s: %s" % (args.command, e), file=sys.stderr)
         return 1
