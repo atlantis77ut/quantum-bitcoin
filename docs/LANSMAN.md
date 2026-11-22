@@ -18,6 +18,7 @@ Terimler:
 | Mainnet parametreleri | `core/params.go` `MainnetParams`; `core/mainnet.json`, `core/launch.go` | Genesis gömülü lansman dosyasından gelir; dosya bugün boş, başlangıç hedefi ve taban yer tutucu. Düğüm genesis'siz mainnet'i reddeder (`TestNetworkWithoutGenesisRefused`, `TestMainnetLaunchFile`). |
 | Genesis vektörleri | `core/params_test.go` `genesisVectors`; `core/testdata/<ağ>_vector.json` | Testnet ve regtest için elle yazılmış sabitler ve bağımsız betiğin (§4.3) ürettiği dosyalar. |
 | Genesis kazım aracı ve ön-uçuşu | `core/launchmine.go`, `genesismine.go`; `-mine-genesis`, `-launch-preflight` | Hazır (§4.1). Bugün her iki kip de durur: mainnet hedefleri seçilmedi. Gerçek GPU'da ve gerçek hedefle hiç çalıştırılmadı. |
+| Lansman betiği ve lansman commit'i koruması | `scripts/lansman.py`, `scripts/lansman_commit_denetle.py`; [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) | Hazır (§4.5). Gerçek GPU, belirteç ve ikinci makineyle hiç çalıştırılmadı; istisna kullanıcı onayı bekliyor (§7). |
 
 Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdaki eksikler kapanmadan lansman yapılamaz.
 
@@ -30,7 +31,7 @@ Madde 6(a)'nın "kazıcılar yazılır" kısmı yani kapanmıştır. Aşağıdak
 3. **Bağımsız vektörü üreten betik depoda yok.** Lansmanda mainnet vektörünü dakikalar içinde üretecek, önceden sınanmış bir betik gerekir. **Kapandı (feat/genesis-vector):** `scripts/genesis_vektor.py` (§4.3).
 4. **Lansman commit'i elle kaynak düzenlemesi ister.** Bugünkü hâliyle `params.go`, `params_test.go` (yeni vektör ve mainnet'i reddetme testi) ve `main.go` yardım metni elle değiştirilmelidir. Süre baskısı altında derleme ya da test hatası çıkarmaya açıktır. **Kapandı (feat/mainnet-launch-file):** lansman commit'i yalnızca iki veri dosyasıdır (§4.2).
 5. **6(b)'deki "T_g ≥ t_b" şartını sabitleyen test yok.** **Kapandı (feat/mainnet-launch-file):** şartı lansman dosyası yükleyicisi ve bağımsız betik denetler; ikisinin testleri de bozulmuş hâlini reddeder (§4.2, §4.3).
-6. **Lansman adımlarını ve provayı anlatan çalıştırma kılavuzu yok.**
+6. **Lansman adımlarını ve provayı anlatan çalıştırma kılavuzu yok.** **Kapandı (feat/launch-script):** [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) ve `scripts/lansman.py` (§4.5).
 7. **README ve LICENSE yok.** Lisansı olmayan kamuya açık depo hukuken açık kaynak sayılmaz. Bu yüzden 6(a)'daki "açık kaynak kazıcı yayımlanır" şartı lisans seçilmeden karşılanmış olmaz.
 
 ### 2.2 Depo dışında, başlatıcıya bağlı
@@ -57,7 +58,7 @@ Yayımlanmış bir genesis geri alınamaz; yeniden lansman "adil lansman" iddias
 | Geri alınamayan nicelik | Bozulursa | Dış referans |
 |---|---|---|
 | T_g (ve ona bağlı ilk blok damgaları) | Saat ilerideyse sonraki bloklar FTL'e takılır ve ağ o süre boyunca ölü kalır; gerideyse yayın anı − T_g şişer. Örnek: Windows ile çift önyüklemeli makinede eşitlenmemiş Linux saati 3 saat ileri gösterebilir. | Ön-uçuşta saat eşitlemesi denetimi (sapma < 1 sn); yerel saatin, verilen Bitcoin başlıklarının zamanlarıyla tutarlılığı; ikinci makinenin kendi saati. |
-| İtilen commit | Eksik dosya, yanlış dal, yarım yayın (commit gitti, etiket gitmedi). | Yerel imzalı etiketin temiz klonu ikinci makinede derlenip doğrulanır; dal ve etiket tek adımda (`git push --atomic`) itilir. |
+| İtilen commit | Eksik dosya, yanlış dal, yarım yayın (commit gitti, etiket gitmedi). | İmzasız aday ikinci makinede temiz klondan derlenir, bütün testler ve koruma çalışır; etiket ancak bundan sonra imzalanır; uzaktaki `main` tabanda olmalıdır; dal ve etiket tek adımda (`git push --atomic`) itilir ve sonuç uzak depodan okunur (§4.5). |
 | İmza anahtarı | Ele geçirilirse sahte tohum listesi ve sahte genesis imzalanır. | Donanım belirteci; prova ayrı, atılacak bir anahtarla yapılır. |
 | Katılımcıların liboqs'u | §2.1 madde 1. | Düğüm açılışta ML-DSA-65 bilinen-yanıt vektörünü doğrular; başarısızsa başlamaz. Sürüm notunda liboqs sürümü yazılır. |
 | Bitcoin referansı | Blok bayat kalırsa gezgin sitelerinde görünmez; "özet uydurma" kuşkusu kalıcı olur. | Bir onay almış blok; başlığın iş ispatı araçta ve testte doğrulanır (§4.1). |
@@ -89,8 +90,8 @@ Lansman günü:
 1. **Ön-uçuş (saatler önce ve hemen önce):** saat eşitlemesi, liboqs bilinen-yanıt denetimi, ölçüm raporuyla tutarlılık, kısa bir hashrate ölçümü (kayıtlı ortancanın ±%10'u içinde), ikinci makinenin hazır olduğu.
 2. Başlatıcı Bitcoin başlıklarını (80 bayt, hex) verir. Araç başlıkları ve saati doğrular (§4.1), genesis'i GPU ile kazar, lansman dosyalarını yazar.
 3. Bağımsız betik vektörü üretir ve özeti aracınkiyle karşılaştırır; ilgili testler çalışır.
-4. Yerel commit ve imzalı etiket yapılır. Etiket ikinci makineye aktarılır; orada temiz klondan derlenir, testler ve bağımsız betik yeniden çalışır, T_g ikinci makinenin saatiyle karşılaştırılır.
-5. Dal ve etiket tek adımda itilir (yayın anı). Başlatıcının düğümü ve tohumlar başlar; başlatıcı açıklanan GPU ile kazar.
+4. Yerel commit yapılır; imzasız ve etiketsizdir. Aday ikinci makineye aktarılır; orada temiz klondan derlenir, bütün testler ve koruma (bağımsız betik dahil) yeniden çalışır, Bitcoin bloğu iki kaynakta denetlenir, T_g ikinci makinenin saatiyle karşılaştırılır. Gerçek anahtarla etiket ancak bundan sonra imzalanır (§4.5).
+5. Uzaktaki `main`'in taban commit'te olduğu denetlenir; dal ve etiket tek adımda, zorlamadan itilir (yayın anı). Başlatıcının düğümü ve tohumlar başlar; başlatıcı açıklanan GPU ile kazar.
 6. Lansman kaydı (genesis özeti, commit, t_b, T_g, yayın anı, ölçüm raporunun özeti, atılan denemeler) imzalanıp duyurulur.
 
 Eşik (yayın anı − T_g ≤ 10 dk) aşılırsa ya da bir denetim düşerse hiçbir şey yayımlanmaz; yeni bir Bitcoin bloğuyla baştan başlanır. Atılan her deneme (Bitcoin bloğu ve neden) lansman kaydına yazılır ki sonradan "genesis seçildi" kuşkusu doğmasın.
@@ -200,8 +201,8 @@ Araç bulduğu her genesis için ayrı bir kayıt bırakır. Atılan denemenin (
 **Kalanlar:**
 - Araç gerçek GPU'da ve gerçek hedefle hiç çalışmadı; ilk çalıştırma tam provadadır (§4.4). `genesismine.go`'daki akış CI'da yalnızca sahte plan ve sahte aygıtla sınanır.
 - Bugün iki kip de "hedefler seçilmedi" diye durur. Hedef PR'ından (§3.4) sonra CI adımındaki örnek "blok bayat" diye durur; adım üç durumu da kabul eder.
-- Saat eşitlemesi (NTP) denetimi, ikinci makinenin hazır olduğu, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki bloğun ilk görülme zamanı, atılan denemelerin toplanması ve kaydın imzalanması araçta yoktur; lansman betiğinin işidir (§5 madde 5).
-- Araç başlıkların en çok iş taşıyan Bitcoin zincirinde olduğunu bilemez. Başlıkların iki bağımsız kaynaktan alınması çalıştırma kılavuzuna yazılır.
+- Saat eşitlemesi (NTP) denetimi, ikinci makinenin hazır olduğu, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki bloğun ilk görülme zamanı, atılan denemelerin toplanması ve kaydın imzalanması araçta yoktur; lansman betiğinin işidir. **Kapandı (feat/launch-script, §4.5).**
+- Araç başlıkların en çok iş taşıyan Bitcoin zincirinde olduğunu bilemez. Lansman betiği bunu iki bağımsız kaynaktan denetler (§4.5).
 - Ön-uçuş ölçümü kısadır (15 sn); ±%10 payı ısınmış bir aygıt içindir.
 - Araç zorla sonlandırılırsa (SIGKILL, elektrik kesintisi) ayırdığı boş kayıt ve geçici kopya geride kalır. Sonraki çalıştırma bunu söyleyip durur; dosyalar elle silinir.
 - Arama sırasında disk dolarsa ya da ayrılan dosyalar silinirse bulunan genesis yazılamaz; araç özeti, T_g'yi ve nonce'u günlüğe yazar ve lansman dosyası boş kalır. Ayrılan dosyaların yerine başkasının dosyası konmuşsa araç ona dokunmaz.
@@ -233,7 +234,7 @@ Testler:
 Korunanlar ve lansman sonrası:
 - Testnet ve regtest vektörleri bugünkü gibi elle yazılmış Go sabitleri olarak kalır. Üreteç betiğiyle veri dosyasını birlikte yeniden üreten bir PR onları sessizce değiştiremez.
 - Lansmandan sonraki ilk PR mainnet özetini aynı listeye elle yazılmış bir sabit olarak ekler ve iki veri dosyasının değişmesini reddeden bir CI denetimi koyar.
-- Lansman commit'i `guvenlik-denetimi`'nden geçecek zamanı bulamaz. Bu istisnanın yerine önceden denetlenmiş mekanik bir koruma konur (commit yalnızca bu iki dosyaya dokunur ve şemaya uyar). İstisnanın onayı çalıştırma kılavuzu PR'ında sorulur.
+- Lansman commit'i `guvenlik-denetimi`'nden geçecek zamanı bulamaz. Bu istisnanın yerine önceden denetlenmiş mekanik bir koruma konur (commit yalnızca bu iki dosyaya dokunur ve şemaya uyar; §4.5). İstisnanın onayı çalıştırma kılavuzu PR'ında sorulur (§7).
 
 Seçilmeyen seçenek: genesis'i çalışma anında bir dosyadan ya da bayraktan okumak. Katılımcıları yeniden derlemekten kurtarırdı, ama düğüme kalıcı bir "bana verilen genesis'e inan" yolu ekler ve sahte ağlara yönlendirmeyi kolaylaştırır.
 
@@ -247,7 +248,7 @@ Seçilmeyen seçenek: genesis'i çalışma anında bir dosyadan ya da bayraktan 
 Komutlar:
 - `denetle` vektör dosyalarını baştan hesaplar. Dosya eksiksiz ve betiğin üreteceği baytlarla aynı olmalıdır. Saate bakmaz; her yerde aynı sonucu verir.
 - `uret` girdi dosyasından vektörü üretir. Girdide bulunan türetilmiş alanları (kazım aracının yazdığı özet) hesaplananla karşılaştırır. T_g bu makinenin saatinden 300 sn'den (FTL) fazla ilerideyse durur. Var olan bir vektör dosyasının üzerine yazmaz; içerik aynıysa geçer.
-- Lansman günü ikinci makinede `uret`, `-o` ile commit'teki vektör dosyası gösterilerek yeniden çalıştırılır. Geçerse commit'teki vektör girdiden üretilenle aynıdır ve T_g o makinenin saatinden en çok 300 sn ileridedir; betik farkı saniye olarak yazdırır (§3.2'deki "ikinci makinenin kendi saati"). Daha sıkı bir eşik lansman betiğinin işidir.
+- Lansman günü betiğin kodu iki makinede de lansman commit'i korumasının içinden çalışır (§4.5): koruma, commit'teki vektörün lansman dosyasından bayt bayt üretildiğini ve `denetle` ile aynı şartlardan geçtiğini denetler. İkinci makinenin saati için daha sıkı eşik (T_g en çok 5 sn ileride) lansman betiğindedir; `uret` lansman makinesinde vektörü üreten koddur.
 
 Depodaki bağ:
 - Regtest ve testnet vektörleri `core/testdata/<ağ>_vector.json` dosyalarındadır. CI'da betik bunları baştan hesaplar; `TestGenesisVectorFiles` aynı dosyaları Go kodunun hesabıyla karşılaştırır. Kodlama iki uygulamadan yalnızca birinde değişirse biri kırmızıya döner; lansmana kadar betik Go koduyla birlikte güncel kalır.
@@ -272,7 +273,55 @@ Sınırlar:
   - Veri dizini açıkça verilir ve provadan sonra silinir (kalan bir prova zinciri lansman günü düğümün açılmasını engeller).
   - İtme adımı özel bir deneme deposuna karşı denenir. Bugün `main` dalında koruma kuralı yoktur; sonradan eklenirse lansman itmesi yeniden denenmelidir.
   - Provadan önce betikteki ve araçtaki Bitcoin zorluk tabanı o günün zorluğuna göre yenilenir (§4.3); prova güncel başlıkların iki uygulamadan da geçtiğini gösterir.
+- Adım adım prova talimatı ve ölçülecek süreler (ikinci makinedeki tam test paketi dahil): [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md) §5.
 - Ayrı bir "prova ağı" eklenmez.
+
+### 4.5 Lansman betiği ve lansman commit'i istisnası
+
+**Uygulandı (feat/launch-script; `scripts/lansman.py`, `scripts/lansman_commit_denetle.py`; kılavuz [LANSMAN-KILAVUZU.md](LANSMAN-KILAVUZU.md)). İstisnanın kendisi ve "sonradan ENGELLEYİCİ çıkarsa" kuralı kullanıcı onayı bekliyor (§7).** Betik ve koruma yalnızca Python standart kitaplığını ve git'i kullanır; uzlaşma kodu değişmez.
+
+**İstisna.** Lansman commit'i yayın anı − T_g ≤ 10 dk eşiği yüzünden `guvenlik-denetimi`'nden ve PR'dan geçemez. `devils-advocate` (2026-11-20) üç seçeneği sınadı: (a) commit'i yine de denetimden geçirmek (eşiğe sığmaz), (b) istisnasız olağan PR (genesis'i günlerce açıkta bırakır, "adil lansman"la bağdaşmaz), (c) önceden denetlenmiş mekanik koruma, iki makine ve sonradan denetim. Seçilen (c)'dir, üç önkoşulla:
+1. İkinci makine adayın temiz klonunda **bütün testleri** çalıştırır (mainnet'in "tanımsız"dan "tanımlı"ya döndüğü ağaçta ilk tam koşu budur); süresi provada ölçülür ve eşiğe sığmazsa ikinci makine hızlandırılır, test paketi kısaltılmaz.
+2. **İmza sırası:** gerçek anahtarla imza ancak ikinci makine doğruladıktan sonra atılır. Aday imzasız ve etiketsiz aktarılır.
+3. **Sonradan ENGELLEYİCİ çıkarsa** ne yapılacağı önceden yazılır (kılavuz §6; kullanıcı kararı bekliyor): genesis korunur, düzeltme sürümü çıkar; yalnızca genesis'in kendisi geçersizse yeniden lansman yapılır.
+
+**Koruma (`lansman_commit_denetle.py`)** lansman makinesinde `kaz` ve `yayimla`'da, ikinci makinede `dogrula`'da çalışır; saate bakmaz, her makinede aynı sonucu verir:
+- Depo sığ değildir; replace başvurusu ve grafts yoktur (geçmişi olduğundan farklı gösterebilecek durumlar).
+- Commit'in tek ebeveyni taban commit'tir. Taban elle yazılan bir özet değildir: günler önce duyurulmuş, duyurulan anahtarla imzalı açıklamalı bir etiketin gösterdiği commit'tir (`check_base_tag`).
+- Fark tam olarak iki girdidir (`git diff-tree --raw`, ham nesnelerle): `core/mainnet.json` değişmiştir, `core/testdata/mainnet_vector.json` eklenmiştir, ikisi de olağan dosyadır (kip 100644). Başka yol, kip değişikliği, sembolik bağ ve alt modül yoktur; tabandaki lansman dosyası boş nesnedir.
+- Dosyalar ASCII'dir, CR içermez; lansman dosyası kanoniktir ve bağımsız betik gerçek mainnet kurallarıyla ondan commit'teki vektörü bayt bayt üretir.
+- Commit mesajı tam olarak `launch: Q-BTC mainnet genesis <özet>` satırıdır.
+- Etiket açıklamalıdır, bu commit'i gösterir, nesnedeki adı başvuru adıdır, aynı adda dal yoktur, mesajı commit mesajıdır ve imzalayan anahtarın parmak izi duyurulan parmak izidir (anahtarlıktaki başka bir anahtarın geçerli imzası yetmez).
+
+**Betiğin akışı** (kılavuz §3): `on-ucus` → `basliklar` → `kaz` (araç, kayıt denetimi, vektör, lansman testleri, imzasız commit, koruma) → `yayimla` (koruma; aday ikinci makineye; ikinci makinede `dogrula`; iki saatin karşılaştırılması; eşik; uzaktaki `main` tabanda ve etiket yok; imza; imzanın doğrulanması; eşik; `git push --atomic`, zorlamasız; sonucun uzak depodan okunması) → `kayit`. Kaz ve yayın arasındaki bağlar:
+- Aracın kaydındaki commit taban, ağ mainnet, rapor özeti verilen raporun SHA-256'sı; commit'teki lansman dosyasının SHA-256'sı kayıttakiyle aynıdır.
+- İkinci makinenin doğruladığı commit, genesis ve T_g lansman makinesindekilerle aynıdır.
+
+**Betiğin eşikleri** (sabit; komut satırından gevşetilemez; testte sayı olarak sabit):
+- Yayın anı − T_g ≤ 600 sn (§7 madde 3); imza ve itme için 30 sn pay: imzadan önce ve sonra T_g'den bu yana en çok 570 sn geçmiş olmalıdır.
+- Saat eşitlemesi: işletim sistemi eşitlendiğini söyler (`timedatectl`) ve ölçülen sapma (`chronyc tracking` ya da `timedatectl timesync-status`) 1 sn'nin altındadır.
+- T_g ikinci makinenin saatinden en çok 5 sn ileride olabilir; iki makinenin T_g'ye uzaklığı en çok 10 sn farklı olabilir.
+- Mesajdaki Bitcoin bloğu iki bağımsız Esplora kaynağında (`mempool.space`, `blockstream.info`) en çok iş taşıyan zincirdedir, onaylayan blok onun hemen üstündedir ve iki kaynak aynı başlığı ve yüksekliği verir. Araç ve yükleyici bunu bilemez: bayat (yetim) bir blok da geçerli iş ispatı taşır.
+
+**Yarım kalan durumlar:** imzalanmış ama itilmemiş etiket yerelde silinir (Ctrl-C dahil; kesintiden kalmışsa sonraki çalıştırma, uzakta etiket olmadığını ve dalın tabanda olduğunu gördükten sonra siler). Durum itmeden hemen önce "itiliyor" olarak kaydedilir; bu durumdaki deneme `at` ile atılamaz ve yeniden çalıştırma yalnızca sonucu okur (yayımlanmış bir genesis'in yerel kaydı böylece kaybolmaz). Ağ üzerindeki ssh ve git çağrıları istem beklemez (`BatchMode=yes`). İtme komutu hata verip uzak depo güncellenmişse betik bunu uzak depodan görür ve yayımlanmış sayar (yayın anı kesin değil olarak kaydedilir); uzak depo okunamazsa durum "belirsiz" kalır ve `yayimla` yeniden çalıştırıldığında yalnızca sonucu okur (yeniden imza atmaz). Durum dosyası (`durum.json`) her adımda atomik yazılır ve deponun dışındadır.
+
+**Lansman kaydı** (`kayit`): kılavuz §3.6'daki alanlar; mesajdaki bloğun iki ayrı kaynaktaki ilk görülme zamanı zorunludur ve t_b − 2 sa ile yayın anı arasında olmalıdır. Kayıt imzalı bir etiketin (`<etiket>-kayit`) mesajıdır.
+
+**Testler** (CI adımı, yerelde de çalışır):
+- `scripts/lansman_test.py`: gerçek git (çıplak "herkese açık" depo, iki makine klonu), geçici SSH imza anahtarı; go, qbtc, ssh, saat ve Bitcoin kaynakları sahte. Sahte ssh, ikinci makinedeki komutu aynı süreçte ikinci makinenin klonuyla çalıştırır. Uçtan uca lansman (ikinci makine doğrulamadan imza atılmadığı, imzanın itmeden önce olduğu, ikinci makinenin imza atmadığı ve itmediği); atılan denemelerin kayda girdiği; ikinci makinede kırmızı test; eşik ve uzaktaki dal denetimleri imzadan önce; başarısız itmede etiketin silinmesi; hata verip yine de inen itme; bayat Bitcoin bloğu; iki makinenin saati; taban etiketi; kirli ağaç; saat eşitlemesi çıktıları; komut satırı.
+- `scripts/lansman_commit_denetle_test.py`: korumanın her şartının bozulmuş hâli; gerçek kurallarla örneğin reddedildiği; imzanın duyurulan anahtarla doğrulanması.
+
+**Kalanlar:**
+- Betik gerçek GPU, gerçek belirteç ve gerçek ikinci makineyle hiç çalışmadı; ilk çalıştırma tam provadadır (kılavuz §5).
+- Saat eşitlemesi denetimi yalnızca Linux (systemd) içindir.
+- Bitcoin kaynakları iki üçüncü taraftır; ikisi de ulaşılamazsa lansman bekler. Başlatıcının kendi Bitcoin düğümü üçüncü bir kaynak olarak eklenmedi.
+- Yayın anının kanıtı yine tanıklardır (§3.4); betik yalnızca kendi saatini yazar.
+- İlk görülme zamanları başlatıcının girdisidir; betik yalnızca aralığını denetler.
+- Dal ve etiket koruması başlatıcının GitHub ayarıdır; betik yalnızca uzaktaki `main`'in tabanda olduğunu denetler.
+- Durum dizini kilitlenmez: iki terminalde aynı anda çalıştırılan komutlar durum dosyasını birbirinin üstüne yazabilir. Kılavuz tek terminal ister; yayımlanmış bir aday her durumda uzak depodan tanınır (`yayimla` kaydeder, `at` reddeder).
+- OpenPGP imza yolu yalnızca elle yazılmış `VALIDSIG` satırlarıyla sınanır; duyurulan anahtar OpenPGP ise gerçek gpg ile ilk deneme provadadır.
+- GitHub bir eşzamanlılık grubunda bir koşan ve bir bekleyen koşu tutar: lansman koşusu başka bir `main` koşusunun arkasında beklerken gelen bir itme onu iptal eder. Lansmandan sonra ilk saatte `main`'e itilmez; iptal olursa koşu elle yeniden başlatılır.
+- `guvenlik-denetimi` bulguları üzerine değişenler: başarıyla dönen ya da zaman aşımına uğrayan itme hiçbir zaman "hazir"e indirilmez (en çok "belirsiz"); durum dosyası "hazir"de kalmış ama aday uzakta yayımlanmışsa `yayimla` yayını kaydeder, `at` uzak depoya bakar ve reddeder; itmenin süresi sınırlıdır (60 sn, ssh canlılık denetimi, HTTPS düşük hız sınırı); itme ve okuma aynı itme adresine bakar (`remote get-url --push`); `GIT_SSH_COMMAND` ve `GIT_CONFIG_*` ortamdan temizlenir; aday `--no-follow-tags` ile aktarılır; atılan denemede araç kaydı varsa okunur; etiket başvurusu bir kez nesne kimliğine çözülür ve tür, içerik ve imza o kimlikle okunur; fark `--ignore-submodules=none` ile alınır, yinelenen yol reddedilir; CI'da `ssh-keygen` yoksa imza sınamaları atlanmaz, düşer; eşik sınaması artık lansman makinesinin kendi denetimini (imzadan önce ve sonra) sınar.
 
 ## 5. PR sırası
 
@@ -282,7 +331,7 @@ Her biri ayrı PR, test ve `guvenlik-denetimi` ile:
 2. Bağımsız vektör betiği ve CI adımı. (Uzlaşma kodu değişmez.) **Kapandı (feat/genesis-vector).**
 3. Gömülü mainnet genesis dosyası ve lansman şartı testleri (`core/params.go`). **Kapandı (feat/mainnet-launch-file).**
 4. Genesis kazım aracı, ön-uçuş kipi ve lansman kaydı. **Kapandı (feat/genesis-mine-tool).**
-5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası. Araçta olmayanlar buradadır: saat eşitlemesi denetimi, ikinci makine, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki Bitcoin bloğunun iki bağımsız gezgindeki ilk görülme zamanının kayda yazılması (gizli kazım penceresinin gerçek ölçüsü budur; başlıktaki zaman madenci beyanıdır), atılan denemelerin toplanması ve kaydın imzalanması (§4.1 "Kalanlar").
+5. Lansman betiği ve çalıştırma kılavuzu; prova talimatı; lansman commit'i istisnası. Araçta olmayanlar buradadır: saat eşitlemesi denetimi, ikinci makine, "yayın anı − T_g ≤ 10 dk" eşiği, mesajdaki Bitcoin bloğunun iki bağımsız gezgindeki ilk görülme zamanının kayda yazılması (gizli kazım penceresinin gerçek ölçüsü budur; başlıktaki zaman madenci beyanıdır), atılan denemelerin toplanması ve kaydın imzalanması (§4.1 "Kalanlar"). **Kapandı (feat/launch-script; §4.5); istisnanın onayı §7'de.**
 6. README ve LICENSE (lisans kararından sonra).
 
 Depo dışındaki işler (§2.2) bu sıradan bağımsızdır; GPU ölçümü 4. PR'dan önce yapılırsa araç gerçek donanımda da denenir.
@@ -306,4 +355,4 @@ Soru sorulmadan uygulanacak tasarım seçimleri (itiraz gelirse PR'da değişir)
 4. **Lisans MIT.**
 5. **T_g − t_b ≤ 3600 sn (2026-11-20, `devils-advocate` sonrası).** Genesis'in zaman damgası, mesajdaki Bitcoin bloğunun zamanından en çok bir saat sonra olabilir; şart lansman dosyası yükleyicisinde, bağımsız betikte ve kazım aracındadır. Bir ön-taahhüttür: bayat bir Bitcoin bloğuyla kurulmuş lansman dosyasını her düğüm reddeder. Gizli kazım penceresinin kanıtı olarak sunulmaz (§4.1 "Sınırların gerekçesi"). Seçilmeyenler: şartın yalnızca araç ve betikte kalması; 2 saat.
 
-Açık kalan: lansman commit'inin `guvenlik-denetimi` istisnası ve yerine konacak mekanik koruma (§4.2), çalıştırma kılavuzu PR'ında sorulur.
+Karar bekleyen (feat/launch-script PR'ında soruldu): lansman commit'inin `guvenlik-denetimi` istisnası, yerine konan mekanik koruma ve iki makine (§4.5), ve sonradan CI ya da denetim ENGELLEYİCİ çıkarsa genesis'in korunup düzeltme sürümü çıkarılması (kılavuz §6).

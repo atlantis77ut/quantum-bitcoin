@@ -10,7 +10,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # main'deki koşular iptal edilmez: lansman commit'inin sonradan yapılan CI koşusu (docs/LANSMAN.md
+  # §4.5) arkasından gelen bir itmeyle yarıda kesilmemelidir.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   LIBOQS_VERSION: "0.15.0"
@@ -86,6 +88,13 @@ jobs:
           else
             test ! -e core/testdata/mainnet_vector.json
           fi
+
+      - name: Lansman betiği ve lansman commit'i koruması (Python sınamaları; git ve geçici SSH imza anahtarıyla)
+        run: |
+          git --version
+          ssh -V
+          python3 -I scripts/lansman_commit_denetle_test.py
+          python3 -I scripts/lansman_test.py
 
       - name: Açılış denetimi uçtan uca (ML-DSA-65'i etkin olmayan liboqs ile düğüm açılmaz)
         run: |
